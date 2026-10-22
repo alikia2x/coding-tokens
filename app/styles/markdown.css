@@ -1,0 +1,183 @@
+.chat-markdown {
+	color: var(--foreground);
+	font-size: 14px;
+	line-height: 1.7;
+	overflow-wrap: anywhere;
+}
+
+.chat-markdown > * + * {
+	margin-top: 0.7em;
+}
+
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3,
+.chat-markdown h4 {
+	margin-top: 1.15em;
+	font-size: 1em;
+	font-weight: 600;
+	line-height: 1.35;
+}
+
+.chat-markdown h1 {
+	font-size: 1.16em;
+}
+
+.chat-markdown h2 {
+	font-size: 1.08em;
+}
+
+.chat-markdown ul,
+.chat-markdown ol {
+	margin: 0.55em 0 0.7em;
+	padding-left: 1.35em;
+}
+
+.chat-markdown ul {
+	list-style: disc;
+}
+
+.chat-markdown ol {
+	list-style: decimal;
+}
+
+.chat-markdown li {
+	margin: 0.2em 0;
+}
+
+.chat-markdown li > p {
+	margin: 0;
+}
+
+.chat-markdown blockquote {
+	margin: 0.7em 0;
+	padding-left: 0.9em;
+	border-left: 2px solid var(--border);
+	color: var(--muted-foreground);
+}
+
+.chat-markdown a {
+	color: var(--link);
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+
+.chat-markdown code {
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	background: var(--muted);
+	padding: 0.08em 0.32em;
+	font-family: var(--font-mono);
+	font-size: 0.88em;
+}
+
+.chat-markdown pre {
+	margin: 0.8em 0;
+	max-width: 100%;
+	overflow-x: auto;
+	border: 1px solid var(--border);
+	border-radius: calc(var(--radius) - 2px);
+	background: var(--surface);
+	padding: 0.8rem 0.9rem;
+}
+
+.chat-markdown pre code {
+	border: 0;
+	background: transparent;
+	padding: 0;
+	font-size: 12.5px;
+	line-height: 1.55;
+}
+
+.chat-markdown table {
+	display: block;
+	max-width: 100%;
+	overflow-x: auto;
+	border-collapse: collapse;
+	font-size: 13px;
+}
+
+.chat-markdown th,
+.chat-markdown td {
+	border: 1px solid var(--border);
+	padding: 0.35rem 0.6rem;
+	text-align: left;
+	vertical-align: top;
+}
+
+.chat-markdown th {
+	background: var(--muted);
+	font-weight: 600;
+}
+
+.chat-markdown hr {
+	margin: 1.2em 0;
+	border: 0;
+	border-top: 1px solid var(--border);
+}
+
+.chat-markdown img {
+	max-width: 100%;
+	border-radius: var(--radius-sm);
+}
+
+::highlight(transcript-search) {
+	background-color: #f5d78e;
+	color: #16171a;
+}
+
+::highlight(transcript-search-current) {
+	background-color: #2e5d7c;
+	color: #ffffff;
+}
+
+[cmdk-group-heading] {
+	padding: 0.5rem 0.75rem 0.25rem;
+	color: var(--muted-foreground);
+	font-size: 11px;
+	font-weight: 600;
+}
+
+[cmdk-item] {
+	display: flex;
+	align-items: center;
+	gap: 0.65rem;
+	border-radius: calc(var(--radius) - 2px);
+	padding: 0.5rem 0.75rem;
+	color: var(--foreground);
+	font-size: 13px;
+	cursor: default;
+	user-select: none;
+}
+
+[cmdk-item][data-selected="true"] {
+	background: var(--muted);
+}
+
+[cmdk-item][data-disabled="true"] {
+	opacity: 0.45;
+}
+
+[cmdk-separator] {
+	height: 1px;
+	margin: 0.3rem 0;
+	background: var(--border);
+}
+
+.recharts-surface {
+	overflow: visible;
+}
+
+.recharts-cartesian-axis-tick text {
+	fill: var(--muted-foreground);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+.recharts-cartesian-grid line {
+	stroke: var(--chart-grid);
+}
+
+.recharts-tooltip-wrapper {
+	outline: none;
+}

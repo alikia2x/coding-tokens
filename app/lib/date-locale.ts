@@ -1,0 +1,165 @@
+import { useMemo } from "react";
+import type { DayPickerLocale } from "react-day-picker";
+import { enUS, zhCN } from "react-day-picker/locale";
+import { useTranslation } from "react-i18next";
+
+export type DateLocaleCode = "en" | "zh-CN";
+
+export interface DateLocale {
+	code: DateLocaleCode;
+	locale: DayPickerLocale;
+	weekStartsOn: 0 | 1;
+}
+
+export function dateLocaleFor(language: string): DateLocale {
+	if (language.toLowerCase().startsWith("zh")) {
+		return { code: "zh-CN", locale: zhCN, weekStartsOn: 1 };
+	}
+	return { code: "en", locale: enUS, weekStartsOn: 0 };
+}
+
+export function useDateLocale(): DateLocale {
+	const { i18n } = useTranslation();
+	return useMemo(() => dateLocaleFor(i18n.language), [i18n.language]);
+}
+
+const hourCycleFormats = new Map<string, boolean>();
+
+/** Whether a locale reads clocks as 12-hour (AM/PM) rather than 24-hour. */
+export function uses12HourClock(code: DateLocaleCode): boolean {
+	let value = hourCycleFormats.get(code);
+	if (value === undefined) {
+		value =
+			new Intl.DateTimeFormat(code, { hour: "numeric" }).resolvedOptions()
+				.hour12 ?? false;
+		hourCycleFormats.set(code, value);
+	}
+	return value;
+}
+
+const dayFormats = new Map<string, Intl.DateTimeFormat>();
+
+export function formatPickerDate(
+	date: Date,
+	code: DateLocaleCode,
+	now = new Date(),
+): string {
+	const withYear = date.getFullYear() !== now.getFullYear();
+	const key = `${code}:${withYear ? "year" : "plain"}`;
+	let format = dayFormats.get(key);
+	if (!format) {
+		format = new Intl.DateTimeFormat(code, {
+			weekday: "short",
+			month: "short",
+			day: "numeric",
+			...(withYear ? { year: "numeric" as const } : {}),
+		});
+		dayFormats.set(key, format);
+	}
+	return format.format(date);
+}
+
+const rangeFormats = new Map<string, Intl.DateTimeFormat>();
+
+function rangeFormat(
+	code: DateLocaleCode,
+	withYear: boolean,
+): Intl.DateTimeFormat {
+	const key = `${code}:${withYear ? "year" : "plain"}`;
+	let format = rangeFormats.get(key);
+	if (!format) {
+		format = new Intl.DateTimeFormat(code, {
+			month: "short",
+			day: "numeric",
+			...(withYear ? { year: "numeric" as const } : {}),
+		});
+		rangeFormats.set(key, format);
+	}
+	return format;
+}
+
+/** A compact locale-aware label for an inclusive custom range. */
+export function formatRangeDates(
+	from: number,
+	until: number,
+	code: DateLocaleCode,
+): string {
+	const start = new Date(from);
+	const end = new Date(Math.max(from, until - 1));
+	const sameDay =
+		start.getFullYear() === end.getFullYear() &&
+		start.getMonth() === end.getMonth() &&
+		start.getDate() === end.getDate();
+	if (sameDay) return rangeFormat(code, true).format(start);
+	if (start.getFullYear() === end.getFullYear())
+		return `${rangeFormat(code, false).format(start)} – ${rangeFormat(
+			code,
+			true,
+		).format(end)}`;
+	return `${rangeFormat(code, true).format(start)} – ${rangeFormat(
+		code,
+		true,
+	).format(end)}`;
+}
+
+const monthFormats = new Map<DateLocaleCode, Intl.DateTimeFormat>();
+
+/** Short month name that follows the active language immediately. */
+export function formatMonthShortFor(
+	value: number,
+	code: DateLocaleCode,
+): string {
+	let format = monthFormats.get(code);
+	if (!format) {
+		format = new Intl.DateTimeFormat(code, { month: "short" });
+		monthFormats.set(code, format);
+	}
+	return format.format(new Date(value));
+}
+
+const weekdayFormats = new Map<DateLocaleCode, Intl.DateTimeFormat>();
+
+/** Short weekday name that follows the active language immediately. */
+export function formatWeekdayShortFor(
+	value: number,
+	code: DateLocaleCode,
+): string {
+	let format = weekdayFormats.get(code);
+	if (!format) {
+		format = new Intl.DateTimeFormat(code, { weekday: "short" });
+		weekdayFormats.set(code, format);
+	}
+	return format.format(new Date(value));
+}
+
+/** Localized calendar date (month, day, year). */
+export function formatDateFor(value: number, code: DateLocaleCode): string {
+	return rangeFormat(code, true).format(new Date(value));
+}
+
+const timeFormats = new Map<DateLocaleCode, Intl.DateTimeFormat>();
+
+/** Localized time-of-day used by chart axes. */
+export function formatTimeFor(value: number, code: DateLocaleCode): string {
+	let format = timeFormats.get(code);
+	if (!format) {
+		format = new Intl.DateTimeFormat(code, {
+			hour: "numeric",
+			minute: "2-digit",
+		});
+		timeFormats.set(code, format);
+	}
+	return format.format(new Date(value));
+}
+
+/** Localized bucket label for hour/day/week/month chart axes. */
+export function formatBucketLabelFor(
+	value: number,
+	unit: "hour" | "day" | "week" | "month",
+	code: DateLocaleCode,
+): string {
+	if (!Number.isFinite(value)) return "";
+	if (unit === "hour") return formatTimeFor(value, code);
+	if (unit === "month") return rangeFormat(code, true).format(new Date(value));
+	return rangeFormat(code, false).format(new Date(value));
+}
