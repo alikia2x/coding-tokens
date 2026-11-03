@@ -6,6 +6,7 @@
 			"**",
 			"!.cottontail-tmp",
 			"!.hutch",
+			"!artifacts",
 			"!build",
 			"!dist",
 			"!node_modules",

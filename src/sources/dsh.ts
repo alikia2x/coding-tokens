@@ -6,6 +6,7 @@ import {
 	blankSourceResult,
 	contentText,
 	expandHome,
+	hasTokenUsage,
 	homeDir,
 	modelName,
 	normalizedCwd,
@@ -195,7 +196,7 @@ export function readDsh(): SourceResult {
 	result.records = uniqueBy(
 		records,
 		(record) => `${record.sessionId}:${record.messageId}`,
-	);
+	).filter(hasTokenUsage);
 	result.messages = messages;
 	return result;
 }

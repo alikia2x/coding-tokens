@@ -63,6 +63,30 @@ export function contentText(value: unknown): string {
 	return parts.join("\n").trim();
 }
 
+export interface TokenUsageFields {
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheWriteTokens: number;
+	reasoningTokens: number;
+}
+
+/**
+ * A usage record is only meaningful when at least one token counter moved.
+ * Harnesses still write assistant/attempt rows for aborted, cancelled or
+ * otherwise empty requests; those rows carry all-zero token objects and must
+ * not become sessions, requests or report rows.
+ */
+export function hasTokenUsage(usage: TokenUsageFields): boolean {
+	return (
+		usage.inputTokens > 0 ||
+		usage.outputTokens > 0 ||
+		usage.cacheReadTokens > 0 ||
+		usage.cacheWriteTokens > 0 ||
+		usage.reasoningTokens > 0
+	);
+}
+
 export function usageRecord(
 	base: Pick<
 		UsageRecord,

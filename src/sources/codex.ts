@@ -7,6 +7,7 @@ import {
 	blankSourceResult,
 	contentText,
 	expandHome,
+	hasTokenUsage,
 	homeDir,
 	modelName,
 	normalizedCwd,
@@ -66,16 +67,6 @@ function tokenCount(
 	};
 }
 
-function hasPositiveUsage(usage: ReturnType<typeof tokenCount>): boolean {
-	return (
-		usage.inputTokens > 0 ||
-		usage.outputTokens > 0 ||
-		usage.cacheReadTokens > 0 ||
-		usage.cacheWriteTokens > 0 ||
-		usage.reasoningTokens > 0
-	);
-}
-
 function sourceUsage(usage: ReturnType<typeof tokenCount>) {
 	return {
 		input: usage.inputTokens,
@@ -94,6 +85,20 @@ function eventType(event: Record<string, unknown>): unknown {
 	return event.type === "event_msg"
 		? objectOrEmpty(event.payload).type
 		: event.type;
+}
+
+/**
+ * Some rollouts record token usage before the first turn_context. Prefer the
+ * first context's model so early requests are not priced as "Unknown model".
+ */
+function firstTurnModel(events: unknown[]): string | null {
+	for (const value of events) {
+		const event = objectOrEmpty(value);
+		if (event.type !== "turn_context") continue;
+		const model = textOrNull(objectOrEmpty(event.payload).model);
+		if (model) return model;
+	}
+	return null;
 }
 
 function readRollout(filePath: string): unknown[] {
@@ -130,7 +135,14 @@ export function readCodex(): SourceResult {
 			const metadata = events
 				.map(objectOrEmpty)
 				.find((event) => event.type === "session_meta");
-			const source = objectOrEmpty(objectOrEmpty(metadata?.payload).source);
+			const metadataPayload = objectOrEmpty(metadata?.payload);
+			// The first session_meta declares this rollout's own thread. Subagent
+			// rollouts replay the parent's session_meta afterwards; those replays
+			// must not re-attribute the file to the parent thread.
+			const declaredSessionId =
+				textOrNull(metadataPayload.id) ??
+				textOrNull(metadataPayload.session_id);
+			const source = objectOrEmpty(metadataPayload.source);
 			const subagent = objectOrEmpty(source.subagent);
 			const isSubagent = Object.keys(subagent).length > 0;
 			const isReview =
@@ -138,11 +150,11 @@ export function readCodex(): SourceResult {
 			const hasUsageRecords = events.some(
 				(value) => eventType(objectOrEmpty(value)) === "token_usage_record",
 			);
-			let sessionId = path
-				.basename(filePath)
-				.replace(/\.jsonl(?:\.zst)?$/u, "");
+			const sessionId =
+				declaredSessionId ??
+				path.basename(filePath).replace(/\.jsonl(?:\.zst)?$/u, "");
 			let cwd: string | null = null;
-			let model = "Unknown model";
+			let model = firstTurnModel(events) ?? "Unknown model";
 			let sessionTimestamp: number | null = null;
 			let fallbackTotal: ReturnType<typeof tokenCount> | null = null;
 			let fallbackModel = model;
@@ -154,12 +166,9 @@ export function readCodex(): SourceResult {
 				const payload = objectOrEmpty(event.payload);
 				const type = eventType(event);
 				if (event.type === "session_meta") {
-					// Subagent rollouts carry the parent in session_id; their own
-					// thread id is id. Attribute all usage to the rollout's thread.
-					sessionId =
-						textOrNull(payload.id) ??
-						textOrNull(payload.session_id) ??
-						sessionId;
+					const metaId =
+						textOrNull(payload.id) ?? textOrNull(payload.session_id);
+					if (metaId !== null && metaId !== sessionId) continue;
 					cwd = normalizedCwd(payload.cwd) ?? cwd;
 					sessionTimestamp = timestampMs(payload.timestamp) ?? sessionTimestamp;
 				}
@@ -179,7 +188,7 @@ export function readCodex(): SourceResult {
 				}
 				if (type === "token_usage_record" && hasUsageRecords) {
 					const usage = tokenCount(payload.usage);
-					if (!hasPositiveUsage(usage)) continue;
+					if (!hasTokenUsage(usage)) continue;
 					records.push(
 						usageRecord(
 							{
@@ -208,7 +217,7 @@ export function readCodex(): SourceResult {
 				const info = objectOrEmpty(payload.info);
 				const eventTime = timestampMs(event.timestamp) ?? sessionTimestamp;
 				const lastUsage = tokenCount(info.last_token_usage);
-				if (hasPositiveUsage(lastUsage)) {
+				if (hasTokenUsage(lastUsage)) {
 					records.push(
 						usageRecord(
 							{
@@ -226,7 +235,7 @@ export function readCodex(): SourceResult {
 					);
 				} else {
 					const totalUsage = tokenCount(info.total_token_usage);
-					if (hasPositiveUsage(totalUsage)) {
+					if (hasTokenUsage(totalUsage)) {
 						fallbackTotal = totalUsage;
 						fallbackModel = model;
 						fallbackCwd = cwd;
@@ -261,7 +270,7 @@ export function readCodex(): SourceResult {
 	result.records = uniqueBy(
 		records,
 		(record) => `${record.sessionId}:${record.messageId}`,
-	);
+	).filter(hasTokenUsage);
 	result.messages = messages;
 	return result;
 }

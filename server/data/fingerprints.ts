@@ -11,7 +11,7 @@ import {
 	openCodeDbPaths,
 } from "./paths";
 
-const INDEX_VERSION = 7;
+const INDEX_VERSION = 10;
 
 function stamp(filePath: string): string {
 	try {

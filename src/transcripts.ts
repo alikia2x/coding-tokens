@@ -536,6 +536,7 @@ function readCodexTranscripts(
 			const fileIdPrefix = shaSegment(path.basename(filePath));
 			let currentTurn = `${fileIdPrefix}:turn-0`;
 			let turnCounter = 0;
+			let sessionMetaSeen = false;
 			const session = newSession("codex", sessionId, null, null);
 			for (const event of events) {
 				const payload = objectOrEmpty(event.payload);
@@ -543,10 +544,15 @@ function readCodexTranscripts(
 					event.type === "event_msg" ? textOrNull(payload.type) : event.type;
 				const timestamp = timestampMs(event.timestamp);
 				if (event.type === "session_meta") {
-					sessionId =
-						textOrNull(payload.id) ??
-						textOrNull(payload.session_id) ??
-						sessionId;
+					const metaId =
+						textOrNull(payload.id) ?? textOrNull(payload.session_id);
+					// Subagent rollouts replay the parent's session_meta after their
+					// own. The first one owns the file; later replays must not move
+					// the items into the parent conversation.
+					if (sessionMetaSeen && metaId !== null && metaId !== sessionId)
+						continue;
+					sessionMetaSeen = true;
+					sessionId = metaId ?? sessionId;
 					session.sessionId = sessionId;
 					session.cwd = normalizedCwd(payload.cwd) ?? session.cwd;
 					session.startedAt =

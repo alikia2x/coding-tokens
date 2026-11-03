@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Coding Tokens">
+  <title>Coding Tokens</title>
+  <desc>A matte ink app tile with a white terminal prompt and an orange cursor.</desc>
+  <defs>
+    <linearGradient id="tile" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0" stop-color="#181b22"/>
+      <stop offset="1" stop-color="#08090b"/>
+    </linearGradient>
+    <linearGradient id="cursor" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7aa6ff"/>
+      <stop offset="1" stop-color="#3667d6"/>
+    </linearGradient>
+    <filter id="lift" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="#ffffff" stroke-opacity="0.07" stroke-width="3"/>
+
+  <g filter="url(#lift)" transform="translate(12 0)">
+    <path d="M330 350 L510 512 L330 674" fill="none" stroke="#f7f8fa" stroke-width="78" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="542" y="632" width="166" height="72" rx="36" fill="url(#cursor)"/>
+  </g>
+</svg>

@@ -1,15 +1,10 @@
+import { harnessColor } from "@shared/colors";
 import type { HarnessName } from "@shared/types";
 import { HARNESS_LABELS, HARNESS_SHORT_LABELS } from "@shared/types";
 import { cn } from "cn";
 import { Badge } from "~/components/ui/badge";
 
-export const harnessColor: Record<HarnessName, string> = {
-	codex: "var(--chart-1)",
-	dsh: "var(--chart-2)",
-	opencode: "var(--chart-3)",
-	commandcode: "var(--chart-4)",
-	antigravity: "var(--chart-5)",
-};
+export { harnessColor };
 
 export function HarnessDot({
 	harness,

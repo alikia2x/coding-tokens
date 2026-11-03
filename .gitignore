@@ -8,3 +8,11 @@ build/
 artifacts/
 .cache
 .cottontail-tmp
+
+# Signing material must never be committed.
+*.p12
+*.cer
+*.p8
+*.mobileprovision
+.env
+.env.local

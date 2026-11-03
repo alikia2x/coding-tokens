@@ -149,7 +149,7 @@ function addIndex(
 	index.set(id, matches);
 }
 
-function readCatalog(value: unknown): Catalog {
+export function readCatalog(value: unknown): Catalog {
 	const root = objectOrEmpty(value);
 	const providers = new Set(Object.keys(root).map(normalized));
 	const byProviderModel = new Map<string, CatalogEntry>();
@@ -234,41 +234,41 @@ function providerId(value: string, catalog: Catalog): string | null {
 	return aliases.find((alias) => catalog.providers.has(alias)) ?? null;
 }
 
-function inferredProvider(value: string, catalog: Catalog): string | null {
+const providerRules: Array<[RegExp, string[]]> = [
+	[/^(?:gpt-|o[134](?:-|$)|codex-)/u, ["openai"]],
+	[/^(?:claude-)/u, ["anthropic"]],
+	[/^(?:gemini-|gemma-)/u, ["google"]],
+	[/^deepseek-/u, ["deepseek"]],
+	[/^(?:mimo-|xiaomi-)/u, ["xiaomi"]],
+	[/^(?:grok-|xai-)/u, ["xai"]],
+	[/^(?:llama-|meta-llama-)/u, ["meta"]],
+	[/^(?:qwen|qwq)/u, ["alibaba", "qwen", "dashscope"]],
+	[/^(?:kimi-|moonshot-)/u, ["moonshot", "moonshotai"]],
+	[/^(?:glm-|chatglm-)/u, ["zhipu", "zhipuai", "zai"]],
+	[/^minimax-/u, ["minimax"]],
+	[/^(?:mistral-|codestral-)/u, ["mistral"]],
+	[/^(?:command-r|aya-)/u, ["cohere"]],
+	[/^jamba-/u, ["ai21"]],
+	[/^nova-/u, ["amazon"]],
+	[/^phi-/u, ["microsoft"]],
+	[/^nemotron-/u, ["nvidia"]],
+	[/^yi-/u, ["01-ai"]],
+	[/^ernie-/u, ["baidu"]],
+	[/^hunyuan-/u, ["tencent"]],
+	[/^step-/u, ["stepfun"]],
+	[/^doubao-/u, ["volcengine", "bytedance"]],
+	[/^internlm-/u, ["internlm"]],
+];
+
+/** Provider names inferred from a model slug, whether or not models.dev has a
+ * native provider entry for them. Reseller catalogs still carry the upstream
+ * canonical id, so these names are useful for canonical matching. */
+function inferredProviderNames(value: string): string[] {
 	const slug = normalized(value).split("/").at(-1) ?? "";
-	const rules: Array<[RegExp, string[]]> = [
-		[/^(?:gpt-|o[134](?:-|$)|codex-)/u, ["openai"]],
-		[/^(?:claude-)/u, ["anthropic"]],
-		[/^(?:gemini-|gemma-)/u, ["google"]],
-		[/^deepseek-/u, ["deepseek"]],
-		[/^(?:mimo-|xiaomi-)/u, ["xiaomi"]],
-		[/^(?:grok-|xai-)/u, ["xai"]],
-		[/^(?:llama-|meta-llama-)/u, ["meta"]],
-		[/^(?:qwen|qwq)/u, ["alibaba", "qwen", "dashscope"]],
-		[/^(?:kimi-|moonshot-)/u, ["moonshot", "moonshotai"]],
-		[/^(?:glm-|chatglm-)/u, ["zhipu", "zhipuai", "zai"]],
-		[/^minimax-/u, ["minimax"]],
-		[/^(?:mistral-|codestral-)/u, ["mistral"]],
-		[/^(?:command-r|aya-)/u, ["cohere"]],
-		[/^jamba-/u, ["ai21"]],
-		[/^nova-/u, ["amazon"]],
-		[/^phi-/u, ["microsoft"]],
-		[/^nemotron-/u, ["nvidia"]],
-		[/^yi-/u, ["01-ai"]],
-		[/^ernie-/u, ["baidu"]],
-		[/^hunyuan-/u, ["tencent"]],
-		[/^step-/u, ["stepfun"]],
-		[/^doubao-/u, ["volcengine", "bytedance"]],
-		[/^internlm-/u, ["internlm"]],
-	];
-	for (const [pattern, candidates] of rules) {
-		if (!pattern.test(slug)) continue;
-		for (const candidate of candidates) {
-			const found = providerId(candidate, catalog);
-			if (found) return found;
-		}
+	for (const [pattern, candidates] of providerRules) {
+		if (pattern.test(slug)) return candidates;
 	}
-	return null;
+	return [];
 }
 
 function providerHints(
@@ -282,12 +282,13 @@ function providerHints(
 			const found = providerId(part, catalog);
 			if (found && !hints.includes(found)) hints.push(found);
 		}
-		const inferred = inferredProvider(variant, catalog);
-		if (inferred && !hints.includes(inferred)) hints.push(inferred);
+		for (const inferred of inferredProviderNames(variant)) {
+			if (!hints.includes(inferred)) hints.push(inferred);
+		}
 	}
 	if (harness === "codex") {
-		const openai = providerId("openai", catalog);
-		if (openai && !hints.includes(openai)) hints.push(openai);
+		const openai = providerId("openai", catalog) ?? "openai";
+		if (!hints.includes(openai)) hints.push(openai);
 	}
 	return hints;
 }
@@ -355,17 +356,37 @@ function choose(
 	}
 	if (matches.length === 1) return matches[0] ?? null;
 	const first = matches[0];
+	const canonicalId =
+		first?.canonicalId ??
+		matches.find((entry) => entry.canonicalId !== null)?.canonicalId ??
+		null;
+	const firstName = normalized(first?.name ?? "");
 	const sameModel = Boolean(
 		first &&
-			matches.every(
-				(entry) =>
-					(entry.canonicalId && entry.canonicalId === first.canonicalId) ||
-					(!entry.canonicalId &&
-						!first.canonicalId &&
-						normalized(entry.name) === normalized(first.name)),
-			),
+			(canonicalId
+				? matches.every((entry) =>
+						entry.canonicalId
+							? entry.canonicalId === canonicalId
+							: normalized(entry.name) === firstName,
+					)
+				: matches.every(
+						(entry) =>
+							!entry.canonicalId && normalized(entry.name) === firstName,
+					)),
 	);
-	if (sameModel && sameRates(matches)) return first ?? null;
+	if (sameModel) {
+		// Resellers often list the same canonical model under their own provider
+		// id, so the original provider hint does not match any entry. The canonical
+		// id still names the upstream provider; use it so Codex models such as
+		// gpt-5.1-codex-mini resolve even when OpenAI itself has no catalog row.
+		for (const hint of hints) {
+			const canonical = matches.find(
+				(entry) => entry.canonicalId?.split("/")[0] === hint,
+			);
+			if (canonical) return canonical;
+		}
+		if (sameRates(matches)) return first ?? null;
+	}
 	return preferNewest ? newest(matches) : null;
 }
 
@@ -436,11 +457,23 @@ function estimate(record: UsageRecord, rates: Rates): number {
 	);
 }
 
+function hasPositiveRates(rates: Rates): boolean {
+	return (
+		rates.input > 0 ||
+		rates.output > 0 ||
+		(rates.reasoning ?? 0) > 0 ||
+		(rates.cacheRead ?? 0) > 0 ||
+		(rates.cacheWrite ?? 0) > 0
+	);
+}
+
 export async function enrichWithModelsDev(
 	records: UsageRecord[],
 ): Promise<string | null> {
 	if (!records.length) return null;
-	const needsPricing = records.some((record) => record.costUsd === null);
+	const needsPricing = records.some(
+		(record) => record.costUsd === null || record.costUsd === 0,
+	);
 	const cached = readCache();
 	const age = cached ? Date.now() - cached.fetchedAt : Number.POSITIVE_INFINITY;
 	const cacheIsFresh = age >= 0 && age < cacheTtl;
@@ -503,7 +536,7 @@ function cacheWarning(
 		: refreshError;
 }
 
-function applyCatalog(
+export function applyCatalog(
 	records: UsageRecord[],
 	catalog: Catalog,
 	warning: string | null,
@@ -525,7 +558,16 @@ function applyCatalog(
 		}
 		if (!model) continue;
 		record.model = model.name;
-		if (record.costUsd === null && model.rates) {
+		// A recorded zero is only authoritative when the catalog also prices the
+		// model at zero (free tiers, coding plans, local providers). Unknown
+		// providers and missing catalog entries often leave cost at 0 while the
+		// resolved model has real rates; estimate those instead of showing $0.
+		const shouldEstimate =
+			record.costUsd === null ||
+			(record.costUsd === 0 &&
+				model.rates !== null &&
+				hasPositiveRates(model.rates));
+		if (shouldEstimate && model.rates) {
 			record.costUsd = estimate(record, model.rates);
 			record.costEstimated = true;
 		}

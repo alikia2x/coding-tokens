@@ -4,6 +4,7 @@ import type { SourceResult, UsageRecord } from "../types";
 import {
 	blankSourceResult,
 	expandHome,
+	hasTokenUsage,
 	homeDir,
 	modelName,
 	normalizedCwd,
@@ -95,7 +96,7 @@ export function readCommandCode(): SourceResult {
 			);
 		}
 	}
-	result.records = records;
+	result.records = records.filter(hasTokenUsage);
 	result.messages = messages;
 	return result;
 }

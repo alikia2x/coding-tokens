@@ -11,9 +11,22 @@ import {
 } from "./transcripts";
 
 const SESSION_ID = "00000000-0000-4000-8000-000000000001";
+const FORK_ID = "00000000-0000-4000-8000-000000000003";
+const SUBAGENT_ID = "00000000-0000-4000-8000-000000000004";
 
 function jsonl(events: unknown[]): string {
 	return `${events.map((event) => JSON.stringify(event)).join("\n")}\n`;
+}
+
+function writeRollout(
+	codexHome: string,
+	name: string,
+	events: unknown[],
+): string {
+	const filePath = path.join(codexHome, "sessions", "2026", "01", "01", name);
+	mkdirSync(path.dirname(filePath), { recursive: true });
+	writeFileSync(filePath, jsonl(events), "utf8");
+	return filePath;
 }
 
 function rollout(
@@ -24,60 +37,54 @@ function rollout(
 	text: string,
 ): void {
 	const timestamp = new Date(startedAt).toISOString();
-	const filePath = path.join(codexHome, "sessions", "2026", "01", "01", name);
-	mkdirSync(path.dirname(filePath), { recursive: true });
 	const turn = turnId ? { turn_id: turnId } : {};
-	writeFileSync(
-		filePath,
-		jsonl([
-			{
+	writeRollout(codexHome, name, [
+		{
+			timestamp,
+			type: "session_meta",
+			payload: {
+				id: SESSION_ID,
+				session_id: SESSION_ID,
 				timestamp,
-				type: "session_meta",
-				payload: {
-					id: SESSION_ID,
-					session_id: SESSION_ID,
-					timestamp,
-					cwd: "/tmp/project",
-				},
+				cwd: "/tmp/project",
 			},
-			{
-				timestamp,
-				type: "event_msg",
-				payload: { type: "task_started", ...turn },
+		},
+		{
+			timestamp,
+			type: "event_msg",
+			payload: { type: "task_started", ...turn },
+		},
+		{
+			timestamp,
+			type: "response_item",
+			payload: {
+				type: "message",
+				id: `${name}-user`,
+				role: "user",
+				content: [{ type: "input_text", text }],
 			},
-			{
-				timestamp,
-				type: "response_item",
-				payload: {
-					type: "message",
-					id: `${name}-user`,
-					role: "user",
-					content: [{ type: "input_text", text }],
-				},
+		},
+		{
+			timestamp,
+			type: "response_item",
+			payload: {
+				type: "message",
+				id: `${name}-assistant`,
+				role: "assistant",
+				phase: "final_answer",
+				content: [{ type: "output_text", text: `re: ${text}` }],
 			},
-			{
-				timestamp,
-				type: "response_item",
-				payload: {
-					type: "message",
-					id: `${name}-assistant`,
-					role: "assistant",
-					phase: "final_answer",
-					content: [{ type: "output_text", text: `re: ${text}` }],
-				},
+		},
+		{
+			timestamp,
+			type: "token_usage_record",
+			payload: {
+				response_id: `${name}-response`,
+				...(turnId ? { turn_id: turnId } : {}),
+				usage: { input_tokens: 10, output_tokens: 5 },
 			},
-			{
-				timestamp,
-				type: "token_usage_record",
-				payload: {
-					response_id: `${name}-response`,
-					...(turnId ? { turn_id: turnId } : {}),
-					usage: { input_tokens: 10, output_tokens: 5 },
-				},
-			},
-		]),
-		"utf8",
-	);
+		},
+	]);
 }
 
 function withCodexHome(run: (codexHome: string) => void): void {
@@ -155,6 +162,144 @@ describe("Codex rollout segments", () => {
 			const turnIds = new Set(session?.items.map((item) => item.turnId));
 			expect(turnIds.size).toBe(2);
 			expect(turnIds.has("1")).toBe(false);
+		});
+	});
+
+	test("keeps a forked chat separate from its spawned subagents", () => {
+		withCodexHome((codexHome) => {
+			const forkPath = writeRollout(
+				codexHome,
+				`rollout-2026-01-03T10-00-00-${FORK_ID}.jsonl`,
+				[
+					{
+						timestamp: "2026-01-03T10:00:00.000Z",
+						type: "session_meta",
+						payload: {
+							id: FORK_ID,
+							session_id: FORK_ID,
+							forked_from_id: SESSION_ID,
+							thread_source: "user",
+							source: "vscode",
+							timestamp: "2026-01-03T10:00:00.000Z",
+							cwd: "/tmp/project",
+						},
+					},
+					{
+						timestamp: "2026-01-03T10:00:00.000Z",
+						type: "event_msg",
+						payload: { type: "task_started", turn_id: "fork-turn" },
+					},
+					{
+						timestamp: "2026-01-03T10:00:00.000Z",
+						type: "response_item",
+						payload: {
+							type: "message",
+							id: "fork-user",
+							role: "user",
+							content: [{ type: "input_text", text: "fork request" }],
+						},
+					},
+					{
+						timestamp: "2026-01-03T10:00:00.000Z",
+						type: "token_usage_record",
+						payload: {
+							response_id: "fork-response",
+							turn_id: "fork-turn",
+							usage: { input_tokens: 10, output_tokens: 5 },
+						},
+					},
+				],
+			);
+			const subTimestamp = "2026-01-03T11:00:00.000Z";
+			const subPath = writeRollout(
+				codexHome,
+				`rollout-2026-01-03T11-00-00-${SUBAGENT_ID}.jsonl`,
+				[
+					{
+						timestamp: subTimestamp,
+						type: "session_meta",
+						payload: {
+							id: SUBAGENT_ID,
+							session_id: FORK_ID,
+							thread_source: "subagent",
+							source: {
+								subagent: {
+									thread_spawn: {
+										parent_thread_id: FORK_ID,
+										depth: 1,
+									},
+								},
+							},
+							timestamp: subTimestamp,
+							cwd: "/tmp/project",
+						},
+					},
+					// Codex replays the parent's session_meta inside a spawn rollout.
+					{
+						timestamp: subTimestamp,
+						type: "session_meta",
+						payload: {
+							id: FORK_ID,
+							session_id: FORK_ID,
+							thread_source: "user",
+							source: "vscode",
+							timestamp: "2026-01-03T10:00:00.000Z",
+							cwd: "/tmp/project",
+						},
+					},
+					{
+						timestamp: subTimestamp,
+						type: "event_msg",
+						payload: { type: "task_started", turn_id: "sub-turn" },
+					},
+					{
+						timestamp: subTimestamp,
+						type: "response_item",
+						payload: {
+							type: "message",
+							id: "sub-user",
+							role: "user",
+							content: [{ type: "input_text", text: "sub request" }],
+						},
+					},
+					{
+						timestamp: subTimestamp,
+						type: "token_usage_record",
+						payload: {
+							response_id: "sub-response",
+							turn_id: "sub-turn",
+							usage: { input_tokens: 7, output_tokens: 3 },
+						},
+					},
+				],
+			);
+
+			const usage = readCodex();
+			const forkRecords = usage.records.filter(
+				(record) => record.sessionId === FORK_ID,
+			);
+			const subRecords = usage.records.filter(
+				(record) => record.sessionId === SUBAGENT_ID,
+			);
+			expect(forkRecords).toHaveLength(1);
+			expect(forkRecords.every((record) => !record.isSubagent)).toBe(true);
+			expect(subRecords).toHaveLength(1);
+			expect(subRecords.every((record) => record.isSubagent)).toBe(true);
+			expect(usage.messages.get(FORK_ID)).toBe(1);
+
+			const result = readTranscriptSources(["codex"], {
+				codex: new Set([forkPath, subPath]),
+			})[0];
+			const fork = result?.sessions.find(
+				(candidate) => candidate.sessionId === FORK_ID,
+			);
+			const subagent = result?.sessions.find(
+				(candidate) => candidate.sessionId === SUBAGENT_ID,
+			);
+			expect(result?.sessions).toHaveLength(2);
+			expect(fork?.items.map((item) => item.text)).toEqual(["fork request"]);
+			expect(subagent?.items.map((item) => item.text)).toEqual(["sub request"]);
+			expect(fork?.startedAt).toBe(Date.parse("2026-01-03T10:00:00.000Z"));
 		});
 	});
 });

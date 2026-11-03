@@ -6,6 +6,7 @@ import type { SourceResult, UsageRecord } from "../types";
 import {
 	blankSourceResult,
 	expandHome,
+	hasTokenUsage,
 	homeDir,
 	modelName,
 	normalizedCwd,
@@ -234,7 +235,7 @@ export function readOpenCode(): SourceResult {
 	result.records = uniqueBy(
 		records,
 		(record) => `${record.sessionId}:${record.messageId}`,
-	);
+	).filter(hasTokenUsage);
 	result.messages = messages;
 	return result;
 }

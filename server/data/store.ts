@@ -383,13 +383,11 @@ export class DataStore {
 		for (const meta of this.catalog.values()) {
 			const records = this.recordsBySession.get(meta.key) ?? [];
 			const ranged = records.filter((record) => recordMatches(record, range));
-			const inRange =
-				ranged.length > 0 ||
-				(meta.startedAt !== null &&
-					meta.startedAt !== undefined &&
-					(range.from === null || meta.startedAt >= range.from) &&
-					(range.until === null || meta.startedAt < range.until));
-			if (!inRange) continue;
+			// A catalog entry only proves that a session exists. Without a usage
+			// record it would show up with zero tokens, requests and cost, which is
+			// noise in every report. Transcript-only sessions stay reachable from
+			// the source metadata, but the usage views only list real usage.
+			if (!ranged.length) continue;
 			summaries.push(this.summarize(meta, ranged, range));
 		}
 		summaries.sort(
