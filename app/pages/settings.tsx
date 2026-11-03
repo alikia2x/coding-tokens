@@ -125,7 +125,7 @@ export function SettingsPage() {
 							onCheckedChange={(checked) =>
 								update({ includeInternal: checked })
 							}
-							aria-label="Include internal sessions"
+							aria-label={t("settings.includeInternalAria")}
 						/>
 					</Row>
 				</Section>

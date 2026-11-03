@@ -1,3 +1,5 @@
+import { useT } from "~/lib/i18n";
+
 export function Sparkline({
 	values,
 	className,
@@ -5,6 +7,7 @@ export function Sparkline({
 	values: number[];
 	className?: string;
 }) {
+	const t = useT();
 	const width = 96;
 	const height = 22;
 	const max = Math.max(1, ...values);
@@ -20,7 +23,7 @@ export function Sparkline({
 			viewBox={`0 0 ${width} ${height}`}
 			className={className}
 			role="img"
-			aria-label="Cost trend"
+			aria-label={t("metric.costTrend")}
 			preserveAspectRatio="none"
 		>
 			<polyline

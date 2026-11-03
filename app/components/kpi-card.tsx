@@ -2,6 +2,7 @@ import { cn } from "cn";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import type { ReactNode } from "react";
 import { formatDelta } from "~/lib/format";
+import { useT } from "~/lib/i18n";
 
 export function KpiCard({
 	label,
@@ -19,6 +20,7 @@ export function KpiCard({
 	const delta = previous
 		? formatDelta(previous.current, previous.previous)
 		: null;
+	const t = useT();
 	return (
 		<div
 			className={cn(
@@ -33,7 +35,7 @@ export function KpiCard({
 				{delta ? (
 					<span
 						className="inline-flex items-center gap-0.5 text-[11px] text-muted-foreground tabular"
-						title="Compared with the previous period"
+						title={t("metric.comparedPrevious")}
 					>
 						{delta.direction === "up" ? (
 							<ArrowUpRight className="size-3" />

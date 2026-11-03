@@ -179,7 +179,7 @@ export function UsageChart({
 					variant="outline"
 					size="sm"
 					className="h-7"
-					aria-label="Chart metric"
+					aria-label={t("chart.metric")}
 				>
 					<ToggleGroupItem
 						value="tokens"

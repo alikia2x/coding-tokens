@@ -643,7 +643,7 @@ function TimeInput({
 									: "text-muted-foreground hover:text-foreground",
 							)}
 						>
-							{value}
+							{value === "AM" ? t("time.am") : t("time.pm")}
 						</button>
 					))}
 				</div>

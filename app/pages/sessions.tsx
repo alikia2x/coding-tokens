@@ -276,7 +276,9 @@ export function SessionsPage() {
 										"flex h-8 shrink-0 items-center gap-2 rounded px-2 text-left text-[12px] text-muted-foreground transition-colors hover:bg-hover hover:text-foreground",
 										harness === name && "bg-muted text-foreground",
 									)}
-									title={info?.available ? undefined : "Not installed"}
+									title={
+										info?.available ? undefined : t("harnesses.notInstalled")
+									}
 								>
 									<HarnessDot harness={name} />
 									<span className="flex-1">{HARNESS_LABELS[name]}</span>
@@ -350,7 +352,7 @@ export function SessionsPage() {
 									{cwd.split("/").at(-1) ?? cwd}
 									<button
 										type="button"
-										aria-label="Clear project filter"
+										aria-label={t("sessions.clearProjectFilter")}
 										onClick={() =>
 											setListParam(
 												"project",
@@ -371,7 +373,7 @@ export function SessionsPage() {
 									{model}
 									<button
 										type="button"
-										aria-label="Clear model filter"
+										aria-label={t("sessions.clearModelFilter")}
 										onClick={() =>
 											setListParam(
 												"model",
@@ -426,7 +428,7 @@ export function SessionsPage() {
 							<Switch
 								checked={grouped}
 								onCheckedChange={setGrouped}
-								aria-label="Group by project"
+								aria-label={t("sessions.groupByProject")}
 							/>
 							{t("sessions.group")}
 						</div>

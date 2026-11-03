@@ -39,7 +39,7 @@ export function AppHeader({ status }: { status: StatusPayload }) {
 				</Link>
 				<nav
 					className="no-drag hidden items-center gap-0.5 md:flex"
-					aria-label="Primary"
+					aria-label={t("nav.primary")}
 				>
 					{tabs.map((tab) => (
 						<NavLink
@@ -74,7 +74,7 @@ export function AppHeader({ status }: { status: StatusPayload }) {
 			</div>
 			<nav
 				className="no-scrollbar flex items-center gap-1 overflow-x-auto border-t px-4 md:hidden"
-				aria-label="Primary"
+				aria-label={t("nav.primary")}
 			>
 				{tabs.map((tab) => (
 					<NavLink

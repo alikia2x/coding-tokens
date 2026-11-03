@@ -1,5 +1,4 @@
 import { Globe } from "lucide-react";
-import { useTranslation } from "react-i18next";
 import { Button } from "~/components/ui/button";
 import {
 	DropdownMenu,
@@ -10,12 +9,11 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
-import { useT } from "~/lib/i18n";
+import { setAppLocale, useT } from "~/lib/i18n";
 import { useSettings } from "~/lib/settings";
 
 export function LanguageToggle() {
 	const { settings, update } = useSettings();
-	const { i18n } = useTranslation();
 	const t = useT();
 	return (
 		<DropdownMenu>
@@ -35,7 +33,7 @@ export function LanguageToggle() {
 					value={settings.locale}
 					onValueChange={(value) => {
 						update({ locale: value as "en" | "zh-CN" });
-						void i18n.changeLanguage(value);
+						setAppLocale(value as "en" | "zh-CN");
 					}}
 				>
 					<DropdownMenuRadioItem value="en">English</DropdownMenuRadioItem>
