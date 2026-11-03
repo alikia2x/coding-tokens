@@ -100,7 +100,7 @@ export function ContributionHeatmap({
 						{t("heatmap.period")}
 					</span>
 				</div>
-				<div className="flex items-baseline gap-3 text-[11px] text-muted-foreground tabular">
+				<div className="flex flex-wrap items-center gap-3 text-[11px] leading-none text-muted-foreground tabular">
 					{hovered ? (
 						<>
 							<span className="text-foreground">
@@ -117,7 +117,7 @@ export function ContributionHeatmap({
 					) : (
 						<>
 							<span className="inline-flex items-center gap-1 text-foreground">
-								<Flame className="size-3" />
+								<Flame className="size-3 shrink-0" />
 								{t("heatmap.streak", { count: streak })}
 							</span>
 							<span>
