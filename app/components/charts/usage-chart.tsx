@@ -10,7 +10,11 @@ import {
 	YAxis,
 } from "recharts";
 import { ToggleGroup, ToggleGroupItem } from "~/components/ui/toggle-group";
-import { formatBucketLabelFor, useDateLocale } from "~/lib/date-locale";
+import {
+	formatBucketLabelFor,
+	formatBucketTooltipLabelFor,
+	useDateLocale,
+} from "~/lib/date-locale";
 import { formatCompact, formatCost, formatNumber } from "~/lib/format";
 import { useT } from "~/lib/i18n";
 
@@ -32,7 +36,9 @@ const tokenSeries = [
 ] as const;
 
 interface Point {
+	key: string;
 	label: string;
+	tooltipLabel: string;
 	inputTokens: number;
 	outputTokens: number;
 	cacheReadTokens: number;
@@ -48,7 +54,9 @@ function pointOf(
 	code: "en" | "zh-CN",
 ): Point {
 	return {
+		key: bucket.key,
 		label: formatBucketLabelFor(bucket.start, unit, code),
+		tooltipLabel: formatBucketTooltipLabelFor(bucket.start, unit, code),
 		inputTokens: bucket.totals.inputTokens,
 		outputTokens: bucket.totals.outputTokens,
 		cacheReadTokens: bucket.totals.cacheReadTokens,
@@ -62,11 +70,9 @@ function pointOf(
 function TokenTooltip({
 	active,
 	payload,
-	label,
 }: {
 	active?: boolean;
 	payload?: Array<{ payload?: Point }>;
-	label?: string;
 }) {
 	const t = useT();
 	const data = payload?.[0]?.payload;
@@ -79,7 +85,7 @@ function TokenTooltip({
 	return (
 		<div className="min-w-48 rounded-md border bg-popover px-3 py-2 text-popover-foreground shadow-md">
 			<div className="flex items-baseline justify-between gap-6">
-				<span className="text-[11px] font-medium">{label}</span>
+				<span className="text-[11px] font-medium">{data.tooltipLabel}</span>
 				<span className="tabular">{formatNumber(total)}</span>
 			</div>
 			<div className="mt-1.5 space-y-1">
@@ -110,11 +116,9 @@ function TokenTooltip({
 function CostTooltip({
 	active,
 	payload,
-	label,
 }: {
 	active?: boolean;
 	payload?: Array<{ payload?: Point }>;
-	label?: string;
 }) {
 	const t = useT();
 	const data = payload?.[0]?.payload;
@@ -122,7 +126,7 @@ function CostTooltip({
 	return (
 		<div className="min-w-40 rounded-md border bg-popover px-3 py-2 text-popover-foreground shadow-md">
 			<div className="flex items-baseline justify-between gap-6">
-				<span className="text-[11px] font-medium">{label}</span>
+				<span className="text-[11px] font-medium">{data.tooltipLabel}</span>
 				<span className="tabular">{formatCost(data.costUsd)}</span>
 			</div>
 			<div className="mt-1 flex items-center justify-between gap-4 text-[11px]">
@@ -149,6 +153,10 @@ export function UsageChart({
 	const data = useMemo(
 		() => buckets.map((bucket) => pointOf(bucket, unit, code)),
 		[buckets, unit, code],
+	);
+	const labelByKey = useMemo(
+		() => new Map(data.map((point) => [point.key, point.label])),
+		[data],
 	);
 	const empty = data.every(
 		(point) =>
@@ -209,7 +217,8 @@ export function UsageChart({
 						>
 							<CartesianGrid vertical={false} stroke="var(--chart-grid)" />
 							<XAxis
-								dataKey="label"
+								dataKey="key"
+								tickFormatter={(key: string) => labelByKey.get(key) ?? key}
 								axisLine={false}
 								tickLine={false}
 								minTickGap={40}

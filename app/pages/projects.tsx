@@ -1,5 +1,5 @@
 import { matchesTextQuery, parseSearchQuery } from "@shared/search";
-import { HARNESS_LABELS } from "@shared/types";
+import { HARNESS_LABELS, type ProjectReportRow } from "@shared/types";
 import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
@@ -47,6 +47,27 @@ function tokenTotal(row: {
 	);
 }
 
+function compareProjects(
+	left: ProjectReportRow,
+	right: ProjectReportRow,
+	key: string,
+): number {
+	switch (key) {
+		case "name":
+			return left.name.localeCompare(right.name);
+		case "sessions":
+			return left.totals.sessions - right.totals.sessions;
+		case "requests":
+			return left.totals.requests - right.totals.requests;
+		case "tokens":
+			return tokenTotal(left) - tokenTotal(right);
+		case "recent":
+			return (left.lastActivityAt ?? 0) - (right.lastActivityAt ?? 0);
+		default:
+			return left.totals.costUsd - right.totals.costUsd;
+	}
+}
+
 export function ProjectsPage() {
 	const range = useResolvedRange();
 	const projects = useProjects(range);
@@ -60,26 +81,33 @@ export function ProjectsPage() {
 	const parsed = useMemo(() => parseSearchQuery(query), [query]);
 
 	const rows = useMemo(() => {
-		const filtered = (projects.data?.rows ?? []).filter((row) =>
-			matchesTextQuery(parsed, [row.name, row.cwd ?? "", ...row.models]),
-		);
-		const direction = sort.direction === "asc" ? 1 : -1;
-		return [...filtered].sort((left, right) => {
-			const result =
-				sort.key === "name"
-					? left.name.localeCompare(right.name)
-					: sort.key === "sessions"
-						? left.totals.sessions - right.totals.sessions
-						: sort.key === "requests"
-							? left.totals.requests - right.totals.requests
-							: sort.key === "tokens"
-								? tokenTotal(left) - tokenTotal(right)
-								: sort.key === "recent"
-									? (left.lastActivityAt ?? 0) - (right.lastActivityAt ?? 0)
-									: left.totals.costUsd - right.totals.costUsd;
-			return result * direction;
+		const filtered = (projects.data?.rows ?? []).filter((row) => {
+			const localized = localizeLabel(t, row.name);
+			const harnessLabels = row.harnesses.map(
+				(harness) => HARNESS_LABELS[harness] ?? harness,
+			);
+			return matchesTextQuery(
+				parsed,
+				[
+					row.name,
+					localized,
+					row.cwd ?? "",
+					...row.models,
+					...row.harnesses,
+					...harnessLabels,
+				],
+				{
+					project: [row.name, localized, row.cwd ?? ""],
+					model: row.models,
+					harness: [...row.harnesses, ...harnessLabels],
+				},
+			);
 		});
-	}, [projects.data, parsed, sort]);
+		const direction = sort.direction === "asc" ? 1 : -1;
+		return [...filtered].sort(
+			(left, right) => compareProjects(left, right, sort.key) * direction,
+		);
+	}, [projects.data, parsed, sort, t]);
 
 	const summary = useMemo(
 		() =>
@@ -103,6 +131,8 @@ export function ProjectsPage() {
 		);
 	}
 
+	const isInitialLoading = projects.isLoading && !projects.data;
+
 	return (
 		<PageContainer>
 			<SectionHeading
@@ -124,7 +154,7 @@ export function ProjectsPage() {
 				]}
 			/>
 			<div className="mt-3">
-				<div className="relative max-w-xl">
+				<div className="relative">
 					<Search className="pointer-events-none absolute left-2.5 top-2 size-3.5 text-muted-foreground" />
 					<Input
 						value={query}
@@ -136,20 +166,22 @@ export function ProjectsPage() {
 				</div>
 			</div>
 
-			{projects.isLoading && !projects.data ? (
+			{isInitialLoading && (
 				<div className="mt-3 space-y-2">
 					{Array.from({ length: 8 }, (_, index) => (
 						// biome-ignore lint/suspicious/noArrayIndexKey: static placeholder list
 						<Skeleton key={index} className="h-12 rounded-md" />
 					))}
 				</div>
-			) : rows.length === 0 ? (
+			)}
+			{!isInitialLoading && rows.length === 0 && (
 				<EmptyState
 					className="mt-3"
 					title={t("empty.projectsInRange")}
 					description={t("empty.widenSearch")}
 				/>
-			) : (
+			)}
+			{!isInitialLoading && rows.length > 0 && (
 				<div className="mt-3 rounded-lg border bg-card px-2">
 					<Table>
 						<TableHeader>

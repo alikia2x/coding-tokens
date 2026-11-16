@@ -1,5 +1,5 @@
 import { matchesTextQuery, parseSearchQuery } from "@shared/search";
-import { HARNESS_LABELS } from "@shared/types";
+import { HARNESS_LABELS, type ModelReportRow } from "@shared/types";
 import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
@@ -48,6 +48,31 @@ function tokenTotal(row: {
 	);
 }
 
+function compareModels(
+	left: ModelReportRow,
+	right: ModelReportRow,
+	key: string,
+): number {
+	switch (key) {
+		case "model":
+			return left.model.localeCompare(right.model);
+		case "requests":
+			return left.totals.requests - right.totals.requests;
+		case "tokens":
+			return tokenTotal(left) - tokenTotal(right);
+		case "cache":
+			return (left.cacheReadShare ?? 0) - (right.cacheReadShare ?? 0);
+		case "efficiency":
+			return (
+				(left.costPerMillionTokens ?? 0) - (right.costPerMillionTokens ?? 0)
+			);
+		case "recent":
+			return (left.lastActivityAt ?? 0) - (right.lastActivityAt ?? 0);
+		default:
+			return left.totals.costUsd - right.totals.costUsd;
+	}
+}
+
 export function ModelsPage() {
 	const range = useResolvedRange();
 	const models = useModels(range);
@@ -61,29 +86,31 @@ export function ModelsPage() {
 	const parsed = useMemo(() => parseSearchQuery(query), [query]);
 
 	const rows = useMemo(() => {
-		const filtered = (models.data?.rows ?? []).filter((row) =>
-			matchesTextQuery(parsed, [row.model, row.provider ?? ""]),
-		);
-		const direction = sort.direction === "asc" ? 1 : -1;
-		return [...filtered].sort((left, right) => {
-			const result =
-				sort.key === "model"
-					? left.model.localeCompare(right.model)
-					: sort.key === "requests"
-						? left.totals.requests - right.totals.requests
-						: sort.key === "tokens"
-							? tokenTotal(left) - tokenTotal(right)
-							: sort.key === "cache"
-								? (left.cacheReadShare ?? 0) - (right.cacheReadShare ?? 0)
-								: sort.key === "efficiency"
-									? (left.costPerMillionTokens ?? 0) -
-										(right.costPerMillionTokens ?? 0)
-									: sort.key === "recent"
-										? (left.lastActivityAt ?? 0) - (right.lastActivityAt ?? 0)
-										: left.totals.costUsd - right.totals.costUsd;
-			return result * direction;
+		const filtered = (models.data?.rows ?? []).filter((row) => {
+			const localized = localizeLabel(t, row.model);
+			const harnessLabels = row.harnesses.map(
+				(harness) => HARNESS_LABELS[harness] ?? harness,
+			);
+			return matchesTextQuery(
+				parsed,
+				[
+					row.model,
+					localized,
+					row.provider ?? "",
+					...row.harnesses,
+					...harnessLabels,
+				],
+				{
+					model: [row.model, localized],
+					harness: [...row.harnesses, ...harnessLabels],
+				},
+			);
 		});
-	}, [models.data, parsed, sort]);
+		const direction = sort.direction === "asc" ? 1 : -1;
+		return [...filtered].sort(
+			(left, right) => compareModels(left, right, sort.key) * direction,
+		);
+	}, [models.data, parsed, sort, t]);
 
 	const summary = useMemo(
 		() =>
@@ -109,6 +136,8 @@ export function ModelsPage() {
 		);
 	}
 
+	const isInitialLoading = models.isLoading && !models.data;
+
 	return (
 		<PageContainer>
 			<SectionHeading
@@ -130,7 +159,7 @@ export function ModelsPage() {
 				]}
 			/>
 			<div className="mt-3">
-				<div className="relative max-w-xl">
+				<div className="relative">
 					<Search className="pointer-events-none absolute left-2.5 top-2 size-3.5 text-muted-foreground" />
 					<Input
 						value={query}
@@ -142,20 +171,22 @@ export function ModelsPage() {
 				</div>
 			</div>
 
-			{models.isLoading && !models.data ? (
+			{isInitialLoading && (
 				<div className="mt-3 space-y-2">
 					{Array.from({ length: 8 }, (_, index) => (
 						// biome-ignore lint/suspicious/noArrayIndexKey: static placeholder list
 						<Skeleton key={index} className="h-12 rounded-md" />
 					))}
 				</div>
-			) : rows.length === 0 ? (
+			)}
+			{!isInitialLoading && rows.length === 0 && (
 				<EmptyState
 					className="mt-3"
 					title={t("empty.modelsInRange")}
 					description={t("empty.widenSearch")}
 				/>
-			) : (
+			)}
+			{!isInitialLoading && rows.length > 0 && (
 				<div className="mt-3 rounded-lg border bg-card px-2">
 					<Table>
 						<TableHeader>

@@ -39,8 +39,10 @@ const pages: Array<{ path: string; label: TranslationKey }> = [
 export function CommandSearch() {
 	const [open, setOpen] = useState(false);
 	const [query, setQuery] = useState("");
-	const debounced = useDebouncedValue(query, 120);
-	const search = useSearch(debounced, open);
+	const [composing, setComposing] = useState(false);
+	const settledQuery = composing ? "" : query;
+	const debounced = useDebouncedValue(settledQuery, 350);
+	const search = useSearch(debounced, open && !composing);
 	const navigate = useNavigate();
 	const parsed = useMemo(() => parseSearchQuery(debounced), [debounced]);
 	const t = useT();
@@ -112,6 +114,8 @@ export function CommandSearch() {
 						<CommandInput
 							value={query}
 							onValueChange={setQuery}
+							onCompositionStart={() => setComposing(true)}
+							onCompositionEnd={() => setComposing(false)}
 							placeholder={t("search.placeholder")}
 							autoFocus
 						/>
@@ -130,11 +134,15 @@ export function CommandSearch() {
 										<CommandItem
 											key={session.key}
 											value={session.key}
-											onSelect={() =>
-												go(
-													`/sessions/${session.harness}/${encodeURIComponent(session.sessionId)}`,
-												)
-											}
+											onSelect={() => {
+												const find = parsed.terms[0]
+													? `?find=${encodeURIComponent(parsed.terms[0])}`
+													: "";
+												navigate(
+													`/sessions/${session.harness}/${encodeURIComponent(session.sessionId)}${find}`,
+												);
+												close();
+											}}
 											className="items-start gap-2.5 py-2"
 										>
 											<HarnessDot
@@ -150,7 +158,7 @@ export function CommandSearch() {
 												</div>
 												<div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
 													<span className="truncate">
-														{session.projectName}
+														{localizeLabel(t, session.projectName)}
 													</span>
 													<span className="tabular text-[11px] text-muted-foreground">
 														{formatCost(session.costUsd)}
@@ -159,6 +167,14 @@ export function CommandSearch() {
 														{formatRelativeTime(session.lastActivityAt)}
 													</span>
 												</div>
+												{session.snippet ? (
+													<div className="mt-1 truncate text-[11px] text-muted-foreground/90">
+														<Highlight
+															text={session.snippet}
+															terms={parsed.terms}
+														/>
+													</div>
+												) : null}
 											</div>
 											<span className="mt-0.5 text-[10px] text-muted-foreground">
 												{HARNESS_LABELS[session.harness]}

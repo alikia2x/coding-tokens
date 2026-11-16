@@ -222,6 +222,7 @@ export function TimeRangePicker() {
 			if (clicked < fromDate) {
 				setFromDate(clicked);
 				setToDate(fromDate);
+				setToMinutes(MINUTES_IN_DAY - 1);
 				setActive(null);
 				return;
 			}

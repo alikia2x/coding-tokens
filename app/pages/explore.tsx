@@ -38,7 +38,11 @@ import {
 	TableRow,
 } from "~/components/ui/table";
 import { categoricalColors, colorForSeries } from "~/lib/chart-colors";
-import { formatBucketLabelFor, useDateLocale } from "~/lib/date-locale";
+import {
+	formatBucketLabelFor,
+	formatBucketTooltipLabelFor,
+	useDateLocale,
+} from "~/lib/date-locale";
 import {
 	formatCost,
 	formatCostAxis,
@@ -200,18 +204,23 @@ export function ExplorePage() {
 	const data = useMemo(() => {
 		if (!explore.data) return [];
 		if (mode === "dimension")
-			return explore.data.rows.map((row) => ({
+			return explore.data.rows.map((row, index) => ({
+				key: `${row.key}::${index}`,
 				label: row.label,
+				tooltipLabel: row.label,
 				value: metricValue(row.totals, activeMetric),
 			}));
 		return explore.data.xLabels.map((label, index) => {
+			const start = explore.data?.starts[index];
+			const hasStart = typeof start === "number" && Number.isFinite(start);
+			const axisLabel = hasStart
+				? formatBucketLabelFor(start, bucket, code)
+				: label;
 			const row: Record<string, string | number> = {
-				label: explore.data?.starts[index]
-					? formatBucketLabelFor(
-							explore.data.starts[index] as number,
-							bucket,
-							code,
-						)
+				key: hasStart ? String(start) : `${label}::${index}`,
+				label: axisLabel,
+				tooltipLabel: hasStart
+					? formatBucketTooltipLabelFor(start, bucket, code)
 					: label,
 			};
 			for (const series of explore.data?.series ?? [])
@@ -220,12 +229,18 @@ export function ExplorePage() {
 		});
 	}, [explore.data, mode, activeMetric, bucket, code]);
 
+	const labelByKey = useMemo(
+		() =>
+			new Map(data.map((point) => [String(point.key), String(point.label)])),
+		[data],
+	);
+
 	const series =
 		mode === "dimension"
 			? [
 					{
 						key: "value",
-						label: metricLabel(activeMetric),
+						label: t(metricLabel(activeMetric)),
 						color: categoricalColors[0],
 					},
 				]
@@ -470,7 +485,8 @@ export function ExplorePage() {
 								>
 									<CartesianGrid vertical={false} stroke="var(--chart-grid)" />
 									<XAxis
-										dataKey="label"
+										dataKey="key"
+										tickFormatter={(key: string) => labelByKey.get(key) ?? key}
 										axisLine={false}
 										tickLine={false}
 										minTickGap={32}
@@ -515,7 +531,8 @@ export function ExplorePage() {
 								>
 									<CartesianGrid vertical={false} stroke="var(--chart-grid)" />
 									<XAxis
-										dataKey="label"
+										dataKey="key"
+										tickFormatter={(key: string) => labelByKey.get(key) ?? key}
 										axisLine={false}
 										tickLine={false}
 										minTickGap={32}
@@ -575,13 +592,16 @@ export function ExplorePage() {
 									/>
 									<YAxis
 										type="category"
-										dataKey="label"
+										dataKey="key"
 										axisLine={false}
 										tickLine={false}
 										width={172}
-										tickFormatter={(value: string) =>
-											value.length > 26 ? `${value.slice(0, 25)}…` : value
-										}
+										tickFormatter={(key: string) => {
+											const value = labelByKey.get(key) ?? key;
+											return value.length > 26
+												? `${value.slice(0, 25)}…`
+												: value;
+										}}
 									/>
 									<Tooltip
 										content={<ExploreTooltip metric={activeMetric} />}
@@ -590,7 +610,7 @@ export function ExplorePage() {
 									/>
 									<Bar
 										dataKey="value"
-										name={metricLabel(activeMetric)}
+										name={t(metricLabel(activeMetric))}
 										fill={categoricalColors[0]}
 										radius={[0, 2, 2, 0]}
 										maxBarSize={18}
@@ -604,7 +624,8 @@ export function ExplorePage() {
 								>
 									<CartesianGrid vertical={false} stroke="var(--chart-grid)" />
 									<XAxis
-										dataKey="label"
+										dataKey="key"
+										tickFormatter={(key: string) => labelByKey.get(key) ?? key}
 										axisLine={false}
 										tickLine={false}
 										minTickGap={32}
@@ -788,14 +809,20 @@ function ExploreTooltip({
 	metric,
 }: {
 	active?: boolean;
-	payload?: Array<{ name?: string; value?: number; color?: string }>;
+	payload?: Array<{
+		name?: string;
+		value?: number;
+		color?: string;
+		payload?: { tooltipLabel?: string };
+	}>;
 	label?: string;
 	metric: Metric;
 }) {
 	if (!active || !payload?.length) return null;
+	const heading = payload[0]?.payload?.tooltipLabel ?? label;
 	return (
 		<div className="min-w-40 rounded-md border bg-popover px-3 py-2 text-popover-foreground shadow-md">
-			<div className="text-[11px] font-medium">{label}</div>
+			<div className="text-[11px] font-medium">{heading}</div>
 			<div className="mt-1.5 space-y-1">
 				{payload.map((item) => (
 					<div

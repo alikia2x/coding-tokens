@@ -1,13 +1,16 @@
+import { matchesTextQuery, parseSearchQuery } from "@shared/search";
 import type { HarnessReportRow } from "@shared/types";
 import { cn } from "cn";
-import { AlertTriangle, ChevronRight } from "lucide-react";
-import { useState } from "react";
+import { AlertTriangle, ChevronRight, Search } from "lucide-react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router";
+import { EmptyState } from "~/components/empty-state";
 import { HarnessDot } from "~/components/harness-badge";
 import { PageContainer } from "~/components/page-container";
 import { SectionHeading } from "~/components/section-heading";
 import { SummaryStrip } from "~/components/summary-strip";
 import { Badge } from "~/components/ui/badge";
+import { Input } from "~/components/ui/input";
 import { Skeleton } from "~/components/ui/skeleton";
 import {
 	formatCost,
@@ -37,9 +40,30 @@ function tokensOf(totals: {
 export function HarnessesPage() {
 	const range = useResolvedRange();
 	const harnesses = useHarnesses(range);
+	const [query, setQuery] = useState("");
 	const [open, setOpen] = useState<Set<string>>(() => new Set());
 	const t = useT();
 	const rangeQuery = rangeQueryString(range);
+	const parsed = useMemo(() => parseSearchQuery(query), [query]);
+	const rows = useMemo(
+		() =>
+			(harnesses.data?.rows ?? []).filter((row) =>
+				matchesTextQuery(
+					parsed,
+					[
+						row.label,
+						row.harness,
+						...row.paths,
+						...row.topModels.map((model) => model.model),
+					],
+					{
+						harness: [row.label, row.harness],
+						model: row.topModels.map((model) => model.model),
+					},
+				),
+			),
+		[harnesses.data, parsed],
+	);
 	const totals = harnesses.data?.totals;
 
 	function toggle(harness: string): void {
@@ -89,29 +113,49 @@ export function HarnessesPage() {
 					},
 				]}
 			/>
-
-			<div className="mt-3 rounded-lg border bg-card">
-				<div className="grid grid-cols-[minmax(140px,1.2fr)_90px_80px_80px_90px_90px_24px] gap-2 border-b px-4 py-2 text-[10px] text-muted-foreground max-lg:hidden">
-					<span>{t("common.harness")}</span>
-					<span>{t("common.status")}</span>
-					<span className="text-right">{t("common.sessions")}</span>
-					<span className="text-right">{t("metric.requests")}</span>
-					<span className="text-right">{t("metric.tokens")}</span>
-					<span className="text-right">{t("metric.cost")}</span>
-					<span />
-				</div>
-				<div className="divide-y">
-					{harnesses.data?.rows.map((row) => (
-						<HarnessRow
-							key={row.harness}
-							row={row}
-							open={open.has(row.harness)}
-							rangeQuery={rangeQuery}
-							onToggle={() => toggle(row.harness)}
-						/>
-					))}
+			<div className="mt-3">
+				<div className="relative">
+					<Search className="pointer-events-none absolute left-2.5 top-2 size-3.5 text-muted-foreground" />
+					<Input
+						value={query}
+						onChange={(event) => setQuery(event.target.value)}
+						placeholder={t("harnesses.search")}
+						className="pl-8 text-[12px]"
+						data-search-input
+					/>
 				</div>
 			</div>
+
+			{rows.length === 0 ? (
+				<EmptyState
+					className="mt-3"
+					title={t("empty.results")}
+					description={t("empty.widenSearch")}
+				/>
+			) : (
+				<div className="mt-3 rounded-lg border bg-card">
+					<div className="grid grid-cols-[minmax(140px,1.2fr)_90px_80px_80px_90px_90px_24px] gap-2 border-b px-4 py-2 text-[10px] text-muted-foreground max-lg:hidden">
+						<span>{t("common.harness")}</span>
+						<span>{t("common.status")}</span>
+						<span className="text-right">{t("common.sessions")}</span>
+						<span className="text-right">{t("metric.requests")}</span>
+						<span className="text-right">{t("metric.tokens")}</span>
+						<span className="text-right">{t("metric.cost")}</span>
+						<span />
+					</div>
+					<div className="divide-y">
+						{rows.map((row) => (
+							<HarnessRow
+								key={row.harness}
+								row={row}
+								open={open.has(row.harness)}
+								rangeQuery={rangeQuery}
+								onToggle={() => toggle(row.harness)}
+							/>
+						))}
+					</div>
+				</div>
+			)}
 		</PageContainer>
 	);
 }

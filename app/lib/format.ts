@@ -1,3 +1,5 @@
+import { dateLocaleFor, formatRangeDates } from "./date-locale";
+
 let activeLocale: string | undefined;
 
 export function setFormatLocale(locale: string): void {
@@ -31,13 +33,6 @@ function dateFormat(): Intl.DateTimeFormat {
 		month: "short",
 		day: "numeric",
 		year: "numeric",
-	});
-}
-
-function dateShortFormat(): Intl.DateTimeFormat {
-	return new Intl.DateTimeFormat(activeLocale, {
-		month: "short",
-		day: "numeric",
 	});
 }
 
@@ -152,17 +147,11 @@ export function formatRangeLabel(
 			? `Until ${formatDate(until)}`
 			: `From ${formatDate(from)}`;
 	}
-	const end = until - 1;
-	const fromDate = new Date(from);
-	const endDate = new Date(end);
-	const sameDay =
-		fromDate.getFullYear() === endDate.getFullYear() &&
-		fromDate.getMonth() === endDate.getMonth() &&
-		fromDate.getDate() === endDate.getDate();
-	if (sameDay) return dateFormat().format(fromDate);
-	if (fromDate.getFullYear() === endDate.getFullYear())
-		return `${dateShortFormat().format(fromDate)} – ${dateFormat().format(endDate)}`;
-	return `${dateFormat().format(fromDate)} – ${dateFormat().format(endDate)}`;
+	const locale = dateLocaleFor(
+		activeLocale ??
+			(typeof navigator !== "undefined" ? navigator.language : "en"),
+	).code;
+	return formatRangeDates(from, until, locale);
 }
 
 export function formatDayLabel(value: number | null): string {

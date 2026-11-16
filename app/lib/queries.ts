@@ -33,6 +33,8 @@ export const queryKeys = {
 	session: (harness: string, sessionId: string, level: SessionDetailLevel) =>
 		["session", harness, sessionId, level] as const,
 	search: (query: string) => ["search", query] as const,
+	sessionsSearch: (from: number | null, until: number | null, query: string) =>
+		["sessionsSearch", from, until, query] as const,
 	explore: (key: string) => ["explore", key] as const,
 };
 
@@ -117,6 +119,20 @@ export function useSearch(query: string, enabled: boolean) {
 	return useQuery({
 		queryKey: queryKeys.search(query),
 		queryFn: () => api.search(query, 8),
+		enabled,
+		staleTime: 30_000,
+		placeholderData: keepPreviousData,
+	});
+}
+
+export function useSessionsSearch(
+	range: ResolvedRange,
+	query: string,
+	enabled: boolean,
+) {
+	return useQuery({
+		queryKey: queryKeys.sessionsSearch(range.from, range.until, query),
+		queryFn: () => api.sessionsSearch(range, query),
 		enabled,
 		staleTime: 30_000,
 		placeholderData: keepPreviousData,

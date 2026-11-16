@@ -83,23 +83,40 @@ export function formatRangeDates(
 	from: number,
 	until: number,
 	code: DateLocaleCode,
+	now = new Date(),
 ): string {
 	const start = new Date(from);
 	const end = new Date(Math.max(from, until - 1));
+	const currentYear = now.getFullYear();
+	const startYear = start.getFullYear();
+	const endYear = end.getFullYear();
 	const sameDay =
-		start.getFullYear() === end.getFullYear() &&
+		startYear === endYear &&
 		start.getMonth() === end.getMonth() &&
 		start.getDate() === end.getDate();
-	if (sameDay) return rangeFormat(code, true).format(start);
-	if (start.getFullYear() === end.getFullYear())
-		return `${rangeFormat(code, false).format(start)} – ${rangeFormat(
+
+	if (sameDay) {
+		return rangeFormat(code, startYear !== currentYear).format(start);
+	}
+
+	if (startYear === endYear) {
+		const showYear = startYear !== currentYear;
+		if (code === "zh-CN") {
+			return `${rangeFormat(code, showYear).format(start)} – ${rangeFormat(
+				code,
+				false,
+			).format(end)}`;
+		}
+		return rangeFormat(code, showYear).formatRange(start, end);
+	}
+
+	if (code === "zh-CN") {
+		return `${rangeFormat(code, true).format(start)} – ${rangeFormat(
 			code,
 			true,
 		).format(end)}`;
-	return `${rangeFormat(code, true).format(start)} – ${rangeFormat(
-		code,
-		true,
-	).format(end)}`;
+	}
+	return rangeFormat(code, true).formatRange(start, end);
 }
 
 const monthFormats = new Map<DateLocaleCode, Intl.DateTimeFormat>();
@@ -162,4 +179,29 @@ export function formatBucketLabelFor(
 	if (unit === "hour") return formatTimeFor(value, code);
 	if (unit === "month") return rangeFormat(code, true).format(new Date(value));
 	return rangeFormat(code, false).format(new Date(value));
+}
+
+const tooltipTimeFormats = new Map<DateLocaleCode, Intl.DateTimeFormat>();
+
+/** Localized bucket label for chart tooltips (includes date for hourly buckets). */
+export function formatBucketTooltipLabelFor(
+	value: number,
+	unit: "hour" | "day" | "week" | "month",
+	code: DateLocaleCode,
+): string {
+	if (!Number.isFinite(value)) return "";
+	if (unit === "hour") {
+		let format = tooltipTimeFormats.get(code);
+		if (!format) {
+			format = new Intl.DateTimeFormat(code, {
+				month: "short",
+				day: "numeric",
+				hour: "numeric",
+				minute: "2-digit",
+			});
+			tooltipTimeFormats.set(code, format);
+		}
+		return format.format(new Date(value));
+	}
+	return formatBucketLabelFor(value, unit, code);
 }

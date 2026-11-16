@@ -14,6 +14,7 @@ import type {
 	SessionDetailLevel,
 	SessionDetailPayload,
 	SessionsPayload,
+	SessionsSearchPayload,
 	StatusPayload,
 } from "@shared/types";
 import type { ResolvedRange } from "./time-range";
@@ -165,4 +166,8 @@ export const api = {
 	},
 	search: (query: string, limit = 8) =>
 		getJson<SearchPayload>(`/api/search${queryString({ q: query, limit })}`),
+	sessionsSearch: (range: ResolvedRange, query: string) =>
+		getJson<SessionsSearchPayload>(
+			`/api/sessions/search${queryString({ ...rangeQuery(range), q: query })}`,
+		),
 };
