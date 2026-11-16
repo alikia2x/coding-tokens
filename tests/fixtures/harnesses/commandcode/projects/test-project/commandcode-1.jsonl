@@ -1,0 +1,3 @@
+{"type":"session","id":"cc-sess-1","cwd":"/workspace/commandcode-project","timestamp":"2026-03-15T10:00:00.000Z"}
+{"type":"message","message":{"role":"user"},"timestamp":"2026-03-15T10:00:01.000Z"}
+{"type":"message","id":"cc-msg-1","role":"assistant","model":"claude-3-7-sonnet","timestamp":"2026-03-15T10:00:10.000Z","usage":{"inputTokens":1600,"outputTokens":380,"cacheReadTokens":900,"cacheWriteTokens":150,"reasoningTokens":40,"costUsd":0.0075}}

@@ -1,0 +1,3 @@
+{"type":"session","id":"dsh-sess-1","cwd":"/workspace/dsh-project","createdAt":"2026-03-15T10:00:00.000Z"}
+{"type":"user/message","data":{"content":"Generate migration script"}}
+{"type":"assistant/message","id":"dsh-msg-1","time":"2026-03-15T10:00:15.000Z","data":{"message":{"source":{"provider":"deepseek","model":"deepseek-coder"}},"usage":{"inputTokens":1800,"outputTokens":500,"cacheReadTokens":1000,"reasoningTokens":50}}}

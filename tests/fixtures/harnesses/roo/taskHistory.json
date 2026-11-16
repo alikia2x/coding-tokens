@@ -1,0 +1,30 @@
+[
+	{
+		"id": "task-roo-101",
+		"ulid": "01JROO101EXAMPLE0000000001",
+		"ts": 1773500000000,
+		"task": "Design system architecture",
+		"tokensIn": 50000,
+		"tokensOut": 4500,
+		"cacheWrites": 2000,
+		"cacheReads": 25000,
+		"totalCost": 0.22,
+		"cwdOnTaskInitialization": "/workspace/project-beta",
+		"modelId": "claude-3-7-sonnet",
+		"mode": "architect"
+	},
+	{
+		"id": "task-roo-102",
+		"ulid": "01JROO102EXAMPLE0000000002",
+		"ts": 1773510000000,
+		"task": "Implement code modules",
+		"tokensIn": 32000,
+		"tokensOut": 2800,
+		"cacheWrites": 1000,
+		"cacheReads": 15000,
+		"totalCost": 0.12,
+		"cwdOnTaskInitialization": "/workspace/project-beta",
+		"modelId": "claude-3-5-sonnet",
+		"mode": "code"
+	}
+]

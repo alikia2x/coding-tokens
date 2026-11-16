@@ -1,0 +1,24 @@
+[
+	{
+		"ts": 1773500001000,
+		"type": "say",
+		"say": "user_feedback",
+		"text": "Refactor token counter"
+	},
+	{
+		"ts": 1773500005000,
+		"type": "say",
+		"say": "api_req_started",
+		"text": "{\"request\":\"...\",\"tokensIn\":12500,\"tokensOut\":850,\"cacheWrites\":500,\"cacheReads\":6000,\"cost\":0.042}",
+		"modelInfo": {
+			"providerId": "anthropic",
+			"modelId": "claude-3-5-sonnet-20241022"
+		}
+	},
+	{
+		"ts": 1773500010000,
+		"type": "say",
+		"say": "text",
+		"text": "Refactoring completed successfully."
+	}
+]

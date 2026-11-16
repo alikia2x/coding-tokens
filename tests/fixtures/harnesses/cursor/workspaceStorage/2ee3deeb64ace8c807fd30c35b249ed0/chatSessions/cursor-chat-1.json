@@ -1,0 +1,10 @@
+{
+	"id": "cursor-chat-1",
+	"title": "Cursor workspace session",
+	"requests": [
+		{
+			"message": "Fix layout",
+			"response": "Fixed layout"
+		}
+	]
+}

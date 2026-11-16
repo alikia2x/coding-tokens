@@ -1,0 +1,10 @@
+[
+	{
+		"role": "user",
+		"content": "Refactor token counter"
+	},
+	{
+		"role": "assistant",
+		"content": "Refactoring completed successfully."
+	}
+]

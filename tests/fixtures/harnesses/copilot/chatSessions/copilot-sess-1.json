@@ -1,0 +1,21 @@
+{
+	"version": 3,
+	"sessionId": "copilot-sess-1",
+	"creationDate": 1773500000000,
+	"lastMessageDate": 1773500100000,
+	"responderUsername": "GitHub Copilot",
+	"requests": [
+		{
+			"timestamp": 1773500005000,
+			"modelId": "copilot/gpt-4o",
+			"message": {
+				"text": "Write a binary search function"
+			},
+			"response": [
+				{
+					"value": "```typescript\nfunction binarySearch(arr: number[], target: number) {...}\n```"
+				}
+			]
+		}
+	]
+}

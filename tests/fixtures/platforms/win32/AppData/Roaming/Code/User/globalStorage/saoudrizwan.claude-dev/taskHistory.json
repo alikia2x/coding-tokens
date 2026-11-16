@@ -1,0 +1,15 @@
+[
+	{
+		"id": "task-cline-101",
+		"ulid": "01JCLINE101EXAMPLE00000001",
+		"ts": 1773500000000,
+		"task": "Refactor token counter",
+		"tokensIn": 45000,
+		"tokensOut": 3200,
+		"cacheWrites": 1200,
+		"cacheReads": 18000,
+		"totalCost": 0.15,
+		"cwdOnTaskInitialization": "/workspace/project-alpha",
+		"modelId": "claude-3-5-sonnet-20241022"
+	}
+]

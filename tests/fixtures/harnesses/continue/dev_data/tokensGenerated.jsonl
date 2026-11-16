@@ -1,0 +1,2 @@
+{"timestamp":"2026-03-15T10:00:00.000Z","eventName":"tokensGenerated","model":"gpt-4o","provider":"openai","promptTokens":2500,"generatedTokens":600}
+{"timestamp":"2026-03-15T10:05:00.000Z","eventName":"tokensGenerated","model":"gpt-4o","provider":"openai","promptTokens":3100,"generatedTokens":820}

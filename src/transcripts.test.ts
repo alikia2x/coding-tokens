@@ -374,3 +374,593 @@ describe("Codex user message cleaning", () => {
 		expect(cleanUserMessage("codex", "修一下这个 bug")).toBe("修一下这个 bug");
 	});
 });
+
+function protoVarint(field: number, value: number): Uint8Array {
+	const bytes: number[] = [];
+	let tag = (field << 3) | 0;
+	while (tag >= 128) {
+		bytes.push((tag & 127) | 128);
+		tag >>>= 7;
+	}
+	bytes.push(tag);
+	let v = BigInt(value);
+	while (v >= 128n) {
+		bytes.push(Number(v & 127n) | 128);
+		v >>= 7n;
+	}
+	bytes.push(Number(v));
+	return new Uint8Array(bytes);
+}
+
+function protoBytes(field: number, content: Uint8Array | string): Uint8Array {
+	const payload =
+		typeof content === "string" ? new TextEncoder().encode(content) : content;
+	const header: number[] = [];
+	let tag = (field << 3) | 2;
+	while (tag >= 128) {
+		header.push((tag & 127) | 128);
+		tag >>>= 7;
+	}
+	header.push(tag);
+	let len = payload.length;
+	while (len >= 128) {
+		header.push((len & 127) | 128);
+		len >>>= 7;
+	}
+	header.push(len);
+	const out = new Uint8Array(header.length + payload.length);
+	out.set(header, 0);
+	out.set(payload, header.length);
+	return out;
+}
+
+function protoConcat(...parts: Uint8Array[]): Uint8Array {
+	const total = parts.reduce((sum, p) => sum + p.length, 0);
+	const out = new Uint8Array(total);
+	let offset = 0;
+	for (const p of parts) {
+		out.set(p, offset);
+		offset += p.length;
+	}
+	return out;
+}
+
+describe("Antigravity T3 ACP, subagents, and token parsing", () => {
+	test("strips T3 wrapper XML tags from Antigravity user messages", () => {
+		const wrapped = [
+			"<t3_code_instructions>rules</t3_code_instructions>",
+			"<user_request>",
+			"Fix the billing bug",
+			'<t3_context version="1">ctx</t3_context>',
+			"</user_request>",
+			"<runtime_info>info</runtime_info>",
+			"<pull_request_linking>pr</pull_request_linking>",
+		].join("\n");
+		expect(cleanUserMessage("antigravity", wrapped)).toBe(
+			"Fix the billing bug",
+		);
+	});
+
+	test("discovers T3 antigravity-acp sessions, detects subagents, and extracts reasoning without bogus cacheWrite", async () => {
+		const { Database } = await import("bun:sqlite");
+		const { readAntigravity } = await import("./sources/antigravity");
+		const { buildSessionCatalog } = await import("../server/data/catalog");
+
+		const prevAgHome = process.env.ANTIGRAVITY_HOME;
+		const prevT3Dir = process.env.T3_USER_DATA_DIR;
+		const prevHome = process.env.HOME;
+		const rootTmp = mkdtempSync(path.join(tmpdir(), "ct-ag-test-"));
+		const fakeHome = path.join(rootTmp, "home");
+		const agHome = path.join(fakeHome, ".gemini/antigravity");
+		const t3Dir = path.join(rootTmp, "t3data");
+		const acpConv = path.join(
+			t3Dir,
+			"providers/antigravity/hash1/antigravity-acp/conversations",
+		);
+		const nativeConv = path.join(agHome, "conversations");
+		mkdirSync(acpConv, { recursive: true });
+		mkdirSync(nativeConv, { recursive: true });
+
+		try {
+			delete process.env.ANTIGRAVITY_HOME;
+			process.env.T3_USER_DATA_DIR = t3Dir;
+			process.env.HOME = fakeHome;
+
+			// Write T3 statev2.sqlite with thread title
+			const t3Db = new Database(path.join(t3Dir, "statev2.sqlite"));
+			t3Db.run(
+				"CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT, title TEXT)",
+			);
+			t3Db.run(
+				"CREATE TABLE orchestration_v2_projection_provider_threads (thread_id TEXT, driver TEXT, payload_json TEXT)",
+			);
+			t3Db.run(
+				"INSERT INTO orchestration_v2_projection_threads VALUES ('t1', 'T3 ACP Session Title')",
+			);
+			t3Db.run(
+				"INSERT INTO orchestration_v2_projection_provider_threads VALUES ('t1', 'antigravity', ?)",
+				[JSON.stringify({ nativeThreadRef: { nativeId: "acp-root-1" } })],
+			);
+			t3Db.close();
+
+			// Write ACP conversation DB (no trajectory timestamp, no f4.11 request_id, f4.6 = 24 enum, f4.9 = 40 reasoning)
+			writeFileSync(
+				path.join(acpConv, "acp-root-1.meta"),
+				JSON.stringify({ cwd: "/tmp/t3-project" }),
+			);
+			const acpDb = new Database(path.join(acpConv, "acp-root-1.db"));
+			acpDb.run("CREATE TABLE trajectory_metadata_blob (data BLOB)");
+			acpDb.run(
+				"CREATE TABLE steps (idx INTEGER, step_type INTEGER, status INTEGER, metadata BLOB, step_payload BLOB)",
+			);
+			acpDb.run("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)");
+			acpDb.run("INSERT INTO trajectory_metadata_blob VALUES (?)", [
+				protoBytes(6, "acp-root-1"),
+			]);
+			const tsMeta = protoBytes(
+				1,
+				protoConcat(protoVarint(1, 1_780_000_000), protoVarint(2, 0)),
+			);
+			const userStepPayload = protoBytes(
+				19,
+				protoBytes(
+					2,
+					"<t3_code_instructions>x</t3_code_instructions><user_request>Hello ACP</user_request>",
+				),
+			);
+			acpDb.run("INSERT INTO steps VALUES (0, 14, 1, ?, ?)", [
+				tsMeta,
+				userStepPayload,
+			]);
+			const kvPair = (k: string, v: string) =>
+				protoBytes(20, protoConcat(protoBytes(1, k), protoBytes(2, v)));
+			const f4 = protoConcat(
+				protoVarint(2, 100),
+				protoVarint(3, 60),
+				protoVarint(5, 500),
+				protoVarint(6, 24),
+				protoVarint(9, 40),
+				protoVarint(10, 20),
+			);
+			const f1 = protoConcat(
+				protoBytes(4, f4),
+				protoBytes(19, "gemini-3.8-flash-n"),
+				kvPair("request_id", "req-acp-1"),
+				kvPair("last_step_index", "0"),
+			);
+			acpDb.run("INSERT INTO gen_metadata VALUES (0, ?)", [protoBytes(1, f1)]);
+			acpDb.close();
+
+			// Write native Antigravity subagent DB
+			const subDb = new Database(path.join(nativeConv, "sub-1.db"));
+			subDb.run("CREATE TABLE trajectory_metadata_blob (data BLOB)");
+			subDb.run(
+				"CREATE TABLE steps (idx INTEGER, step_type INTEGER, status INTEGER, metadata BLOB, step_payload BLOB)",
+			);
+			subDb.run("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)");
+			subDb.run("INSERT INTO trajectory_metadata_blob VALUES (?)", [
+				protoConcat(
+					protoBytes(5, "parent-1"),
+					protoBytes(6, "parent-1"),
+					protoBytes(7, "file:///tmp/t3-project"),
+					protoBytes(
+						8,
+						protoConcat(protoBytes(1, "worker"), protoBytes(2, "Swarm Worker")),
+					),
+					protoVarint(17, 1),
+				),
+			]);
+			subDb.run("INSERT INTO steps VALUES (0, 14, 1, ?, ?)", [
+				tsMeta,
+				protoBytes(19, protoBytes(2, "Internal worker prompt")),
+			]);
+			subDb.run("INSERT INTO gen_metadata VALUES (0, ?)", [
+				protoBytes(
+					1,
+					protoConcat(
+						protoBytes(4, protoConcat(protoVarint(2, 50), protoVarint(6, 26))),
+						protoBytes(19, "claude-sonnet-5-5-high"),
+						protoBytes(11, "req-sub-1"),
+					),
+				),
+			]);
+			subDb.close();
+
+			// Also verify readAntigravity uses fakeHome fallback only if ANTIGRAVITY_HOME isn't overriding;
+			// note homeDir in util.ts is evaluated at module load time, so explicitly point to acpConv's parent via T3_USER_DATA_DIR and check ACP + subagent via direct ANTIGRAVITY_HOME for nativeConv.
+			const acpUsage = readAntigravity();
+			const acpRecords = acpUsage.records.filter(
+				(r) => r.sessionId === "acp-root-1",
+			);
+			expect(acpRecords).toHaveLength(1);
+			expect(acpRecords[0]?.messageId).toBe("req-acp-1");
+			expect(acpRecords[0]?.cwd).toBe("/tmp/t3-project");
+			expect(acpRecords[0]?.cacheWriteTokens).toBe(0);
+			expect(acpRecords[0]?.reasoningTokens).toBe(40);
+			expect(acpRecords[0]?.timestamp).toBe(1_780_000_000_000);
+			expect(acpRecords[0]?.isSubagent).toBeUndefined();
+
+			const catalog = buildSessionCatalog(acpUsage.records);
+			expect(catalog.entries.get("antigravity:acp-root-1")?.title).toBe(
+				"T3 ACP Session Title",
+			);
+
+			const transcripts = readTranscriptSources(["antigravity"]);
+			const agTranscript = transcripts
+				.find((t) => t.harness === "antigravity")
+				?.sessions.find((s) => s.sessionId === "acp-root-1");
+			expect(agTranscript?.startedAt).toBe(1_780_000_000_000);
+			expect(agTranscript?.items[0]?.text).toBe("Hello ACP");
+
+			// Test native subagent isolation with ANTIGRAVITY_HOME
+			process.env.ANTIGRAVITY_HOME = agHome;
+			const subUsage = readAntigravity();
+			expect(subUsage.records).toHaveLength(1);
+			expect(subUsage.records[0]?.isSubagent).toBe(true);
+			expect(subUsage.records[0]?.cacheWriteTokens).toBe(0);
+			expect(subUsage.messages.get("sub-1")).toBeUndefined();
+
+			const subCatalog = buildSessionCatalog(subUsage.records);
+			expect(subCatalog.entries.get("antigravity:sub-1")?.isSubagent).toBe(
+				true,
+			);
+			expect(subCatalog.entries.get("antigravity:sub-1")?.title).toBe(
+				"Subagent: Swarm Worker",
+			);
+			const bulkSubTranscripts = readTranscriptSources(["antigravity"]);
+			expect(
+				bulkSubTranscripts.find((t) => t.harness === "antigravity")?.sessions,
+			).toHaveLength(0);
+		} finally {
+			if (prevAgHome === undefined) delete process.env.ANTIGRAVITY_HOME;
+			else process.env.ANTIGRAVITY_HOME = prevAgHome;
+			if (prevT3Dir === undefined) delete process.env.T3_USER_DATA_DIR;
+			else process.env.T3_USER_DATA_DIR = prevT3Dir;
+			if (prevHome === undefined) delete process.env.HOME;
+			else process.env.HOME = prevHome;
+			rmSync(rootTmp, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("custom date range formatting", () => {
+	test("omits current year and formats zh-CN and en ranges naturally", async () => {
+		const { formatRangeDates } = await import("../app/lib/date-locale");
+		const { formatRangeLabel, setFormatLocale } = await import(
+			"../app/lib/format"
+		);
+		const now2026 = new Date(2026, 10, 15);
+		const from = new Date(2026, 8, 2).getTime();
+		const until = new Date(2026, 10, 16).getTime();
+
+		expect(formatRangeDates(from, until, "zh-CN", now2026)).toBe(
+			"9月2日 – 11月15日",
+		);
+		setFormatLocale("zh-CN");
+		expect(formatRangeLabel(from, until)).toBe("9月2日 – 11月15日");
+
+		const singleDayFrom = new Date(2026, 10, 15).getTime();
+		expect(formatRangeDates(singleDayFrom, until, "zh-CN", now2026)).toBe(
+			"11月15日",
+		);
+
+		const pastFrom = new Date(2025, 8, 2).getTime();
+		const pastUntil = new Date(2025, 10, 16).getTime();
+		expect(formatRangeDates(pastFrom, pastUntil, "zh-CN", now2026)).toBe(
+			"2025年9月2日 – 11月15日",
+		);
+
+		const crossYearFrom = new Date(2025, 11, 20).getTime();
+		expect(formatRangeDates(crossYearFrom, until, "zh-CN", now2026)).toBe(
+			"2025年12月20日 – 2026年11月15日",
+		);
+
+		expect(formatRangeDates(from, until, "en", now2026)).toBe("Sep 2 – Nov 15");
+		setFormatLocale("en");
+		expect(formatRangeLabel(from, until)).toBe("Sep 2 – Nov 15");
+		expect(formatRangeDates(singleDayFrom, until, "en", now2026)).toBe(
+			"Nov 15",
+		);
+		expect(formatRangeDates(pastFrom, pastUntil, "en", now2026)).toBe(
+			"Sep 2 – Nov 15, 2025",
+		);
+		expect(formatRangeDates(crossYearFrom, until, "en", now2026)).toBe(
+			"Dec 20, 2025 – Nov 15, 2026",
+		);
+	});
+});
+
+describe("cross-harness transcript tool parsing", () => {
+	test("parses Codex web_search_call, local_shell_call, mcp_call, and input_text tool outputs", () => {
+		withCodexHome((codexHome) => {
+			writeRollout(
+				codexHome,
+				`rollout-2026-01-04T10-00-00-${SESSION_ID}.jsonl`,
+				[
+					{
+						timestamp: "2026-01-04T10:00:00.000Z",
+						type: "session_meta",
+						payload: {
+							id: SESSION_ID,
+							cwd: "/tmp/project",
+							timestamp: "2026-01-04T10:00:00.000Z",
+						},
+					},
+					{
+						timestamp: "2026-01-04T10:00:01.000Z",
+						type: "response_item",
+						payload: {
+							type: "web_search_call",
+							id: "ws-1",
+							status: "completed",
+							action: { type: "search", query: "bun sqlite readonly" },
+						},
+					},
+					{
+						timestamp: "2026-01-04T10:00:02.000Z",
+						type: "response_item",
+						payload: {
+							type: "local_shell_call",
+							call_id: "sh-1",
+							status: "completed",
+							action: { type: "exec", command: ["ls", "-la"] },
+						},
+					},
+					{
+						timestamp: "2026-01-04T10:00:03.000Z",
+						type: "response_item",
+						payload: {
+							type: "mcp_call",
+							id: "mcp-1",
+							server_label: "t3-code",
+							name: "preview_open",
+							arguments: '{"url":"http://localhost:3000"}',
+							status: "completed",
+						},
+					},
+					{
+						timestamp: "2026-01-04T10:00:04.000Z",
+						type: "response_item",
+						payload: {
+							type: "custom_tool_call_output",
+							call_id: "sh-1",
+							output: [{ type: "input_text", text: "total 8" }],
+						},
+					},
+				],
+			);
+
+			const result = readTranscriptSources(["codex"])[0];
+			const session = result?.sessions[0];
+			const calls =
+				session?.items.filter((item) => item.kind === "tool_call") ?? [];
+			const results =
+				session?.items.filter((item) => item.kind === "tool_result") ?? [];
+			expect(calls.map((c) => c.name)).toEqual([
+				"web_search_call",
+				"local_shell_call",
+				"mcp__t3-code__preview_open",
+			]);
+			expect(results[0]?.text).toBe("total 8");
+		});
+	});
+
+	test("unwraps DSH nested tool-result blocks and flags isError / data.error", () => {
+		const prevDsh = process.env.DSH_HOME;
+		const rootTmp = mkdtempSync(path.join(tmpdir(), "ct-dsh-test-"));
+		try {
+			process.env.DSH_HOME = rootTmp;
+			const sessionDir = path.join(
+				rootTmp,
+				"sessions",
+				"--tmp-proj--",
+				"dsh-1",
+			);
+			mkdirSync(sessionDir, { recursive: true });
+			writeFileSync(
+				path.join(sessionDir, "session.v4.jsonl"),
+				jsonl([
+					{
+						type: "session",
+						version: 4,
+						id: "dsh-1",
+						createdAt: 1_780_000_000_000,
+						isSeeded: false,
+						delegationDepth: 0,
+						cwd: "/tmp/proj",
+					},
+					{
+						type: "user/message",
+						seq: 0,
+						time: 1_780_000_001_000,
+						data: { turn: 1, content: [{ type: "text", text: "Check files" }] },
+					},
+					{
+						type: "tool/call",
+						seq: 1,
+						time: 1_780_000_002_000,
+						data: {
+							turn: 1,
+							step: 0,
+							callId: "c-1",
+							name: "read",
+							arguments: { file_path: "/tmp/proj/missing.ts" },
+						},
+					},
+					{
+						type: "tool/result",
+						seq: 2,
+						time: 1_780_000_003_000,
+						data: {
+							turn: 1,
+							step: 0,
+							callId: "c-1",
+							message: {
+								id: "m-1",
+								role: "tool",
+								toolCallId: "c-1",
+								content: [
+									{
+										type: "tool-result",
+										toolCallId: "c-1",
+										isError: true,
+										content: [{ type: "text", text: "ENOENT: missing.ts" }],
+									},
+								],
+							},
+						},
+					},
+				]),
+				"utf8",
+			);
+
+			const res = readTranscriptSources(["dsh"])[0];
+			const session = res?.sessions[0];
+			const toolRes = session?.items.find(
+				(item) => item.kind === "tool_result",
+			);
+			expect(toolRes?.text).toBe("ENOENT: missing.ts");
+			expect(toolRes?.status).toBe("error");
+		} finally {
+			if (prevDsh === undefined) delete process.env.DSH_HOME;
+			else process.env.DSH_HOME = prevDsh;
+			rmSync(rootTmp, { recursive: true, force: true });
+		}
+	});
+
+	test("reads OpenCode V2 session_part rows, state.content, SessionError, and non-zero bash exit", async () => {
+		const { Database } = await import("bun:sqlite");
+		const prevDb = process.env.OPENCODE_DB;
+		const rootTmp = mkdtempSync(path.join(tmpdir(), "ct-oc-test-"));
+		const dbPath = path.join(rootTmp, "opencode.db");
+		try {
+			process.env.OPENCODE_DB = dbPath;
+			const db = new Database(dbPath);
+			db.run(
+				"CREATE TABLE session_v2 (id TEXT PRIMARY KEY, directory TEXT, title TEXT, time_created INTEGER)",
+			);
+			db.run(
+				"CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, data TEXT)",
+			);
+			db.run(
+				"CREATE TABLE session_part (message_id TEXT, session_id TEXT, ordinal INTEGER, type TEXT, call_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)",
+			);
+			db.run(
+				"INSERT INTO session_v2 VALUES ('oc-1', '/tmp/proj', 'OC V2', 1000)",
+			);
+			db.run(
+				"INSERT INTO session_message VALUES ('u-1', 'oc-1', 'user', 1, 1001, ?)",
+				[JSON.stringify({ text: "Run tests" })],
+			);
+			db.run(
+				"INSERT INTO session_message VALUES ('a-1', 'oc-1', 'assistant', 2, 1002, ?)",
+				[JSON.stringify({ finish: "stop" })],
+			);
+			db.run(
+				"INSERT INTO session_part VALUES ('a-1', 'oc-1', 0, 'tool', 'call-bash', 1003, 1004, ?)",
+				[
+					JSON.stringify({
+						type: "tool",
+						id: "call-bash",
+						name: "bash",
+						state: {
+							status: "completed",
+							input: { command: "bun test" },
+							content: [{ type: "text", text: "FAIL 1 test" }],
+							metadata: { exit: 1 },
+						},
+					}),
+				],
+			);
+			db.run(
+				"INSERT INTO session_part VALUES ('a-1', 'oc-1', 1, 'tool', 'call-read', 1005, 1006, ?)",
+				[
+					JSON.stringify({
+						type: "tool",
+						id: "call-read",
+						name: "read",
+						state: {
+							status: "error",
+							input: { path: "/tmp/no.ts" },
+							error: { type: "FileNotFound", message: "No such file" },
+						},
+					}),
+				],
+			);
+			db.close();
+
+			const res = readTranscriptSources(["opencode"])[0];
+			const session = res?.sessions[0];
+			const calls =
+				session?.items.filter((item) => item.kind === "tool_call") ?? [];
+			const results =
+				session?.items.filter((item) => item.kind === "tool_result") ?? [];
+			expect(calls.map((c) => [c.name, c.status])).toEqual([
+				["bash", "error"],
+				["read", "error"],
+			]);
+			expect(results[0]?.text).toBe("FAIL 1 test");
+			expect(results[1]?.text).toBe("No such file");
+		} finally {
+			if (prevDb === undefined) delete process.env.OPENCODE_DB;
+			else process.env.OPENCODE_DB = prevDb;
+			rmSync(rootTmp, { recursive: true, force: true });
+		}
+	});
+
+	test("captures Antigravity error (status 7) and cancelled (status 6) tool outcomes", async () => {
+		const { Database } = await import("bun:sqlite");
+		const prevAg = process.env.ANTIGRAVITY_HOME;
+		const rootTmp = mkdtempSync(path.join(tmpdir(), "ct-ag-err-"));
+		const convDir = path.join(rootTmp, "conversations");
+		mkdirSync(convDir, { recursive: true });
+		try {
+			process.env.ANTIGRAVITY_HOME = rootTmp;
+			const db = new Database(path.join(convDir, "ag-err-1.db"));
+			db.run("CREATE TABLE trajectory_metadata_blob (data BLOB)");
+			db.run(
+				"CREATE TABLE steps (idx INTEGER, step_type INTEGER, status INTEGER, metadata BLOB, step_payload BLOB)",
+			);
+			const f5Call = (id: string, name: string, inputJson: string) =>
+				protoBytes(
+					5,
+					protoBytes(
+						4,
+						protoConcat(
+							protoBytes(1, id),
+							protoBytes(2, name),
+							protoBytes(3, inputJson),
+						),
+					),
+				);
+			// Step 0: error status 7 with f31.f2 message
+			db.run("INSERT INTO steps VALUES (0, 21, 7, NULL, ?)", [
+				protoConcat(
+					f5Call("c1", "run_command", '{"CommandLine":"bad"}'),
+					protoBytes(31, protoBytes(2, "permission denied")),
+				),
+			]);
+			// Step 1: cancelled status 6 with f148.f3 output
+			db.run("INSERT INTO steps VALUES (1, 21, 6, NULL, ?)", [
+				protoConcat(
+					f5Call("c2", "run_command", '{"CommandLine":"sleep 9"}'),
+					protoBytes(148, protoBytes(3, "terminated by user")),
+				),
+			]);
+			db.close();
+
+			const res = readTranscriptSources(["antigravity"])[0];
+			const session = res?.sessions[0];
+			const results =
+				session?.items.filter((item) => item.kind === "tool_result") ?? [];
+			expect(results.map((r) => [r.status, r.text])).toEqual([
+				["error", "permission denied"],
+				["cancelled", "terminated by user"],
+			]);
+		} finally {
+			if (prevAg === undefined) delete process.env.ANTIGRAVITY_HOME;
+			else process.env.ANTIGRAVITY_HOME = prevAg;
+			rmSync(rootTmp, { recursive: true, force: true });
+		}
+	});
+});

@@ -17,3 +17,10 @@ artifacts/
 *.mobileprovision
 .env
 .env.local
+
+# SQLite temporary runtime files
+*-shm
+*-wal
+
+# Agent working files
+.agents/

@@ -1,0 +1,21 @@
+{
+	"sessionId": "cont-sess-01",
+	"title": "Add caching support",
+	"workspaceDirectory": "file:///workspace/project-alpha",
+	"history": [
+		{
+			"message": {
+				"role": "user",
+				"content": "Add caching support"
+			},
+			"contextItems": []
+		},
+		{
+			"message": {
+				"role": "assistant",
+				"content": "Here is the caching layer implementation."
+			},
+			"contextItems": []
+		}
+	]
+}

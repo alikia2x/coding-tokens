@@ -1,0 +1,29 @@
+{
+	"version": 2,
+	"lastComputedDate": "2026-03-15",
+	"dailyActivity": [
+		{
+			"date": "2026-03-15",
+			"messageCount": 12,
+			"sessionCount": 2,
+			"toolCallCount": 4
+		}
+	],
+	"dailyModelTokens": [
+		{
+			"date": "2026-03-15",
+			"tokensByModel": {
+				"claude-3-7-sonnet": 35000
+			}
+		}
+	],
+	"modelUsage": {
+		"claude-3-7-sonnet": {
+			"inputTokens": 25000,
+			"outputTokens": 8000,
+			"cacheReadInputTokens": 150000,
+			"cacheCreationInputTokens": 20000,
+			"costUSD": 0.52
+		}
+	}
+}

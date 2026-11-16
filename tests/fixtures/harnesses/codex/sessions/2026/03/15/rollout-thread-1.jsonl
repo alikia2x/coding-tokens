@@ -1,0 +1,4 @@
+{"type":"session_meta","payload":{"id":"codex-sess-1","cwd":"/workspace/codex-project","timestamp":"2026-03-15T10:00:00.000Z"}}
+{"type":"turn_context","payload":{"model":"gpt-5","cwd":"/workspace/codex-project"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":"Run unit tests"}}
+{"type":"token_usage_record","payload":{"usage":{"input_tokens":2000,"output_tokens":400,"cached_input_tokens":1200,"reasoning_output_tokens":60}}}

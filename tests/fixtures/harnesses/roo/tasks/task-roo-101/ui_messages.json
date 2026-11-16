@@ -1,0 +1,20 @@
+[
+	{
+		"ts": 1773500001000,
+		"type": "say",
+		"say": "user_feedback",
+		"text": "Design system architecture",
+		"mode": "architect"
+	},
+	{
+		"ts": 1773500005000,
+		"type": "say",
+		"say": "api_req_started",
+		"text": "{\"request\":\"...\",\"tokensIn\":18000,\"tokensOut\":1200,\"cacheWrites\":1000,\"cacheReads\":8000,\"cost\":0.065}",
+		"modelInfo": {
+			"providerId": "anthropic",
+			"modelId": "claude-3-7-sonnet"
+		},
+		"mode": "architect"
+	}
+]

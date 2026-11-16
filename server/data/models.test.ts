@@ -18,6 +18,8 @@ describe("normalizeModelName", () => {
 	test("keeps readable names for internal models", () => {
 		expect(normalizeModelName("codex-auto-review")).toBe("Codex Auto Review");
 		expect(normalizeModelName("gemini-4-argon-trial")).toBe("Gemini 4 Argon");
+		expect(normalizeModelName("gemini-4-argon-s")).toBe("Gemini 4 Argon");
+		expect(normalizeModelName("gemini-3.8-flash-n")).toBe("Gemini 3.8 Flash");
 	});
 
 	test("falls back for missing models", () => {
