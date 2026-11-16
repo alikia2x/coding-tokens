@@ -576,14 +576,13 @@ export function applyCatalog(
 	// model pair once instead of once per request.
 	const resolved = new Map<string, CatalogEntry | null>();
 	for (const record of records) {
-		const key = `${record.harness}\u0000${record.model}`;
+		const key = `${record.harness}\u0000${record.model}\u0000${record.pricingModel ?? ""}`;
 		let model = resolved.get(key);
 		if (model === undefined) {
-			model = resolveModel(
-				record.pricingModel ?? record.model,
-				record.harness,
-				catalog,
-			);
+			model =
+				(record.pricingModel
+					? resolveModel(record.pricingModel, record.harness, catalog)
+					: null) ?? resolveModel(record.model, record.harness, catalog);
 			resolved.set(key, model);
 		}
 		if (!model) continue;

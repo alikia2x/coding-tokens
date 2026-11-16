@@ -45,10 +45,43 @@ function timestampFromData(
 	return timestampMs(time.created) ?? fallback;
 }
 
+function parseModelObject(value: unknown): Record<string, unknown> | null {
+	if (typeof value === "object" && value !== null) {
+		return value as Record<string, unknown>;
+	}
+	if (typeof value === "string") {
+		const trimmed = value.trim();
+		if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+			try {
+				const parsed: unknown = JSON.parse(trimmed);
+				if (typeof parsed === "object" && parsed !== null) {
+					return parsed as Record<string, unknown>;
+				}
+			} catch {}
+		}
+	}
+	return null;
+}
+
 function pricingModelOf(
 	data: Record<string, unknown>,
 	fallbackModel?: string | null,
 ): string | null {
+	const modelObj =
+		parseModelObject(data.model) ?? parseModelObject(fallbackModel);
+	if (modelObj) {
+		const provider =
+			textOrNull(modelObj.providerID) ??
+			textOrNull(modelObj.provider) ??
+			textOrNull(data.providerID) ??
+			textOrNull(data.provider);
+		const id =
+			textOrNull(modelObj.id) ??
+			textOrNull(modelObj.modelID) ??
+			textOrNull(modelObj.model) ??
+			textOrNull(data.modelID);
+		if (id) return provider ? `${provider}/${id}` : id;
+	}
 	const provider =
 		textOrNull(data.providerID) ?? textOrNull(data.provider) ?? null;
 	const id =

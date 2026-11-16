@@ -251,11 +251,26 @@ export class DataStore {
 				total: providers.length,
 			};
 			const records = collected.flatMap((source) => source.records);
-			const changedRecords = changed.flatMap((item) => item.result.records);
+			const changedHarnesses = new Set(changed.map((item) => item.harness));
+			const unpricedCached = collected
+				.filter((source) => !changedHarnesses.has(source.harness))
+				.flatMap((source) =>
+					source.records.filter(
+						(record) =>
+							record.costUsd === null ||
+							(record.costUsd === 0 &&
+								!record.costEstimated &&
+								(record.inputTokens > 0 || record.outputTokens > 0)),
+					),
+				);
+			const recordsToPrice = [
+				...changed.flatMap((item) => item.result.records),
+				...unpricedCached,
+			];
 			let pricingWarning: string | null = null;
-			if (changedRecords.length) {
+			if (recordsToPrice.length) {
 				this.phase = "Matching model prices";
-				pricingWarning = await enrichWithModelsDev(changedRecords);
+				pricingWarning = await enrichWithModelsDev(recordsToPrice);
 			}
 			for (const record of records) {
 				record.model = normalizeModelName(record.model);

@@ -140,7 +140,18 @@ export function normalizedCwd(value: unknown): string | null {
 }
 
 export function modelName(value: unknown, fallback = "Unknown model"): string {
-	if (typeof value === "string" && value.length > 0) return value;
+	if (typeof value === "string" && value.length > 0) {
+		const trimmed = value.trim();
+		if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+			try {
+				const parsed: unknown = JSON.parse(trimmed);
+				if (typeof parsed === "object" && parsed !== null) {
+					return modelName(parsed, fallback);
+				}
+			} catch {}
+		}
+		return value;
+	}
 	if (typeof value === "object" && value !== null) {
 		const record = value as Record<string, unknown>;
 		const id = textOrNull(record.id) ?? textOrNull(record.model);
