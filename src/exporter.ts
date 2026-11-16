@@ -7,6 +7,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { safeBasename } from "./platform/normalizer";
 import {
 	type ExportDetail,
 	isInjectedUserMessage,
@@ -475,7 +476,7 @@ function markdownLinkLabel(value: string): string {
 
 function sessionRelativePath(session: TranscriptSession): string {
 	const projectName = session.cwd
-		? path.basename(session.cwd)
+		? safeBasename(session.cwd)
 		: "unknown-project";
 	const projectSegment = `${safeSegment(projectName)}-${shaSegment(session.cwd ?? "unknown")}`;
 	const sessionSegment = `${safeSegment(session.sessionId)}-${shaSegment(session.sessionId)}`;

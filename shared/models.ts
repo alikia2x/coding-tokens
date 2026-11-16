@@ -91,7 +91,7 @@ function displayFromSlug(slug: string): string {
 		const before = text;
 		text = text
 			.replace(
-				/(?:[\s_-]+(?:latest|stable|preview|trial|free|thinking|high|medium|low|experimental|exp))$/iu,
+				/(?:[\s_-]+(?:latest|stable|preview|trial|free|thinking|high|medium|low|experimental|exp|control|n|s))$/iu,
 				"",
 			)
 			.replace(/(?:[\s_-]+(?:20\d{2}(?:[-_.]?\d{2}){1,2}|\d{6,}|\d{4}))$/iu, "")

@@ -1,16 +1,43 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	renameSync,
+	writeFileSync,
+} from "node:fs";
 import path from "node:path";
+import { defaultPlatformPathService } from "../platform/paths";
 import type { HarnessName, UsageRecord } from "../types";
-import { homeDir, objectOrEmpty } from "../util";
+import { objectOrEmpty } from "../util";
 
 const endpoint = "https://models.dev/api.json";
-const cacheFile = path.join(
-	homeDir,
-	"Library",
-	"Caches",
-	"harness-token-usage",
-	"models.dev.json",
-);
+
+function resolveCacheFile(): string {
+	const newCache = path.join(
+		defaultPlatformPathService.getCacheDir("coding-tokens"),
+		"models.dev.json",
+	);
+	const legacyCache = path.join(
+		defaultPlatformPathService.getHomeDir(),
+		"Library",
+		"Caches",
+		"harness-token-usage",
+		"models.dev.json",
+	);
+	if (!existsSync(newCache) && existsSync(legacyCache)) {
+		try {
+			mkdirSync(path.dirname(newCache), { recursive: true });
+			copyFileSync(legacyCache, newCache);
+			return newCache;
+		} catch {
+			return legacyCache;
+		}
+	}
+	return newCache;
+}
+
+const cacheFile = resolveCacheFile();
 const cacheTtl = 24 * 60 * 60 * 1000;
 const wrappers = new Set([
 	"command-code",
@@ -98,7 +125,7 @@ function variants(value: string): string[] {
 		result.add(variant.replace(/v(\d)(\d)(?=-|$)/gu, "v$1.$2"));
 		result.add(
 			variant.replace(
-				/-(?:low|medium|high|tiered|control|trial|n|thinking)$/u,
+				/-(?:low|medium|high|tiered|control|trial|n|s|thinking)$/u,
 				"",
 			),
 		);
@@ -108,7 +135,7 @@ function variants(value: string): string[] {
 	for (const variant of [...result]) {
 		result.add(
 			variant.replace(
-				/-(?:low|medium|high|tiered|control|trial|n|thinking)$/u,
+				/-(?:low|medium|high|tiered|control|trial|n|s|thinking)$/u,
 				"",
 			),
 		);
@@ -444,15 +471,18 @@ export function resolveModel(
 }
 
 function estimate(record: UsageRecord, rates: Rates): number {
-	const input = record.inputTokens;
-	const output = Math.max(0, record.outputTokens - record.reasoningTokens);
+	const input = record.inputTokens ?? 0;
+	const reasoning = record.reasoningTokens ?? 0;
+	const cacheRead = record.cacheReadTokens ?? 0;
+	const cacheWrite = record.cacheWriteTokens ?? 0;
+	const output = Math.max(0, (record.outputTokens ?? 0) - reasoning);
 	const reasoningRate = rates.reasoning ?? rates.output;
 	return (
 		(input * rates.input +
 			output * rates.output +
-			record.reasoningTokens * reasoningRate +
-			record.cacheReadTokens * (rates.cacheRead ?? rates.input) +
-			record.cacheWriteTokens * (rates.cacheWrite ?? rates.input)) /
+			reasoning * reasoningRate +
+			cacheRead * (rates.cacheRead ?? rates.input) +
+			cacheWrite * (rates.cacheWrite ?? rates.input)) /
 		1_000_000
 	);
 }

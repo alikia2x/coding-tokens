@@ -1,4 +1,7 @@
-export const HARNESS_NAMES = [
+/**
+ * Currently active built-in harness names for backward compatibility and enumeration.
+ */
+export const BUILTIN_HARNESS_NAMES = [
 	"codex",
 	"dsh",
 	"opencode",
@@ -6,23 +9,59 @@ export const HARNESS_NAMES = [
 	"antigravity",
 ] as const;
 
-export type HarnessName = (typeof HARNESS_NAMES)[number];
+export type BuiltinHarnessName = (typeof BUILTIN_HARNESS_NAMES)[number];
 
-export const HARNESS_LABELS: Record<HarnessName, string> = {
-	codex: "Codex",
-	dsh: "DSH",
-	opencode: "OpenCode",
-	commandcode: "Command Code",
-	antigravity: "Antigravity",
-};
+/**
+ * Union of all known built-in and planned mainstream harnesses.
+ * Provides IDE autocompletion while allowing open string extension.
+ */
+export type KnownHarnessName =
+	| BuiltinHarnessName
+	| "claude"
+	| "cline"
+	| "roo"
+	| "continue"
+	| "cursor"
+	| "copilot"
+	| "aider"
+	| "windsurf"
+	| "goose"
+	| "openhands";
 
-export const HARNESS_SHORT_LABELS: Record<HarnessName, string> = {
-	codex: "Codex",
-	dsh: "DSH",
-	opencode: "OC",
-	commandcode: "CC",
-	antigravity: "AG",
-};
+/**
+ * Open harness identifier allowing dynamic plugins and future harnesses
+ * while retaining IDE autocompletion for known harnesses.
+ */
+export type HarnessId = KnownHarnessName | (string & {});
+
+/**
+ * Backward-compatible harness name type, widened to open HarnessId.
+ */
+export type HarnessName = HarnessId;
+
+/**
+ * Currently active built-in harness names for backward compatibility.
+ */
+export const HARNESS_NAMES = BUILTIN_HARNESS_NAMES;
+
+/**
+ * Core harness metadata model conforming to HarnessProvider plugin interface.
+ */
+export interface HarnessMetadata {
+	id: HarnessId;
+	displayName: string;
+	shortLabel: string;
+	color: string;
+	description?: string;
+	defaultEnabled?: boolean;
+}
+
+export {
+	getHarnessLabel,
+	getHarnessShortLabel,
+	HARNESS_LABELS,
+	HARNESS_SHORT_LABELS,
+} from "./colors";
 
 export interface UsageRecord {
 	harness: HarnessName;
@@ -230,6 +269,7 @@ export interface ModelReportPayload {
 export interface HarnessReportRow {
 	harness: HarnessName;
 	label: string;
+	color?: string;
 	available: boolean;
 	paths: string[];
 	warnings: string[];
@@ -250,6 +290,7 @@ export interface HarnessReportPayload {
 export interface HarnessInfo {
 	harness: HarnessName;
 	label: string;
+	color?: string;
 	available: boolean;
 	records: number;
 	sessions: number;
@@ -270,6 +311,34 @@ export interface StatusPayload {
 	warnings: string[];
 }
 
+export type ToolVerb =
+	| "read"
+	| "search"
+	| "find"
+	| "list"
+	| "edit"
+	| "write"
+	| "command"
+	| "webSearch"
+	| "fetchUrl"
+	| "openPage"
+	| "subagent"
+	| "mcp"
+	| "todo"
+	| "question"
+	| "plan"
+	| "skill"
+	| "other";
+
+export interface ToolOperation {
+	verb: ToolVerb;
+	rawName: string;
+	target: string;
+	fullTarget?: string;
+	meta?: string;
+	errorBadge?: string;
+}
+
 export interface DetailItem {
 	id: string;
 	order: number;
@@ -284,6 +353,7 @@ export interface DetailItem {
 	toolCallId: string | null;
 	category: "command" | "read" | "write" | "other" | null;
 	status: string | null;
+	operations?: ToolOperation[];
 	timestamp: number | null;
 	truncated: boolean;
 }
@@ -320,6 +390,13 @@ export interface SearchSessionResult {
 	lastActivityAt: number | null;
 	costUsd: number;
 	score: number;
+	snippet?: string | null;
+}
+
+export interface SessionsSearchPayload {
+	query: string;
+	keys: string[];
+	snippets: Record<string, string>;
 }
 
 export interface SearchPayload {

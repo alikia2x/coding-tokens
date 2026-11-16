@@ -26,6 +26,7 @@ export interface SearchableSession {
 	isSubagent: boolean;
 	hasTranscript: boolean;
 	costUsd: number;
+	body?: string;
 }
 
 const qualifiers = new Set([
@@ -123,12 +124,17 @@ function haystackFor(session: SearchableSession): string {
 			session.harness,
 			session.sessionId,
 			...session.models,
+			session.body ?? "",
 		].join("\n"),
 	);
 }
 
 function matchesTerms(haystack: string, terms: string[]): boolean {
 	return terms.every((term) => haystack.includes(term));
+}
+
+function matchesAnyTerm(haystack: string, terms: string[]): boolean {
+	return terms.some((term) => haystack.includes(term));
 }
 
 function filterValues(
@@ -181,7 +187,10 @@ export function matchesSessionQuery(
 ): boolean {
 	const haystack = haystackFor(session);
 	if (!matchesTerms(haystack, query.terms)) return false;
-	if (query.negativeTerms.length && matchesTerms(haystack, query.negativeTerms))
+	if (
+		query.negativeTerms.length &&
+		matchesAnyTerm(haystack, query.negativeTerms)
+	)
 		return false;
 	if (!matchesFilterList(session, query.filters)) return false;
 	if (
@@ -201,6 +210,7 @@ export function scoreSessionQuery(
 		`${session.projectName} ${session.cwd ?? ""}`,
 	);
 	const models = normalizeSearchText(session.models.join(" "));
+	const body = session.body ? normalizeSearchText(session.body) : "";
 	let score = 0;
 	if (query.raw.trim()) {
 		const raw = normalizeSearchText(query.raw);
@@ -215,6 +225,7 @@ export function scoreSessionQuery(
 		if (session.sessionId.toLowerCase().startsWith(term)) score += 10;
 		if (project.includes(term)) score += 3;
 		if (models.includes(term)) score += 3;
+		if (body?.includes(term)) score += 2;
 	}
 	return score;
 }
@@ -222,13 +233,44 @@ export function scoreSessionQuery(
 export function matchesTextQuery(
 	query: ParsedSearch,
 	values: string[],
+	facets?: Partial<Record<keyof SearchFilters, string[]>>,
 ): boolean {
 	if (isEmptySearch(query)) return true;
 	const haystack = normalizeSearchText(values.join("\n"));
-	return (
-		matchesTerms(haystack, query.terms) &&
-		!matchesTerms(haystack, query.negativeTerms)
-	);
+	if (!matchesTerms(haystack, query.terms)) return false;
+	if (
+		query.negativeTerms.length &&
+		matchesAnyTerm(haystack, query.negativeTerms)
+	)
+		return false;
+
+	for (const key of Object.keys(query.filters) as Array<keyof SearchFilters>) {
+		const wanted = query.filters[key];
+		if (!wanted.length) continue;
+		const facetValues = facets?.[key];
+		if (!facetValues) return false;
+		const normalized = facetValues.map(normalizeSearchText);
+		if (
+			!wanted.every((value) => normalized.some((item) => item.includes(value)))
+		)
+			return false;
+	}
+
+	for (const key of Object.keys(query.negativeFilters) as Array<
+		keyof SearchFilters
+	>) {
+		const excluded = query.negativeFilters[key];
+		if (!excluded.length) continue;
+		const facetValues = facets?.[key];
+		if (!facetValues) continue;
+		const normalized = facetValues.map(normalizeSearchText);
+		if (
+			excluded.some((value) => normalized.some((item) => item.includes(value)))
+		)
+			return false;
+	}
+
+	return true;
 }
 
 export function highlightTerms(query: ParsedSearch): string[] {

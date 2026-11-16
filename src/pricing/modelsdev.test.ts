@@ -12,6 +12,12 @@ const catalog = readCatalog({
 				release_date: "2026-01-01",
 				cost: { input: 0.75, output: 3.75, cache_read: 0.075 },
 			},
+			"gemini-4-argon": {
+				id: "gemini-4-argon",
+				name: "Gemini 4 Argon",
+				release_date: "2026-06-01",
+				cost: { input: 2, output: 10, cache_read: 0.1 },
+			},
 		},
 	},
 	"reseller-a": {
@@ -71,6 +77,13 @@ describe("model pricing", () => {
 
 		expect(match?.rates?.input).toBe(0.25);
 		expect(match?.rates?.output).toBe(2);
+	});
+
+	test("strips antigravity variant suffixes including -s", () => {
+		const match = resolveModel("gemini-4-argon-s", "antigravity", catalog);
+
+		expect(match?.id).toBe("gemini-4-argon");
+		expect(match?.rates?.input).toBe(2);
 	});
 
 	test("estimates a zero recorded cost when the model has real rates", () => {

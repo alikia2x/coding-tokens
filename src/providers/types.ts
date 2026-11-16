@@ -1,0 +1,74 @@
+import type { HarnessId, HarnessMetadata } from "../../shared/types";
+import type { PlatformPathService } from "../platform/paths";
+import type {
+	SourceResult,
+	TranscriptReadResult,
+	TranscriptSession,
+} from "../types";
+
+/**
+ * Metadata descriptor for a discovered session file or DB record.
+ */
+export interface SessionDiscoveryItem {
+	sessionId: string;
+	harness: HarnessId;
+	filePath: string;
+	mtimeMs: number;
+	sizeBytes: number;
+	cwd?: string | null;
+}
+
+/**
+ * Pluggable provider interface for an AI coding harness.
+ * All harness integrations implement this interface.
+ */
+export interface HarnessProvider {
+	readonly metadata: HarnessMetadata;
+
+	/**
+	 * Checks whether the harness is installed or has local session data on the host.
+	 */
+	isAvailable(paths: PlatformPathService): Promise<boolean>;
+
+	/**
+	 * Scans harness storage directories and returns metadata items for all detected sessions.
+	 */
+	discoverSessions(paths: PlatformPathService): Promise<SessionDiscoveryItem[]>;
+
+	/**
+	 * Parses token and cost usage records.
+	 * If `item` is omitted, performs a full sweep across all sessions.
+	 * If `item` is provided, parses usage only for the specified session file.
+	 */
+	readUsage(
+		paths: PlatformPathService,
+		item?: SessionDiscoveryItem,
+	): Promise<SourceResult>;
+
+	/**
+	 * Parses and reconstructs the conversation transcript for a single session.
+	 */
+	readTranscript(
+		paths: PlatformPathService,
+		sessionId: string,
+	): Promise<TranscriptSession | null>;
+
+	/**
+	 * Computes a deterministic cache fingerprint based on the modification stamps
+	 * of all session data files. Format: `v${INDEX_VERSION}:${files.length}:${sha256}`.
+	 */
+	computeFingerprint(paths: PlatformPathService): Promise<string>;
+
+	/**
+	 * Returns directory and file paths that should be monitored for file system change events.
+	 */
+	getWatchPaths(paths: PlatformPathService): string[];
+
+	/**
+	 * Optional batch transcript reader for bulk processing.
+	 */
+	readTranscripts?(
+		paths: PlatformPathService,
+		targetFiles?: ReadonlySet<string>,
+	): Promise<TranscriptReadResult>;
+}

@@ -1,4 +1,4 @@
-import type { HarnessName } from "./types";
+import type { HarnessMetadata, HarnessName } from "./types";
 
 export type ColorDimension = "harness" | "project" | "model" | "token";
 
@@ -17,28 +17,214 @@ export const categoricalColors = [
 
 export const otherColor = "var(--chart-other)";
 
-export const tokenColors: Record<string, string> = {
+export interface TokenColors {
+	input: string;
+	output: string;
+	cacheRead: string;
+	cacheWrite: string;
+	[key: string]: string | undefined;
+}
+
+export const tokenColors: TokenColors = {
 	input: "var(--chart-1)",
 	output: "var(--chart-2)",
 	cacheRead: "var(--chart-7)",
 	cacheWrite: "var(--chart-4)",
 };
 
-export const harnessColor: Record<HarnessName, string> = {
-	codex: "var(--chart-1)",
-	dsh: "var(--chart-2)",
-	opencode: "var(--chart-3)",
-	commandcode: "var(--chart-4)",
-	antigravity: "var(--chart-5)",
-};
+/**
+ * Default built-in harness metadata definitions.
+ */
+export const BUILTIN_HARNESS_METADATA: readonly HarnessMetadata[] = [
+	{
+		id: "codex",
+		displayName: "Codex",
+		shortLabel: "Codex",
+		color: "var(--chart-1)",
+		description: "OpenAI Codex CLI",
+		defaultEnabled: true,
+	},
+	{
+		id: "dsh",
+		displayName: "DSH",
+		shortLabel: "DSH",
+		color: "var(--chart-2)",
+		description: "DeepSeek Harness",
+		defaultEnabled: true,
+	},
+	{
+		id: "opencode",
+		displayName: "OpenCode",
+		shortLabel: "OC",
+		color: "var(--chart-3)",
+		description: "OpenCode assistant",
+		defaultEnabled: true,
+	},
+	{
+		id: "commandcode",
+		displayName: "Command Code",
+		shortLabel: "CC",
+		color: "var(--chart-4)",
+		description: "Command Code terminal assistant",
+		defaultEnabled: true,
+	},
+	{
+		id: "antigravity",
+		displayName: "Antigravity",
+		shortLabel: "AG",
+		color: "var(--chart-5)",
+		description: "Google Antigravity / Gemini",
+		defaultEnabled: true,
+	},
+	{
+		id: "claude",
+		displayName: "Claude Code",
+		shortLabel: "Claude",
+		color: "var(--chart-6)",
+		description: "Anthropic Claude Code CLI",
+		defaultEnabled: true,
+	},
+	{
+		id: "cline",
+		displayName: "Cline",
+		shortLabel: "Cline",
+		color: "var(--chart-7)",
+		description: "Cline VS Code autonomous coding agent",
+		defaultEnabled: true,
+	},
+	{
+		id: "roo",
+		displayName: "Roo Code",
+		shortLabel: "Roo",
+		color: "var(--chart-8)",
+		description: "Roo Code mode-aware AI coding agent",
+		defaultEnabled: true,
+	},
+	{
+		id: "continue",
+		displayName: "Continue",
+		shortLabel: "Cont",
+		color: "var(--chart-9)",
+		description: "Continue open-source AI code assistant",
+		defaultEnabled: true,
+	},
+	{
+		id: "cursor",
+		displayName: "Cursor",
+		shortLabel: "Cur",
+		color: "var(--chart-10)",
+		description: "Cursor AI IDE Composer and Agent",
+		defaultEnabled: true,
+	},
+	{
+		id: "copilot",
+		displayName: "GitHub Copilot",
+		shortLabel: "GH",
+		color: "light-dark(oklch(0.6 0.15 250), oklch(0.7 0.14 250))",
+		description: "GitHub Copilot chat and CLI",
+		defaultEnabled: true,
+	},
+	{
+		id: "aider",
+		displayName: "Aider",
+		shortLabel: "Aid",
+		color: "light-dark(oklch(0.62 0.16 140), oklch(0.72 0.15 140))",
+		description: "Aider AI pair programming in terminal",
+		defaultEnabled: true,
+	},
+	{
+		id: "windsurf",
+		displayName: "Windsurf",
+		shortLabel: "Wind",
+		color: "light-dark(oklch(0.58 0.16 200), oklch(0.68 0.15 200))",
+		description: "Windsurf / Codeium Cascade agent",
+		defaultEnabled: true,
+	},
+	{
+		id: "goose",
+		displayName: "Goose",
+		shortLabel: "Goose",
+		color: "light-dark(oklch(0.64 0.17 65), oklch(0.74 0.16 65))",
+		description: "Block Goose open source agent",
+		defaultEnabled: true,
+	},
+	{
+		id: "openhands",
+		displayName: "OpenHands",
+		shortLabel: "OH",
+		color: "light-dark(oklch(0.6 0.18 30), oklch(0.7 0.17 30))",
+		description: "OpenHands software dev agent",
+		defaultEnabled: true,
+	},
+];
+
+const registry = new Map<string, HarnessMetadata>();
+
+function initRegistry(): void {
+	registry.clear();
+	for (const meta of BUILTIN_HARNESS_METADATA) {
+		registry.set(meta.id, { ...meta });
+	}
+}
+initRegistry();
+
+export function registerHarness(meta: HarnessMetadata): void {
+	registry.set(meta.id, {
+		...meta,
+		color: meta.color || generateOklchColor(`harness:${meta.id}`),
+		shortLabel:
+			meta.shortLabel ||
+			(meta.displayName.length <= 3
+				? meta.displayName.toUpperCase()
+				: meta.displayName.slice(0, 2).toUpperCase()),
+	});
+}
+
+export function unregisterHarness(id: string): boolean {
+	return registry.delete(id);
+}
+
+export function getHarnessMetadata(
+	harness: string,
+): HarnessMetadata | undefined {
+	return registry.get(harness);
+}
+
+export function getAllHarnessMetadata(): HarnessMetadata[] {
+	return Array.from(registry.values());
+}
+
+export function isKnownHarness(harness: string): boolean {
+	return registry.has(harness);
+}
+
+export function resetHarnessRegistry(): void {
+	initRegistry();
+}
+
+function formatFallbackLabel(id: string): string {
+	if (!id) return "Unknown";
+	return id
+		.split(/[-_]/)
+		.map((part) => (part ? part[0]?.toUpperCase() + part.slice(1) : ""))
+		.join(" ");
+}
+
+function formatFallbackShortLabel(id: string): string {
+	if (!id) return "??";
+	if (id.length <= 3) return id.toUpperCase();
+	const parts = id.split(/[-_]/);
+	if (parts.length >= 2) {
+		return parts
+			.slice(0, 3)
+			.map((p) => p[0]?.toUpperCase() ?? "")
+			.join("");
+	}
+	return id.slice(0, 2).toUpperCase();
+}
 
 const GOLDEN_ANGLE = 137.50776405003785;
 
-/**
- * FNV-1a with a final avalanche step. Unlike a palette index, the hash depends
- * only on the category and key, so the same category keeps its color when the
- * data is re-sorted, filtered or split across charts and legends.
- */
 function hashColorSeed(seed: string): number {
 	let hash = 2166136261;
 	for (let index = 0; index < seed.length; index += 1) {
@@ -53,12 +239,6 @@ function hashColorSeed(seed: string): number {
 	return hash >>> 0;
 }
 
-/**
- * Generates a perceptually uniform OKLCH color from a stable seed. The hue is
- * derived from the seed so unrelated categories do not drift into neighboring
- * palette slots; the band varies lightness and chroma to keep colors legible
- * in both themes.
- */
 export function generateOklchColor(seed: string): string {
 	const hash = hashColorSeed(seed);
 	const hue = Number(
@@ -72,11 +252,108 @@ export function generateOklchColor(seed: string): string {
 	return `light-dark(oklch(${lightL} ${lightC} ${hue}), oklch(${darkL} ${darkC} ${hue}))`;
 }
 
-/**
- * Deterministically maps a series key to a color. The optional index is kept
- * for callers that still pass a display position, but it never affects the
- * result: identity, not ordering, chooses the color.
- */
+export function getHarnessColor(harness: string): string {
+	const meta = registry.get(harness);
+	if (meta?.color) return meta.color;
+	return generateOklchColor(`harness:${harness}`);
+}
+
+export function getHarnessLabel(harness: string): string {
+	const meta = registry.get(harness);
+	if (meta?.displayName) return meta.displayName;
+	return formatFallbackLabel(harness);
+}
+
+export function getHarnessShortLabel(harness: string): string {
+	const meta = registry.get(harness);
+	if (meta?.shortLabel) return meta.shortLabel;
+	return formatFallbackShortLabel(harness);
+}
+
+export const harnessColor: Record<HarnessName, string> = new Proxy(
+	{} as Record<HarnessName, string>,
+	{
+		get(_target, prop: string | symbol) {
+			if (typeof prop !== "string") return undefined;
+			return getHarnessColor(prop);
+		},
+		has(_target, prop: string | symbol) {
+			if (typeof prop !== "string") return false;
+			return isKnownHarness(prop);
+		},
+		ownKeys() {
+			return Array.from(registry.keys());
+		},
+		getOwnPropertyDescriptor(_target, prop: string | symbol) {
+			if (typeof prop === "string" && registry.has(prop)) {
+				return {
+					enumerable: true,
+					configurable: true,
+					value: getHarnessColor(prop),
+					writable: false,
+				};
+			}
+			return undefined;
+		},
+	},
+);
+
+export const HARNESS_LABELS: Record<HarnessName, string> = new Proxy(
+	{} as Record<HarnessName, string>,
+	{
+		get(_target, prop: string | symbol) {
+			if (typeof prop !== "string") return undefined;
+			return getHarnessLabel(prop);
+		},
+		has(_target, prop: string | symbol) {
+			if (typeof prop !== "string") return false;
+			return isKnownHarness(prop);
+		},
+		ownKeys() {
+			return Array.from(registry.keys());
+		},
+		getOwnPropertyDescriptor(_target, prop: string | symbol) {
+			if (typeof prop === "string" && registry.has(prop)) {
+				return {
+					enumerable: true,
+					configurable: true,
+					value: getHarnessLabel(prop),
+					writable: false,
+				};
+			}
+			return undefined;
+		},
+	},
+);
+
+export const HARNESS_SHORT_LABELS: Record<HarnessName, string> = new Proxy(
+	{} as Record<HarnessName, string>,
+	{
+		get(_target, prop: string | symbol) {
+			if (typeof prop !== "string") return undefined;
+			return getHarnessShortLabel(prop);
+		},
+		has(_target, prop: string | symbol) {
+			if (typeof prop !== "string") return false;
+			return isKnownHarness(prop);
+		},
+		ownKeys() {
+			return Array.from(registry.keys());
+		},
+		getOwnPropertyDescriptor(_target, prop: string | symbol) {
+			if (typeof prop === "string" && registry.has(prop)) {
+				return {
+					enumerable: true,
+					configurable: true,
+					value: getHarnessShortLabel(prop),
+					writable: false,
+				};
+			}
+			return undefined;
+		},
+	},
+);
+
 export function colorForSeries(
 	key: string,
 	_index?: number,
@@ -85,8 +362,7 @@ export function colorForSeries(
 	if (key === "__other") return otherColor;
 	if (dimension === "token") return tokenColors[key] ?? otherColor;
 	if (dimension === "harness") {
-		const color = harnessColor[key as HarnessName];
-		if (color) return color;
+		return getHarnessColor(key);
 	}
 	if (!key || key === "all" || key === "value")
 		return categoricalColors[0] as string;

@@ -28,10 +28,12 @@ export function objectOrEmpty(value: unknown): Record<string, unknown> {
 
 export function parseJsonl(text: string): unknown[] {
 	const rows: unknown[] = [];
-	for (const line of text.split(/\r?\n/u)) {
-		if (line.trim() === "") continue;
+	const clean = text.replace(/^\uFEFF/u, "");
+	for (const line of clean.split(/\r?\n/u)) {
+		const trimmed = line.trim();
+		if (trimmed === "") continue;
 		try {
-			rows.push(JSON.parse(line) as unknown);
+			rows.push(JSON.parse(trimmed) as unknown);
 		} catch {
 			// A concurrently-written or damaged final line should not hide other usage.
 		}
