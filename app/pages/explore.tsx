@@ -1,4 +1,4 @@
-import { HARNESS_LABELS, HARNESS_NAMES } from "@shared/types";
+import { getHarnessLabel, HARNESS_NAMES } from "@shared/types";
 import { type ReactNode, useMemo } from "react";
 import { Link, useSearchParams } from "react-router";
 import {
@@ -131,17 +131,20 @@ export function ExplorePage() {
 		models: modelValues,
 	});
 
-	const harnessOptions = useMemo<FacetOption[]>(
-		() =>
-			HARNESS_NAMES.map((harness) => ({
-				value: harness,
-				label: HARNESS_LABELS[harness],
-				count:
-					status.data?.harnesses.find((item) => item.harness === harness)
-						?.sessions ?? 0,
-			})),
-		[status.data],
-	);
+	const harnessOptions = useMemo<FacetOption[]>(() => {
+		if (status.data?.harnesses?.length) {
+			return status.data.harnesses.map((item) => ({
+				value: item.harness,
+				label: getHarnessLabel(item.harness),
+				count: item.sessions,
+			}));
+		}
+		return HARNESS_NAMES.map((harness) => ({
+			value: harness,
+			label: getHarnessLabel(harness),
+			count: 0,
+		}));
+	}, [status.data]);
 	const projectOptions = useMemo<FacetOption[]>(
 		() =>
 			(projects.data?.rows ?? [])

@@ -5,6 +5,7 @@ import {
 	Check,
 	ChevronDown,
 	RotateCcw,
+	X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DateRange } from "react-day-picker";
@@ -103,7 +104,7 @@ export function TimeRangePicker() {
 	const [hoverDate, setHoverDate] = useState<Date | null>(null);
 
 	function initializeDraft(): void {
-		if (range.from === null || range.until === null) {
+		if (range.from === null && range.until === null) {
 			setFromDate(undefined);
 			setToDate(undefined);
 			setFromMinutes(0);
@@ -113,17 +114,22 @@ export function TimeRangePicker() {
 			setMonth(startOfMonth(new Date()));
 			return;
 		}
-		const from = range.from;
-		const until = range.until;
-		const start = new Date(from);
-		const end = new Date(Math.max(from, until - MINUTE_MS));
-		setFromDate(startOfDay(start));
-		setToDate(startOfDay(end));
-		setFromMinutes(minutesSinceMidnight(start));
-		setToMinutes(minutesSinceMidnight(end));
+		const start = range.from !== null ? new Date(range.from) : null;
+		const end =
+			range.until !== null
+				? new Date(
+						range.from !== null
+							? Math.max(range.from, range.until - MINUTE_MS)
+							: range.until - MINUTE_MS,
+					)
+				: null;
+		setFromDate(start ? startOfDay(start) : undefined);
+		setToDate(end ? startOfDay(end) : undefined);
+		setFromMinutes(start ? minutesSinceMidnight(start) : 0);
+		setToMinutes(end ? minutesSinceMidnight(end) : MINUTES_IN_DAY - 1);
 		setActive(null);
 		setHoverDate(null);
-		setMonth(startOfMonth(start));
+		setMonth(startOfMonth(start ?? end ?? new Date()));
 	}
 
 	function handleOpenChange(next: boolean): void {
@@ -140,9 +146,10 @@ export function TimeRangePicker() {
 		[toDate, toMinutes],
 	);
 	const validation = useMemo(() => {
-		if (fromValue === null || toValue === null)
+		if (fromValue === null && toValue === null)
 			return t("time.error.chooseDates");
-		if (fromValue > toValue) return t("time.error.startAfterEnd");
+		if (fromValue !== null && toValue !== null && fromValue > toValue)
+			return t("time.error.startAfterEnd");
 		return null;
 	}, [fromValue, toValue, t]);
 	const duration = durationLabel(fromValue, toValue, t);
@@ -214,8 +221,10 @@ export function TimeRangePicker() {
 
 		if (active === "end") {
 			if (!fromDate) {
-				setFromDate(clicked);
 				setToDate(clicked);
+				if (clicked.getTime() !== startOfDay(new Date()).getTime()) {
+					setToMinutes(MINUTES_IN_DAY - 1);
+				}
 				setActive(null);
 				return;
 			}
@@ -270,11 +279,11 @@ export function TimeRangePicker() {
 	}
 
 	function applyCustom(): void {
-		if (validation || fromValue === null || toValue === null) return;
+		if (validation || (fromValue === null && toValue === null)) return;
 		setRange({
 			key: "custom",
 			from: fromValue,
-			until: toValue + MINUTE_MS,
+			until: toValue !== null ? toValue + MINUTE_MS : null,
 		});
 		setOpen(false);
 	}
@@ -352,6 +361,11 @@ export function TimeRangePicker() {
 								minutes={fromMinutes}
 								active={active === "start"}
 								onFocus={() => focusEndpoint("start")}
+								onClear={() => {
+									setFromDate(undefined);
+									setFromMinutes(0);
+									setHoverDate(null);
+								}}
 								onMinutesChange={setFromMinutes}
 							/>
 							<ArrowRight className="size-4 text-muted-foreground" />
@@ -362,6 +376,11 @@ export function TimeRangePicker() {
 								minutes={toMinutes}
 								active={active === "end"}
 								onFocus={() => focusEndpoint("end")}
+								onClear={() => {
+									setToDate(undefined);
+									setToMinutes(MINUTES_IN_DAY - 1);
+									setHoverDate(null);
+								}}
 								onMinutesChange={setToMinutes}
 							/>
 						</div>
@@ -376,7 +395,9 @@ export function TimeRangePicker() {
 												from: fromDate,
 												to: active === "end" && hoverDate ? undefined : toDate,
 											}
-										: undefined
+										: toDate
+											? { from: toDate, to: toDate }
+											: undefined
 								}
 								onSelect={handleSelect}
 								modifiers={modifiers}
@@ -442,6 +463,7 @@ function EndpointField({
 	minutes,
 	active,
 	onFocus,
+	onClear,
 	onMinutesChange,
 }: {
 	endpoint: Endpoint;
@@ -450,6 +472,7 @@ function EndpointField({
 	minutes: number;
 	active: boolean;
 	onFocus: () => void;
+	onClear: () => void;
 	onMinutesChange: (minutes: number) => void;
 }) {
 	const t = useT();
@@ -457,7 +480,7 @@ function EndpointField({
 	return (
 		<div
 			className={cn(
-				"flex min-w-0 items-center justify-between gap-2 rounded-lg border bg-card px-2.5 py-2 transition-colors",
+				"flex min-w-0 items-center justify-between gap-1.5 rounded-lg border bg-card px-2.5 py-2 transition-colors",
 				active && "border-foreground/35 ring-1 ring-foreground/10",
 			)}
 		>
@@ -474,6 +497,17 @@ function EndpointField({
 					{date ? formatPickerDate(date, code) : t("time.selectDate")}
 				</span>
 			</button>
+			{date && (
+				<button
+					type="button"
+					data-clear-endpoint={endpoint}
+					aria-label={`Clear ${label}`}
+					onClick={onClear}
+					className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+				>
+					<X className="size-3" />
+				</button>
+			)}
 			<TimeInput minutes={minutes} onChange={onMinutesChange} label={label} />
 		</div>
 	);

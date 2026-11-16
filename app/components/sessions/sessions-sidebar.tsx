@@ -1,7 +1,8 @@
 import type { HarnessName, StatusPayload } from "@shared/types";
-import { HARNESS_LABELS, HARNESS_NAMES } from "@shared/types";
+import { getHarnessLabel, HARNESS_NAMES } from "@shared/types";
 import { cn } from "cn";
 import { X } from "lucide-react";
+import { useMemo } from "react";
 import { FacetFilter, type FacetOption } from "~/components/facet-filter";
 import { HarnessDot } from "~/components/harness-badge";
 import { Badge } from "~/components/ui/badge";
@@ -53,6 +54,18 @@ export function SessionsSidebar({
 	onClearFilters,
 }: SessionsSidebarProps) {
 	const t = useT();
+	const harnessItems = useMemo(() => {
+		if (status?.harnesses?.length) {
+			return status.harnesses.map((info) => ({
+				name: info.harness,
+				info,
+			}));
+		}
+		return HARNESS_NAMES.map((name) => ({
+			name,
+			info: undefined,
+		}));
+	}, [status]);
 
 	return (
 		<aside className="lg:sticky lg:top-20 lg:self-start">
@@ -71,25 +84,22 @@ export function SessionsSidebar({
 					<span className="flex-1">{t("filters.allHarnesses")}</span>
 					<span className="tabular">{totalBase}</span>
 				</button>
-				{HARNESS_NAMES.map((name) => {
-					const info = status?.harnesses.find((item) => item.harness === name);
-					return (
-						<button
-							key={name}
-							type="button"
-							onClick={() => onSelectHarness(name)}
-							className={cn(
-								"flex h-8 shrink-0 items-center gap-2 rounded px-2 text-left text-[12px] text-muted-foreground transition-colors hover:bg-hover hover:text-foreground",
-								harness === name && "bg-muted text-foreground",
-							)}
-							title={info?.available ? undefined : t("harnesses.notInstalled")}
-						>
-							<HarnessDot harness={name} />
-							<span className="flex-1">{HARNESS_LABELS[name]}</span>
-							<span className="tabular">{counts.get(name) ?? 0}</span>
-						</button>
-					);
-				})}
+				{harnessItems.map(({ name, info }) => (
+					<button
+						key={name}
+						type="button"
+						onClick={() => onSelectHarness(name)}
+						className={cn(
+							"flex h-8 shrink-0 items-center gap-2 rounded px-2 text-left text-[12px] text-muted-foreground transition-colors hover:bg-hover hover:text-foreground",
+							harness === name && "bg-muted text-foreground",
+						)}
+						title={info?.available ? undefined : t("harnesses.notInstalled")}
+					>
+						<HarnessDot harness={name} />
+						<span className="flex-1">{getHarnessLabel(name)}</span>
+						<span className="tabular">{counts.get(name) ?? 0}</span>
+					</button>
+				))}
 			</div>
 
 			<div className="mt-4 border-t pt-3">

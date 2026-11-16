@@ -161,16 +161,43 @@ function allTimeRange(now: number): ResolvedRange {
 	};
 }
 
-function customRange(from: number, until: number): ResolvedRange | null {
-	const toInput = toLocalInput(until - MINUTE_MS);
+function customRange(
+	from: number | null,
+	until: number | null,
+): ResolvedRange | null {
+	if (from === null && until === null) return null;
+	if (from !== null && until !== null) {
+		const toInput = toLocalInput(until - MINUTE_MS);
+		const untilStart = parseLocalInput(toInput);
+		if (untilStart === null || untilStart <= from) return null;
+		return {
+			key: "custom",
+			from,
+			until: untilStart + MINUTE_MS,
+			label: formatRangeLabel(from, untilStart + MINUTE_MS),
+			fromInput: toLocalInput(from),
+			toInput,
+		};
+	}
+	if (from !== null) {
+		return {
+			key: "custom",
+			from,
+			until: null,
+			label: formatRangeLabel(from, null),
+			fromInput: toLocalInput(from),
+			toInput: "",
+		};
+	}
+	const toInput = toLocalInput((until as number) - MINUTE_MS);
 	const untilStart = parseLocalInput(toInput);
-	if (untilStart === null || untilStart <= from) return null;
+	if (untilStart === null) return null;
 	return {
 		key: "custom",
-		from,
+		from: null,
 		until: untilStart + MINUTE_MS,
-		label: formatRangeLabel(from, untilStart + MINUTE_MS),
-		fromInput: toLocalInput(from),
+		label: formatRangeLabel(null, untilStart + MINUTE_MS),
+		fromInput: "",
 		toInput,
 	};
 }
@@ -206,8 +233,12 @@ export function parseRangeValues(
 	if (keyValue === "custom") {
 		const from = parseLocalInput(fromValue ?? null);
 		const untilStart = parseLocalInput(toValue ?? null);
-		if (from === null || untilStart === null || untilStart <= from) return null;
-		return customRange(from, untilStart + MINUTE_MS);
+		if (from === null && untilStart === null) return null;
+		if (from !== null && untilStart !== null && untilStart <= from) return null;
+		return customRange(
+			from,
+			untilStart !== null ? untilStart + MINUTE_MS : null,
+		);
 	}
 	return presetResolvedRange(keyValue, now);
 }
@@ -241,9 +272,9 @@ export function resolveRange(
 export function rangeQueryString(range: ResolvedRange): string {
 	const params = new URLSearchParams();
 	params.set("range", range.key);
-	if (range.key === "custom" && range.from !== null) {
-		params.set("from", range.fromInput);
-		params.set("to", range.toInput);
+	if (range.key === "custom" && (range.from !== null || range.until !== null)) {
+		if (range.from !== null) params.set("from", range.fromInput);
+		if (range.until !== null) params.set("to", range.toInput);
 	}
 	return params.toString();
 }
@@ -253,20 +284,15 @@ export function rangeParamsFor(
 	selection: RangeSelection,
 ): Record<string, string> {
 	if (selection.key !== "custom") return { range: selection.key };
-	const { from, until } = selection;
-	if (
-		from === null ||
-		from === undefined ||
-		until === null ||
-		until === undefined ||
-		until <= from
-	)
+	const from = selection.from ?? null;
+	const until = selection.until ?? null;
+	if (from === null && until === null) return { range: "custom" };
+	if (from !== null && until !== null && until <= from)
 		return { range: "custom" };
-	return {
-		range: "custom",
-		from: toLocalInput(from),
-		to: toLocalInput(until - MINUTE_MS),
-	};
+	const params: Record<string, string> = { range: "custom" };
+	if (from !== null) params.from = toLocalInput(from);
+	if (until !== null) params.to = toLocalInput(until - MINUTE_MS);
+	return params;
 }
 
 export function persistedFromResolved(range: ResolvedRange): PersistedRange {
@@ -283,9 +309,10 @@ export function resolvePersistedRange(
 	if (!persisted) return null;
 	if (persisted.key === "all") return allTimeRange(now);
 	if (persisted.key === "custom") {
+		if (persisted.from === null && persisted.until === null) return null;
 		if (
-			persisted.from === null ||
-			persisted.until === null ||
+			persisted.from !== null &&
+			persisted.until !== null &&
 			persisted.until <= persisted.from
 		)
 			return null;
@@ -319,15 +346,23 @@ export function readStoredRange(): PersistedRange | null {
 		if (!isRangeKey(candidate.key)) return null;
 		if (candidate.key !== "custom")
 			return { key: candidate.key, from: null, until: null };
-		if (
-			typeof candidate.from !== "number" ||
-			typeof candidate.until !== "number" ||
-			!Number.isFinite(candidate.from) ||
-			!Number.isFinite(candidate.until) ||
-			candidate.until <= candidate.from
-		)
-			return null;
-		return { key: "custom", from: candidate.from, until: candidate.until };
+		const from =
+			candidate.from === null || candidate.from === undefined
+				? null
+				: typeof candidate.from === "number" && Number.isFinite(candidate.from)
+					? candidate.from
+					: undefined;
+		const until =
+			candidate.until === null || candidate.until === undefined
+				? null
+				: typeof candidate.until === "number" &&
+						Number.isFinite(candidate.until)
+					? candidate.until
+					: undefined;
+		if (from === undefined || until === undefined) return null;
+		if (from === null && until === null) return null;
+		if (from !== null && until !== null && until <= from) return null;
+		return { key: "custom", from, until };
 	} catch {
 		return null;
 	}

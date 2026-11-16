@@ -253,12 +253,12 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		);
 		expect(updatedDay1?.getAttribute("data-selected-single")).toBe("true");
 
-		// Verify Apply button is disabled while only start date is picked
+		// Apply button is enabled for open-ended start-only range
 		const buttons = Array.from(document.querySelectorAll("button"));
 		const applyBtnBefore = buttons.find(
 			(b) => b.textContent?.trim() === "Apply",
 		);
-		expect(applyBtnBefore?.disabled).toBe(true);
+		expect(applyBtnBefore?.disabled).toBe(false);
 
 		// Click Day 2: October 20, 2026
 		const day2 = dayButtons.find(
@@ -565,5 +565,129 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		);
 		expect(endpointButtons.length).toBe(2);
 		expect(endpointButtons[0]?.textContent).not.toContain("2026/01/01");
+	});
+
+	test("TimeRangePicker: allows start-only open-ended custom range", async () => {
+		let capturedRange: {
+			key: string;
+			from: number | null;
+			until: number | null;
+		} | null = null;
+		function RangeProbe() {
+			const { range } = useRange();
+			capturedRange = range;
+			return null;
+		}
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+
+		root.render(
+			React.createElement(
+				QueryClientProvider,
+				{ client: queryClient },
+				React.createElement(
+					SettingsProvider,
+					null,
+					React.createElement(
+						MemoryRouter,
+						{ initialEntries: ["/?range=all"] },
+						React.createElement(
+							RangeProvider,
+							null,
+							React.createElement(RangeProbe, null),
+							React.createElement(TimeRangePicker, null),
+						),
+					),
+				),
+			),
+		);
+		await sleep(40);
+
+		click(document.querySelector("[data-range-picker]"));
+		await sleep(50);
+
+		const dayButtons = Array.from(
+			document.querySelectorAll("button[data-day]"),
+		);
+		const day10 = dayButtons.find((b) => b.textContent?.trim() === "10");
+		expect(day10).toBeDefined();
+		click(day10);
+		await sleep(40);
+
+		const applyButton = Array.from(document.querySelectorAll("button")).find(
+			(b) => b.textContent?.trim() === "Apply",
+		) as HTMLButtonElement | undefined;
+		expect(applyButton).toBeDefined();
+		expect(applyButton?.disabled).toBe(false);
+		click(applyButton);
+		await sleep(60);
+
+		expect(capturedRange?.key).toBe("custom");
+		expect(capturedRange?.from).not.toBeNull();
+		expect(capturedRange?.until).toBeNull();
+	});
+
+	test("TimeRangePicker: allows clearing start endpoint for end-only open-ended custom range", async () => {
+		let capturedRange: {
+			key: string;
+			from: number | null;
+			until: number | null;
+		} | null = null;
+		function RangeProbe() {
+			const { range } = useRange();
+			capturedRange = range;
+			return null;
+		}
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+
+		root.render(
+			React.createElement(
+				QueryClientProvider,
+				{ client: queryClient },
+				React.createElement(
+					SettingsProvider,
+					null,
+					React.createElement(
+						MemoryRouter,
+						{
+							initialEntries: [
+								"/?range=custom&from=2026-01-01T00:00&to=2026-01-05T00:00",
+							],
+						},
+						React.createElement(
+							RangeProvider,
+							null,
+							React.createElement(RangeProbe, null),
+							React.createElement(TimeRangePicker, null),
+						),
+					),
+				),
+			),
+		);
+		await sleep(40);
+
+		click(document.querySelector("[data-range-picker]"));
+		await sleep(50);
+
+		const clearStart = document.querySelector(
+			'button[data-clear-endpoint="start"]',
+		);
+		expect(clearStart).toBeDefined();
+		click(clearStart);
+		await sleep(40);
+
+		const applyButton = Array.from(document.querySelectorAll("button")).find(
+			(b) => b.textContent?.trim() === "Apply",
+		) as HTMLButtonElement | undefined;
+		expect(applyButton?.disabled).toBe(false);
+		click(applyButton);
+		await sleep(60);
+
+		expect(capturedRange?.key).toBe("custom");
+		expect(capturedRange?.from).toBeNull();
+		expect(capturedRange?.until).not.toBeNull();
 	});
 });

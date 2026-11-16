@@ -12,21 +12,27 @@ export const BUILTIN_HARNESS_NAMES = [
 export type BuiltinHarnessName = (typeof BUILTIN_HARNESS_NAMES)[number];
 
 /**
- * Union of all known built-in and planned mainstream harnesses.
- * Provides IDE autocompletion while allowing open string extension.
+ * All known built-in mainstream harnesses.
  */
-export type KnownHarnessName =
-	| BuiltinHarnessName
-	| "claude"
-	| "cline"
-	| "roo"
-	| "continue"
-	| "cursor"
-	| "copilot"
-	| "aider"
-	| "windsurf"
-	| "goose"
-	| "openhands";
+export const KNOWN_HARNESS_NAMES = [
+	"codex",
+	"dsh",
+	"opencode",
+	"commandcode",
+	"antigravity",
+	"claude",
+	"cline",
+	"roo",
+	"continue",
+	"cursor",
+	"copilot",
+	"aider",
+	"windsurf",
+	"goose",
+	"openhands",
+] as const;
+
+export type KnownHarnessName = (typeof KNOWN_HARNESS_NAMES)[number];
 
 /**
  * Open harness identifier allowing dynamic plugins and future harnesses
@@ -40,9 +46,9 @@ export type HarnessId = KnownHarnessName | (string & {});
 export type HarnessName = HarnessId;
 
 /**
- * Currently active built-in harness names for backward compatibility.
+ * Known harness names for backward compatibility and fallback enumeration.
  */
-export const HARNESS_NAMES = BUILTIN_HARNESS_NAMES;
+export const HARNESS_NAMES = KNOWN_HARNESS_NAMES;
 
 /**
  * Core harness metadata model conforming to HarnessProvider plugin interface.

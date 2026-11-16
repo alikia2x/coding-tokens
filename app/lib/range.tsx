@@ -86,8 +86,8 @@ export function RangeProvider({ children }: { children: ReactNode }) {
 		const needsRepair =
 			!isRangeKey(currentKey) ||
 			(currentKey === "custom"
-				? current.get("from") !== range.fromInput ||
-					current.get("to") !== range.toInput
+				? (current.get("from") ?? "") !== range.fromInput ||
+					(current.get("to") ?? "") !== range.toInput
 				: current.has("from") || current.has("to"));
 
 		if (!needsRepair) return;
@@ -170,7 +170,18 @@ export function useRangeLabel(): string {
 	const { range } = useRange();
 	const t = useT();
 	const { code } = useDateLocale();
-	if (range.key === "custom" && range.from !== null && range.until !== null)
-		return formatRangeDates(range.from, range.until, code);
+	if (range.key === "custom") {
+		if (range.from !== null && range.until !== null)
+			return formatRangeDates(range.from, range.until, code);
+		if (range.from !== null) {
+			const startLabel = formatRangeDates(range.from, range.from + 1, code);
+			return code === "zh-CN" ? `${startLabel} 起` : `From ${startLabel}`;
+		}
+		if (range.until !== null) {
+			const end = Math.max(0, range.until - 1);
+			const endLabel = formatRangeDates(end, end + 1, code);
+			return code === "zh-CN" ? `截至 ${endLabel}` : `Until ${endLabel}`;
+		}
+	}
 	return t(range.label as TranslationKey);
 }
