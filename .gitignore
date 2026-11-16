@@ -7,6 +7,7 @@ dist/
 build/
 artifacts/
 .cache
+!tests/fixtures/**/.cache
 .cottontail-tmp
 
 # Signing material must never be committed.
