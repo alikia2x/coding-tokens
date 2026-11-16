@@ -47,7 +47,7 @@ membership and the Account Holder or Admin role.
 2. In [Certificates, Identifiers & Profiles](https://developer.apple.com/account/resources/certificates),
    create a **Developer ID Application** certificate with that CSR.
    This is the certificate for distributing outside the App Store — not
-   *Apple Development* and not *Developer ID Installer*.
+   _Apple Development_ and not _Developer ID Installer_.
 3. Download and double-click the `.cer` so it lands in your login keychain.
 4. In Keychain Access, expand the certificate, select **both** the certificate
    and its private key, then **Export 2 items…** as `DeveloperID.p12` with a
@@ -77,7 +77,7 @@ CI and does not expire with a password change.
 **App Store Connect API key (alternative)**
 
 Create a key under **Users and Access → Integrations → App Store Connect API**
-with the *Developer* role, download the `.p8` once, and note the Key ID and
+with the _Developer_ role, download the `.p8` once, and note the Key ID and
 Issuer ID. The build then needs:
 
 ```sh
@@ -94,15 +94,15 @@ The release workflow uses the Apple ID variables; swap them in
 Add these under **Settings → Secrets and variables → Actions → New repository
 secret**:
 
-| Secret | Value |
-| --- | --- |
-| `MACOS_CERT_P12` | `base64 -i DeveloperID.p12` output, one line |
-| `MACOS_CERT_PASSWORD` | Password chosen when exporting the `.p12` |
-| `MACOS_KEYCHAIN_PASSWORD` | Any random string; used for the temporary CI keychain |
-| `MACOS_DEVELOPER_ID` | `Developer ID Application: Your Name (TEAMID)` |
-| `APPLE_TEAM_ID` | 10-character Team ID |
-| `APPLE_ID` | Apple ID email used for notarization |
-| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password from the step above |
+| Secret                        | Value                                                 |
+| ----------------------------- | ----------------------------------------------------- |
+| `MACOS_CERT_P12`              | `base64 -i DeveloperID.p12` output, one line          |
+| `MACOS_CERT_PASSWORD`         | Password chosen when exporting the `.p12`             |
+| `MACOS_KEYCHAIN_PASSWORD`     | Any random string; used for the temporary CI keychain |
+| `MACOS_DEVELOPER_ID`          | `Developer ID Application: Your Name (TEAMID)`        |
+| `APPLE_TEAM_ID`               | 10-character Team ID                                  |
+| `APPLE_ID`                    | Apple ID email used for notarization                  |
+| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password from the step above             |
 
 Create the base64 value without extra wrapping:
 
@@ -122,12 +122,12 @@ if you later need it.
 Every release tag builds on native runners. Electrobun does not cross-compile,
 so each row must run on its own runner.
 
-| Runner | Platform | Installer artifact | Updater artifact |
-| --- | --- | --- | --- |
-| `macos-15` | macOS arm64 | `macos-arm64-CodingTokens.dmg` | `stable-macos-arm64-CodingTokens.app.tar.zst` |
-| `macos-15-intel` | macOS x64 | `macos-x64-CodingTokens.dmg` | `stable-macos-x64-CodingTokens.app.tar.zst` |
-| `windows-2025` | Windows x64 | `win-x64-CodingTokens-Setup.zip` | `stable-win-x64-CodingTokens.tar.zst` |
-| `ubuntu-24.04` | Linux x64 | `linux-x64-CodingTokens-Setup.tar.gz` | `stable-linux-x64-CodingTokens.tar.zst` |
+| Runner           | Platform    | Installer artifact                    | Updater artifact                              |
+| ---------------- | ----------- | ------------------------------------- | --------------------------------------------- |
+| `macos-15`       | macOS arm64 | `macos-arm64-CodingTokens.dmg`        | `stable-macos-arm64-CodingTokens.app.tar.zst` |
+| `macos-15-intel` | macOS x64   | `macos-x64-CodingTokens.dmg`          | `stable-macos-x64-CodingTokens.app.tar.zst`   |
+| `windows-2025`   | Windows x64 | `win-x64-CodingTokens-Setup.zip`      | `stable-win-x64-CodingTokens.tar.zst`         |
+| `ubuntu-24.04`   | Linux x64   | `linux-x64-CodingTokens-Setup.tar.gz` | `stable-linux-x64-CodingTokens.tar.zst`       |
 
 Each row also emits `*-update.json`. All files are uploaded to the same release.
 The update feed uses:
@@ -160,20 +160,20 @@ CODESIGN=1 NOTARIZE=1 bun run build:app
 Output lands in `build/stable-macos-arm64/` (or `stable-macos-x64/`) and
 `artifacts/`:
 
-| File | Purpose |
-| --- | --- |
-| `artifacts/macos-arm64-CodingTokens.dmg` | Human download |
+| File                                                    | Purpose              |
+| ------------------------------------------------------- | -------------------- |
+| `artifacts/macos-arm64-CodingTokens.dmg`                | Human download       |
 | `artifacts/stable-macos-arm64-CodingTokens.app.tar.zst` | In-app update bundle |
-| `artifacts/stable-macos-arm64-update.json` | Update manifest |
+| `artifacts/stable-macos-arm64-update.json`              | Update manifest      |
 
 `electrobun.config.ts` reads four environment switches:
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `CODESIGN` | off | Sign with `ELECTROBUN_DEVELOPER_ID` |
-| `NOTARIZE` | off | Notarize (implies `CODESIGN`) |
-| `CREATE_DMG` | on | Set `false` for a fast unsigned smoke build |
-| `RELEASES_BASE_URL` | unset | Baked into update metadata |
+| Variable            | Default | Meaning                                     |
+| ------------------- | ------- | ------------------------------------------- |
+| `CODESIGN`          | off     | Sign with `ELECTROBUN_DEVELOPER_ID`         |
+| `NOTARIZE`          | off     | Notarize (implies `CODESIGN`)               |
+| `CREATE_DMG`        | on      | Set `false` for a fast unsigned smoke build |
+| `RELEASES_BASE_URL` | unset   | Baked into update metadata                  |
 
 ### Verify before uploading
 
@@ -221,13 +221,13 @@ hdiutil attach -readonly artifacts/macos-arm64-CodingTokens.dmg
 
 ## 6. Troubleshooting
 
-| Symptom | Fix |
-| --- | --- |
-| `errSecInternalComponent` during `codesign` | The CI keychain was not unlocked or lacks the partition list; re-run the import step |
-| `notarytool` returns 401 / invalid credentials | Use an **app-specific password**, not the Apple ID password; check `APPLE_TEAM_ID` |
-| `spctl` says `source=Unnotarized Developer ID` | Notarization was skipped or timed out; check the build log for the notarytool submission |
-| `hdiutil: create failed - Directory not empty` | The agent sandbox blocks disk images; run the build with full disk access or let CI build the DMG |
-| Gatekeeper still blocks after a successful release | The old rejection is cached; re-download or `xattr -dr com.apple.quarantine` the app |
-| Update check finds nothing | The release must be the latest non-prerelease, and the asset names must match `stable-<os>-<arch>-*` |
-| Linux app fails to start | Install the runtime packages: `libgtk-3-0`, `libwebkit2gtk-4.1-0`, `libayatana-appindicator3-1`, `librsvg2-2` |
-| Windows build waits forever | The requested ARM64 runner is not enabled for the repository; remove that matrix row |
+| Symptom                                            | Fix                                                                                                           |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `errSecInternalComponent` during `codesign`        | The CI keychain was not unlocked or lacks the partition list; re-run the import step                          |
+| `notarytool` returns 401 / invalid credentials     | Use an **app-specific password**, not the Apple ID password; check `APPLE_TEAM_ID`                            |
+| `spctl` says `source=Unnotarized Developer ID`     | Notarization was skipped or timed out; check the build log for the notarytool submission                      |
+| `hdiutil: create failed - Directory not empty`     | The agent sandbox blocks disk images; run the build with full disk access or let CI build the DMG             |
+| Gatekeeper still blocks after a successful release | The old rejection is cached; re-download or `xattr -dr com.apple.quarantine` the app                          |
+| Update check finds nothing                         | The release must be the latest non-prerelease, and the asset names must match `stable-<os>-<arch>-*`          |
+| Linux app fails to start                           | Install the runtime packages: `libgtk-3-0`, `libwebkit2gtk-4.1-0`, `libayatana-appindicator3-1`, `librsvg2-2` |
+| Windows build waits forever                        | The requested ARM64 runner is not enabled for the repository; remove that matrix row                          |

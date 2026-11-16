@@ -12,11 +12,11 @@ the same index.
 
 Download the latest installer from the [Releases](../../releases/latest) page:
 
-| Platform | File |
-| --- | --- |
-| macOS 13+, Apple silicon | `macos-arm64-CodingTokens.dmg` |
-| macOS 13+, Intel | `macos-x64-CodingTokens.dmg` |
-| Windows 11+ | `win-x64-CodingTokens-Setup.zip` |
+| Platform                      | File                                  |
+| ----------------------------- | ------------------------------------- |
+| macOS 13+, Apple silicon      | `macos-arm64-CodingTokens.dmg`        |
+| macOS 13+, Intel              | `macos-x64-CodingTokens.dmg`          |
+| Windows 11+                   | `win-x64-CodingTokens-Setup.zip`      |
 | Linux (GTK 3 / WebKitGTK 4.1) | `linux-x64-CodingTokens-Setup.tar.gz` |
 
 The macOS builds are signed and notarized. Windows and Linux builds are not
@@ -115,16 +115,16 @@ come from `bun run release <major|minor|patch|x.y.z>`, which updates
 
 ## Project layout
 
-| Path | Contents |
-| --- | --- |
-| `app/` | React UI, routes, charts and theme |
-| `desktop/` | Electrobun main process and application menu |
-| `server/` | Local HTTP API and SQLite index |
-| `src/` | CLI, harness readers, aggregation and export |
-| `shared/` | Types shared by app, server and CLI |
-| `assets/` | App icon source (`icon.svg`) and platform icon sets |
-| `scripts/` | Dev server and release helpers |
-| `docs/` | Release and contribution documentation |
+| Path       | Contents                                            |
+| ---------- | --------------------------------------------------- |
+| `app/`     | React UI, routes, charts and theme                  |
+| `desktop/` | Electrobun main process and application menu        |
+| `server/`  | Local HTTP API and SQLite index                     |
+| `src/`     | CLI, harness readers, aggregation and export        |
+| `shared/`  | Types shared by app, server and CLI                 |
+| `assets/`  | App icon source (`icon.svg`) and platform icon sets |
+| `scripts/` | Dev server and release helpers                      |
+| `docs/`    | Release and contribution documentation              |
 
 ## Privacy
 

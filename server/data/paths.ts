@@ -1,7 +1,14 @@
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
-import type { HarnessName } from "@shared/types";
+import { defaultPlatformPathService } from "../../src/platform/paths";
+import { defaultHarnessRegistry } from "../../src/providers/registry";
+import {
+	antigravityRoots,
+	existingAntigravityRoots,
+} from "../../src/sources/antigravity";
 import { expandHome, homeDir } from "../../src/util";
+
+export { antigravityRoots, existingAntigravityRoots };
 
 export function codexHome(): string {
 	return process.env.CODEX_HOME
@@ -52,23 +59,8 @@ export function commandCodeRoot(): string {
 		: path.join(homeDir, ".commandcode");
 }
 
-export function antigravityRoots(): string[] {
-	return process.env.ANTIGRAVITY_HOME
-		? [path.resolve(expandHome(process.env.ANTIGRAVITY_HOME))]
-		: [
-				path.join(homeDir, ".gemini/antigravity"),
-				path.join(homeDir, ".antigravity"),
-			];
-}
-
-export function existingAntigravityRoots(): string[] {
-	return antigravityRoots().filter((root) =>
-		existsSync(path.join(root, "conversations")),
-	);
-}
-
-export function harnessPaths(): Record<HarnessName, string[]> {
-	const paths: Record<HarnessName, string[]> = {
+export function harnessPaths(): Record<string, string[]> {
+	const paths: Record<string, string[]> = {
 		codex: [codexHome(), ...codexSessionRoots()],
 		dsh: dshRoots(),
 		opencode: openCodeDbPaths().length
@@ -77,5 +69,12 @@ export function harnessPaths(): Record<HarnessName, string[]> {
 		commandcode: [commandCodeRoot()],
 		antigravity: antigravityRoots(),
 	};
+	for (const provider of defaultHarnessRegistry.getAll()) {
+		if (!paths[provider.metadata.id]) {
+			paths[provider.metadata.id] = provider.getWatchPaths(
+				defaultPlatformPathService,
+			);
+		}
+	}
 	return paths;
 }

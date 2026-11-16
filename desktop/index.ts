@@ -1,43 +1,59 @@
 import path from "node:path";
 import { BrowserWindow, Utils } from "electrobun/main";
-import { setApplicationMenu } from "electrobun/main/app-menu";
+import {
+	type ApplicationMenuItemConfig,
+	setApplicationMenu,
+} from "electrobun/main/app-menu";
 import { VIEWS_FOLDER } from "electrobun/main/paths";
 import { startServer } from "../server/start";
+import { defaultPlatformPathService } from "../src/platform/paths";
+
+const isMac = process.platform === "darwin";
+const cmdOrCtrl = isMac ? "Command" : "Control";
+
+const appSubmenu: ApplicationMenuItemConfig[] = [
+	{ role: "about" },
+	{ type: "divider" },
+];
+if (isMac) {
+	appSubmenu.push(
+		{ role: "hide", accelerator: "Command+H" },
+		{ role: "hideOthers", accelerator: "Command+Alt+H" },
+		{ role: "showAll" },
+		{ type: "divider" },
+	);
+}
+appSubmenu.push({
+	role: "quit",
+	accelerator: isMac ? "Command+Q" : "Control+Q",
+});
 
 setApplicationMenu([
 	{
 		label: "Coding Tokens",
-		submenu: [
-			{ role: "about" },
-			{ type: "divider" },
-			{ role: "hide", accelerator: "Command+H" },
-			{ role: "hideOthers", accelerator: "Command+Alt+H" },
-			{ role: "showAll" },
-			{ type: "divider" },
-			{ role: "quit", accelerator: "Command+Q" },
-		],
+		submenu: appSubmenu,
 	},
 	{
 		label: "Edit",
 		submenu: [
-			{ role: "undo", accelerator: "Command+Z" },
-			{ role: "redo", accelerator: "Command+Shift+Z" },
+			{ role: "undo", accelerator: `${cmdOrCtrl}+Z` },
+			{ role: "redo", accelerator: `${cmdOrCtrl}+Shift+Z` },
 			{ type: "divider" },
-			{ role: "cut", accelerator: "Command+X" },
-			{ role: "copy", accelerator: "Command+C" },
-			{ role: "paste", accelerator: "Command+V" },
-			{ role: "pasteAndMatchStyle", accelerator: "Command+Shift+V" },
+			{ role: "cut", accelerator: `${cmdOrCtrl}+X` },
+			{ role: "copy", accelerator: `${cmdOrCtrl}+C` },
+			{ role: "paste", accelerator: `${cmdOrCtrl}+V` },
+			{ role: "pasteAndMatchStyle", accelerator: `${cmdOrCtrl}+Shift+V` },
 			{ role: "delete" },
 			{ type: "divider" },
-			{ role: "selectAll", accelerator: "Command+A" },
+			{ role: "selectAll", accelerator: `${cmdOrCtrl}+A` },
 		],
 	},
 	{
 		label: "Window",
 		submenu: [
-			{ role: "minimize", accelerator: "Command+M" },
+			{ role: "minimize", accelerator: `${cmdOrCtrl}+M` },
 			{ role: "zoom" },
-			{ role: "close", accelerator: "Command+W" },
+			{ role: "close", accelerator: `${cmdOrCtrl}+W` },
 			{ type: "divider" },
 			{ role: "bringAllToFront" },
 		],
@@ -45,7 +61,10 @@ setApplicationMenu([
 ]);
 
 const staticDir = path.join(VIEWS_FOLDER, "mainview");
-const databasePath = path.join(Utils.paths.userData, "coding-tokens.sqlite");
+const userDataDir =
+	Utils?.paths?.userData ??
+	defaultPlatformPathService.getDataDir("coding-tokens");
+const databasePath = path.join(userDataDir, "coding-tokens.sqlite");
 const { port } = startServer({
 	port: 0,
 	hostname: "127.0.0.1",
@@ -60,8 +79,8 @@ const mainWindow = new BrowserWindow({
 		width: 1360,
 		height: 900,
 	},
-	titleBarStyle: "hiddenInset",
-	trafficLightOffset: { x: 16, y: 15 },
+	titleBarStyle: isMac ? "hiddenInset" : "default",
+	trafficLightOffset: isMac ? { x: 16, y: 15 } : undefined,
 });
 
 console.log(`Coding Tokens window: http://127.0.0.1:${port}`);

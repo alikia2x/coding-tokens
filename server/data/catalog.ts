@@ -4,7 +4,17 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { zstdDecompressSync } from "node:zlib";
 import type { HarnessName, UsageRecord } from "@shared/types";
-import { loadSummaries } from "../../src/sources/antigravity";
+import {
+	decodeProto,
+	loadSummaries,
+	loadT3AntigravityMeta,
+	openSafeReadonlyDatabase,
+	protoSub,
+	protoText,
+	readAntigravityBlobMeta,
+	readAntigravitySidecarCwd,
+	readAntigravityStepTimestamp,
+} from "../../src/sources/antigravity";
 import { cleanUserMessage, codexSessionFiles } from "../../src/transcripts";
 import {
 	normalizedCwd,
@@ -50,8 +60,8 @@ export function cleanSessionTitle(
 	harness?: HarnessName,
 ): string {
 	let text = (value ?? "").trim();
-	if (harness === "codex") {
-		text = cleanUserMessage("codex", text).trim();
+	if (harness === "codex" || harness === "antigravity") {
+		text = cleanUserMessage(harness, text).trim();
 		if (!text) return "Untitled session";
 	}
 	text = text.replaceAll(/\s+/gu, " ").trim();
@@ -529,11 +539,42 @@ function commandCodeCatalog(
 	}
 }
 
+function antigravityFirstUserMessage(db: Database): string | null {
+	try {
+		const row = db
+			.query<{ step_payload: Uint8Array | null }, []>(
+				"SELECT step_payload FROM steps WHERE step_type = 14 ORDER BY idx LIMIT 1",
+			)
+			.get();
+		if (!row?.step_payload) return null;
+		const payload = decodeProto(row.step_payload);
+		const f19 = protoSub(payload.find((f) => f.field === 19));
+		const text = protoText(f19.find((f) => f.field === 2));
+		return text ? cleanUserMessage("antigravity", text) || null : null;
+	} catch {
+		return null;
+	}
+}
+
+function antigravityEarliestStepTimestamp(db: Database): number | null {
+	try {
+		const row = db
+			.query<{ metadata: Uint8Array | null }, []>(
+				"SELECT metadata FROM steps WHERE metadata IS NOT NULL ORDER BY idx LIMIT 1",
+			)
+			.get();
+		return readAntigravityStepTimestamp(row?.metadata ?? null);
+	} catch {
+		return null;
+	}
+}
+
 function antigravityCatalog(
 	entries: Map<string, SessionMeta>,
 	warnings: string[],
 ): void {
 	const seen = new Set<string>();
+	const t3Meta = loadT3AntigravityMeta();
 	for (const root of existingAntigravityRoots()) {
 		let summaries: ReturnType<typeof loadSummaries>;
 		try {
@@ -551,14 +592,34 @@ function antigravityCatalog(
 			seen.add(sessionId);
 			const summary = summaries.get(sessionId);
 			try {
-				mergeEntry(
-					entries,
-					entryFrom("antigravity", sessionId, {
-						title: summary?.title,
-						cwd: summary?.cwd ?? null,
-						source: { kind: "file", path: filePath },
-					}),
-				);
+				const { db, cleanup } = openSafeReadonlyDatabase(filePath);
+				try {
+					const blobMeta = readAntigravityBlobMeta(db, sessionId);
+					const cwd =
+						summary?.cwd ?? blobMeta.cwd ?? readAntigravitySidecarCwd(filePath);
+					const startedAt =
+						blobMeta.startedAt ?? antigravityEarliestStepTimestamp(db);
+					const isSubagent =
+						blobMeta.isSubagent || t3Meta.subagents.has(sessionId);
+					const rawTitle =
+						t3Meta.titles.get(sessionId) ??
+						summary?.title ??
+						(isSubagent
+							? `Subagent: ${blobMeta.subagentRole ?? blobMeta.subagentType ?? "unnamed"}`
+							: antigravityFirstUserMessage(db));
+					mergeEntry(
+						entries,
+						entryFrom("antigravity", sessionId, {
+							title: rawTitle,
+							cwd,
+							startedAt,
+							isSubagent,
+							source: { kind: "file", path: filePath },
+						}),
+					);
+				} finally {
+					cleanup();
+				}
 			} catch (error) {
 				warnings.push(
 					`Antigravity: could not read session metadata (${String(error)})`,

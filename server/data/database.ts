@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import type { HarnessName, UsageRecord } from "@shared/types";
+import { runMigrations } from "../../src/services/storage";
 
 export interface SourceStateRow {
 	fingerprint: string;
@@ -15,48 +16,12 @@ export type StoreDatabase = Database;
 export function openStoreDatabase(dbPath: string): StoreDatabase {
 	mkdirSync(path.dirname(dbPath), { recursive: true });
 	const db = new Database(dbPath, { create: true });
-	db.exec("PRAGMA journal_mode = WAL");
-	db.exec("PRAGMA synchronous = NORMAL");
-	db.exec(`
-		CREATE TABLE IF NOT EXISTS usage_records (
-			harness TEXT NOT NULL,
-			session_id TEXT NOT NULL,
-			message_id TEXT NOT NULL,
-			turn_id TEXT,
-			is_subagent INTEGER NOT NULL DEFAULT 0,
-			cwd TEXT,
-			model TEXT NOT NULL,
-			timestamp INTEGER,
-			input_tokens INTEGER NOT NULL DEFAULT 0,
-			output_tokens INTEGER NOT NULL DEFAULT 0,
-			cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-			cache_write_tokens INTEGER NOT NULL DEFAULT 0,
-			reasoning_tokens INTEGER NOT NULL DEFAULT 0,
-			cost_usd REAL,
-			cost_estimated INTEGER NOT NULL DEFAULT 0,
-			PRIMARY KEY (harness, session_id, message_id)
-		);
-		CREATE INDEX IF NOT EXISTS usage_records_harness_timestamp
-			ON usage_records (harness, timestamp);
-		CREATE TABLE IF NOT EXISTS session_messages (
-			harness TEXT NOT NULL,
-			session_id TEXT NOT NULL,
-			messages INTEGER NOT NULL DEFAULT 0,
-			PRIMARY KEY (harness, session_id)
-		);
-		CREATE TABLE IF NOT EXISTS source_state (
-			harness TEXT PRIMARY KEY,
-			fingerprint TEXT NOT NULL,
-			indexed_at INTEGER NOT NULL,
-			available INTEGER NOT NULL,
-			warnings TEXT NOT NULL DEFAULT '[]'
-		);
-		CREATE TABLE IF NOT EXISTS settings (
-			key TEXT PRIMARY KEY,
-			value TEXT NOT NULL
-		);
-		PRAGMA user_version = 1;
-	`);
+	db.exec("PRAGMA busy_timeout = 5000;");
+	db.exec("PRAGMA journal_mode = WAL;");
+	db.exec("PRAGMA synchronous = NORMAL;");
+
+	runMigrations(db);
+
 	return db;
 }
 
@@ -146,6 +111,45 @@ export function replaceHarnessMessages(
 		remove.run(harness);
 		for (const [sessionId, count] of messages)
 			insert.run(harness, sessionId, count);
+	})();
+}
+
+export function readSessionTexts(db: StoreDatabase): Map<string, string> {
+	const rows = db
+		.query<{ harness: HarnessName; session_id: string; body: string }, []>(
+			"SELECT harness, session_id, body FROM session_texts",
+		)
+		.all();
+	return new Map(
+		rows.map((row) => [`${row.harness}:${row.session_id}`, row.body]),
+	);
+}
+
+export function replaceHarnessTexts(
+	db: StoreDatabase,
+	harness: HarnessName,
+	texts: ReadonlyMap<string, string>,
+): void {
+	const remove = db.prepare("DELETE FROM session_texts WHERE harness = ?");
+	const insert = db.prepare(
+		"INSERT OR REPLACE INTO session_texts (harness, session_id, body) VALUES (?, ?, ?)",
+	);
+	let removeFts = null;
+	let insertFts = null;
+	try {
+		removeFts = db.prepare("DELETE FROM fts_session_text WHERE harness = ?");
+		insertFts = db.prepare(
+			"INSERT INTO fts_session_text (harness, session_id, body) VALUES (?, ?, ?)",
+		);
+	} catch {}
+
+	db.transaction(() => {
+		remove.run(harness);
+		if (removeFts) removeFts.run(harness);
+		for (const [sessionId, body] of texts) {
+			insert.run(harness, sessionId, body);
+			if (insertFts) insertFts.run(harness, sessionId, body);
+		}
 	})();
 }
 

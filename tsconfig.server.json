@@ -26,6 +26,7 @@
 		"src/**/*.ts",
 		"shared/**/*.ts",
 		"scripts/**/*.ts",
-		"desktop/**/*.ts"
+		"desktop/**/*.ts",
+		"tests/**/*.ts"
 	]
 }

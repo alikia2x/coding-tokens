@@ -1,5 +1,3 @@
-import { homedir } from "node:os";
-import path from "node:path";
 import { normalizeModelName } from "@shared/models";
 import type {
 	HarnessInfo,
@@ -16,12 +14,17 @@ import {
 	HARNESS_LABELS,
 	HARNESS_NAMES,
 } from "@shared/types";
+import { defaultPlatformPathService } from "../../src/platform/paths";
 import { enrichWithModelsDev } from "../../src/pricing/modelsdev";
+import { defaultHarnessRegistry } from "../../src/providers/registry";
+import { resolveDatabasePath } from "../../src/services/storage";
+import { extractSearchText } from "../../src/services/transcripts";
 import { readAntigravity } from "../../src/sources/antigravity";
 import { readCodex } from "../../src/sources/codex";
 import { readCommandCode } from "../../src/sources/commandcode";
 import { readDsh } from "../../src/sources/dsh";
 import { readOpenCode } from "../../src/sources/opencode";
+import { extractHarnessSearchTexts } from "../../src/transcripts";
 import {
 	buildSessionCatalog,
 	codexFallbackSource,
@@ -31,10 +34,12 @@ import {
 	openStoreDatabase,
 	readHarnessRecords,
 	readSessionMessages,
+	readSessionTexts,
 	readSettingRows,
 	readSourceState,
 	replaceHarnessMessages,
 	replaceHarnessRecords,
+	replaceHarnessTexts,
 	writeSetting,
 } from "./database";
 import { sourceFingerprint } from "./fingerprints";
@@ -46,7 +51,7 @@ import {
 	summarizeSessionRecords,
 } from "./totals";
 
-const readers: Record<HarnessName, () => SourceResult> = {
+const readers: Partial<Record<HarnessName, () => SourceResult>> = {
 	codex: readCodex,
 	dsh: readDsh,
 	opencode: readOpenCode,
@@ -63,6 +68,7 @@ export class DataStore {
 	private records: UsageRecord[] = [];
 	private recordsBySession = new Map<string, UsageRecord[]>();
 	private messagesBySession = new Map<string, number>();
+	private textsBySession = new Map<string, string>();
 	private catalog = new Map<string, SessionMeta>();
 	private sources = new Map<HarnessName, SourceResult>();
 	private paths = harnessPaths();
@@ -73,11 +79,12 @@ export class DataStore {
 	private indexing = false;
 	private ready = false;
 	private phase = "Starting";
-	private progress = { completed: 0, total: HARNESS_NAMES.length };
+	private progress: { completed: number; total: number } = {
+		completed: 0,
+		total: HARNESS_NAMES.length,
+	};
 	private refreshPromise: Promise<void> | null = null;
-	private dbPath: string =
-		process.env.CODING_TOKENS_DB ??
-		path.join(homedir(), ".cache", "coding-tokens", "coding-tokens.sqlite");
+	private dbPath: string = resolveDatabasePath({});
 
 	configure(options: { dbPath?: string } = {}): void {
 		if (options.dbPath) this.dbPath = options.dbPath;
@@ -150,7 +157,9 @@ export class DataStore {
 	}
 
 	private harnessInfo(): HarnessInfo[] {
-		return HARNESS_NAMES.map((harness) => {
+		const providers = defaultHarnessRegistry.getAll();
+		return providers.map((provider) => {
+			const harness = provider.metadata.id;
 			const source = this.sources.get(harness);
 			const sessionCount = this.recordsBySession.size
 				? [...this.recordsBySession.keys()].filter((key) =>
@@ -159,11 +168,14 @@ export class DataStore {
 				: 0;
 			return {
 				harness,
-				label: HARNESS_LABELS[harness],
+				label: provider.metadata.displayName,
+				color: provider.metadata.color,
 				available: source?.available ?? false,
 				records: source?.records.length ?? 0,
 				sessions: sessionCount,
-				paths: this.paths[harness],
+				paths:
+					this.paths[harness] ??
+					provider.getWatchPaths(defaultPlatformPathService),
 				warnings: source?.warnings ?? [],
 			};
 		});
@@ -174,7 +186,8 @@ export class DataStore {
 		this.indexing = true;
 		this.error = null;
 		this.phase = "Opening local index";
-		this.progress = { completed: 0, total: HARNESS_NAMES.length };
+		const providers = defaultHarnessRegistry.getAll();
+		this.progress = { completed: 0, total: providers.length };
 		const startedAt = Date.now();
 		const collected: SourceResult[] = [];
 		const nextSources = new Map<HarnessName, SourceResult>();
@@ -185,16 +198,26 @@ export class DataStore {
 		}> = [];
 		const db = openStoreDatabase(this.dbPath);
 		this.messagesBySession = readSessionMessages(db);
+		this.textsBySession = readSessionTexts(db);
 		try {
-			for (const [index, harness] of HARNESS_NAMES.entries()) {
+			for (const [index, provider] of providers.entries()) {
+				const harness = provider.metadata.id;
+				const label = provider.metadata.displayName;
 				this.progress = {
 					completed: index,
-					total: HARNESS_NAMES.length,
+					total: providers.length,
 				};
-				const fingerprint = sourceFingerprint(harness);
+				let fingerprint = "";
+				try {
+					fingerprint = await provider.computeFingerprint(
+						defaultPlatformPathService,
+					);
+				} catch {
+					fingerprint = `v12:0:${harness}`;
+				}
 				const state = readSourceState(db, harness);
 				if (state && state.fingerprint === fingerprint) {
-					this.phase = `Loading ${HARNESS_LABELS[harness]}`;
+					this.phase = `Loading ${label}`;
 					const result: SourceResult = {
 						harness,
 						records: readHarnessRecords(db, harness),
@@ -206,15 +229,26 @@ export class DataStore {
 					nextSources.set(harness, result);
 					continue;
 				}
-				this.phase = `Reading ${HARNESS_LABELS[harness]}`;
-				const result = readers[harness]();
+				this.phase = `Reading ${label}`;
+				let result: SourceResult;
+				try {
+					result = await provider.readUsage(defaultPlatformPathService);
+				} catch (err) {
+					result = {
+						harness,
+						available: false,
+						records: [],
+						warnings: [`Failed reading usage for ${label}: ${String(err)}`],
+						messages: new Map(),
+					};
+				}
 				collected.push(result);
 				nextSources.set(harness, result);
 				changed.push({ harness, result, fingerprint });
 			}
 			this.progress = {
-				completed: HARNESS_NAMES.length,
-				total: HARNESS_NAMES.length,
+				completed: providers.length,
+				total: providers.length,
 			};
 			const records = collected.flatMap((source) => source.records);
 			const changedRecords = changed.flatMap((item) => item.result.records);
@@ -236,8 +270,31 @@ export class DataStore {
 						warnings: JSON.stringify(item.result.warnings),
 					});
 					replaceHarnessMessages(db, item.harness, item.result.messages);
+					const itemProvider = defaultHarnessRegistry.get(item.harness);
+					let texts = new Map<string, string>();
+					if (
+						itemProvider &&
+						"readTranscripts" in itemProvider &&
+						typeof (itemProvider as any).readTranscripts === "function"
+					) {
+						try {
+							const tRes = await (itemProvider as any).readTranscripts(
+								defaultPlatformPathService,
+							);
+							for (const sess of tRes.sessions) {
+								const t = extractSearchText(sess);
+								if (t) texts.set(sess.sessionId, t);
+							}
+						} catch {}
+					} else {
+						try {
+							texts = extractHarnessSearchTexts(item.harness as any);
+						} catch {}
+					}
+					replaceHarnessTexts(db, item.harness, texts);
 				}
 				this.messagesBySession = readSessionMessages(db);
+				this.textsBySession = readSessionTexts(db);
 			}
 			this.phase = "Building session index";
 			const catalog = buildSessionCatalog(records);
@@ -293,8 +350,16 @@ export class DataStore {
 		return this.sources.get(harness);
 	}
 
-	sourcePaths(): Record<HarnessName, string[]> {
-		return this.paths;
+	sourcePaths(): Record<string, string[]> {
+		const result = { ...this.paths };
+		for (const provider of defaultHarnessRegistry.getAll()) {
+			if (!result[provider.metadata.id]) {
+				result[provider.metadata.id] = provider.getWatchPaths(
+					defaultPlatformPathService,
+				);
+			}
+		}
+		return result;
 	}
 
 	warningList(): string[] {
@@ -315,17 +380,36 @@ export class DataStore {
 	}
 
 	ensureSessionSource(entry: SessionEntry): SessionMeta {
-		if (entry.meta.source || entry.meta.harness !== "codex") return entry.meta;
-		const fallback = codexFallbackSource(entry.meta.sessionId);
-		if (!fallback) return entry.meta;
-		const meta = {
-			...entry.meta,
-			source: fallback,
-			hasTranscript: true,
-		};
-		entry.meta = meta;
-		this.catalog.set(entry.meta.key, meta);
-		return meta;
+		if (entry.meta.source) return entry.meta;
+		const harness = entry.meta.harness;
+		if (harness === "codex") {
+			const fallback = codexFallbackSource(entry.meta.sessionId);
+			if (fallback) {
+				const meta = {
+					...entry.meta,
+					source: fallback,
+					hasTranscript: true,
+				};
+				entry.meta = meta;
+				this.catalog.set(entry.meta.key, meta);
+				return meta;
+			}
+		}
+		const provider = defaultHarnessRegistry.get(harness);
+		if (provider && !entry.meta.source) {
+			const watchPaths = provider.getWatchPaths(defaultPlatformPathService);
+			if (watchPaths.length) {
+				const meta = {
+					...entry.meta,
+					source: { kind: "file" as const, path: watchPaths[0]! },
+					hasTranscript: true,
+				};
+				entry.meta = meta;
+				this.catalog.set(entry.meta.key, meta);
+				return meta;
+			}
+		}
+		return entry.meta;
 	}
 
 	summarize(
@@ -373,6 +457,10 @@ export class DataStore {
 		let total = 0;
 		for (const key of keys) total += this.messagesBySession.get(key) ?? 0;
 		return total;
+	}
+
+	sessionText(key: string): string | undefined {
+		return this.textsBySession.get(key);
 	}
 
 	sessionSummaries(range: {

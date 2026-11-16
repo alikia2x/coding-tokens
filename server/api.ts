@@ -1,4 +1,5 @@
 import path from "node:path";
+import { isKnownHarness } from "@shared/colors";
 import type {
 	HarnessName,
 	SessionDetailLevel,
@@ -6,6 +7,7 @@ import type {
 	StatusPayload,
 } from "@shared/types";
 import { HARNESS_NAMES, SESSION_DETAIL_LEVELS } from "@shared/types";
+import { defaultHarnessRegistry } from "../src/providers/registry";
 import { explorePayload } from "./data/explore";
 import { heatmapPayload } from "./data/heatmap";
 import {
@@ -14,13 +16,20 @@ import {
 	overviewPayload,
 	projectReportPayload,
 } from "./data/reports";
-import { searchPayload } from "./data/search";
+import { searchPayload, sessionSearchMatches } from "./data/search";
 import { sessionDetailPayload } from "./data/session-detail";
 import { exportSessionMarkdown } from "./data/session-export";
 import { store } from "./data/store";
 import type { RecordFilters } from "./data/totals";
 
-const harnessSet = new Set<string>(HARNESS_NAMES);
+function isValidHarness(id: string): boolean {
+	return (
+		defaultHarnessRegistry.has(id) ||
+		isKnownHarness(id) ||
+		(HARNESS_NAMES as readonly string[]).includes(id)
+	);
+}
+
 const levelSet = new Set<string>(
 	SESSION_DETAIL_LEVELS.map((item) => item.value),
 );
@@ -59,7 +68,7 @@ function filtersFrom(url: URL): RecordFilters {
 		throw new Error("from must be earlier than until");
 	const harnesses = listParam(url, "harness");
 	for (const harness of harnesses) {
-		if (!harnessSet.has(harness))
+		if (!isValidHarness(harness))
 			throw new Error(`Unknown harness: ${harness}`);
 	}
 	const projects = listParam(url, "project").map((value) =>
@@ -174,7 +183,7 @@ export async function handleApi(request: Request, url: URL): Promise<Response> {
 			segments.at(-1) === "export"
 		) {
 			const harness = segments[2] ?? "";
-			if (!harnessSet.has(harness))
+			if (!isValidHarness(harness))
 				return json({ error: `Unknown harness: ${harness}` }, 400);
 			const sessionId = decodeURIComponent(segments.slice(3, -1).join("/"));
 			const body = (await request.json().catch(() => ({}))) as {
@@ -197,9 +206,19 @@ export async function handleApi(request: Request, url: URL): Promise<Response> {
 			return json(result);
 		}
 
+		if (
+			resource === "sessions" &&
+			segments.length === 3 &&
+			segments[2] === "search" &&
+			method === "GET"
+		) {
+			const query = url.searchParams.get("q") ?? "";
+			return json(sessionSearchMatches(query, rangeFrom(url)));
+		}
+
 		if (resource === "sessions" && segments.length >= 3 && method === "GET") {
 			const harness = segments[2] ?? "";
-			if (!harnessSet.has(harness))
+			if (!isValidHarness(harness))
 				return json({ error: `Unknown harness: ${harness}` }, 400);
 			const sessionId = decodeURIComponent(segments.slice(3).join("/"));
 			const key = `${harness}:${sessionId}`;

@@ -12,7 +12,9 @@ import type {
 	ProjectSummary,
 	UsageRecord,
 } from "@shared/types";
-import { HARNESS_LABELS, HARNESS_NAMES } from "@shared/types";
+import { HARNESS_LABELS } from "@shared/types";
+import { defaultPlatformPathService } from "../../src/platform/paths";
+import { defaultHarnessRegistry } from "../../src/providers/registry";
 import { store } from "./store";
 import {
 	bucketize,
@@ -277,12 +279,14 @@ export function modelReportPayload(filters: RecordFilters): ModelReportPayload {
 
 export function harnessReportPayload(
 	filters: RecordFilters,
-	paths: Record<HarnessName, string[]>,
+	paths: Record<string, string[]>,
 ): HarnessReportPayload {
 	const all = filterRecords(store.allRecords(), filters);
 	const totals = summarizeRecords(all);
 	const totalTokensAll = totalTokens(totals);
-	const rows: HarnessReportRow[] = HARNESS_NAMES.map((harness) => {
+	const providers = defaultHarnessRegistry.getAll();
+	const rows: HarnessReportRow[] = providers.map((provider) => {
+		const harness = provider.metadata.id;
 		const records = all.filter((record) => record.harness === harness);
 		const harnessTotals = summarizeRecords(records);
 		const byModel = new Map<string, { costUsd: number; tokens: number }>();
@@ -299,9 +303,11 @@ export function harnessReportPayload(
 		const source = store.source(harness);
 		return {
 			harness,
-			label: HARNESS_LABELS[harness],
+			label: provider.metadata.displayName,
+			color: provider.metadata.color,
 			available: source?.available ?? false,
-			paths: paths[harness],
+			paths:
+				paths[harness] ?? provider.getWatchPaths(defaultPlatformPathService),
 			warnings: source?.warnings ?? [],
 			totals: harnessTotals,
 			costShare: emptyShare(harnessTotals.costUsd, totals.costUsd),

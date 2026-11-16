@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
-import path from "node:path";
 import { parseArgs } from "node:util";
 import { createReport, type GroupField, type GroupRow } from "./aggregate";
 import { exportSessionsToMarkdown } from "./exporter";
+import { defaultPlatformPathService } from "./platform/paths";
 import { enrichWithModelsDev } from "./pricing/modelsdev";
+import { defaultHarnessRegistry } from "./providers/registry";
 import { readAntigravity } from "./sources/antigravity";
 import { readCodex } from "./sources/codex";
 import { readCommandCode } from "./sources/commandcode";
@@ -14,16 +15,15 @@ import {
 	filterTranscriptSessions,
 	readTranscriptSources,
 } from "./transcripts";
-import type { HarnessName, SourceResult, UsageTotals } from "./types";
-import { expandHome, homeDir } from "./util";
+import type {
+	HarnessName,
+	SourceResult,
+	TranscriptReadResult,
+	TranscriptSession,
+	UsageTotals,
+} from "./types";
 
-const harnesses = [
-	"codex",
-	"dsh",
-	"opencode",
-	"commandcode",
-	"antigravity",
-] as const;
+const harnesses = defaultHarnessRegistry.getAll().map((p) => p.metadata.id);
 const groupFields = ["harness", "project", "model", "day", "session"] as const;
 const exportDetails = [
 	"user_only",
@@ -40,14 +40,12 @@ const labels: Record<GroupField, string> = {
 	day: "Date",
 	session: "Session",
 };
-const harnessLabels: Record<HarnessName, string> = {
-	codex: "Codex",
-	dsh: "DSH",
-	opencode: "OpenCode",
-	commandcode: "Command Code",
-	antigravity: "Antigravity",
-};
-const readers: Record<HarnessName, () => SourceResult> = {
+
+function getHarnessLabel(id: string): string {
+	return defaultHarnessRegistry.get(id)?.metadata.displayName ?? id;
+}
+
+const readers: Partial<Record<HarnessName, () => SourceResult>> = {
 	codex: readCodex,
 	dsh: readDsh,
 	opencode: readOpenCode,
@@ -62,6 +60,7 @@ const costFormat = new Intl.NumberFormat("en-US", {
 });
 
 function help(): void {
+	const home = defaultPlatformPathService.getHomeDir();
 	console.log(`Usage: bun run src/cli.ts [options]
 
 Options:
@@ -84,7 +83,7 @@ Options:
   date and time, as in 2026-01-15T09:30:00).
 
 Data directories: CODEX_HOME, DSH_HOME, OPENCODE_DATA_DIR, OPENCODE_DB,
-COMMANDCODE_HOME, ANTIGRAVITY_HOME. Default Codex directory: ${homeDir}/.codex.`);
+COMMANDCODE_HOME, ANTIGRAVITY_HOME. Default Codex directory: ${home}/.codex.`);
 }
 
 function parseList<T extends string>(
@@ -249,13 +248,17 @@ function parseOptions(args: string[]) {
 		],
 		harnesses: parseList(values.harness, harnesses, "--harness") ?? harnesses,
 		projects: values.project?.map((project) =>
-			path.resolve(expandHome(project)),
+			defaultPlatformPathService.normalize(
+				defaultPlatformPathService.expandPath(project),
+			),
 		),
 		date,
 		since,
 		until,
 		exportDirectory: values["export-dir"]
-			? path.resolve(expandHome(values["export-dir"]))
+			? defaultPlatformPathService.normalize(
+					defaultPlatformPathService.expandPath(values["export-dir"]),
+				)
 			: undefined,
 		detail: (details?.[0] as ExportDetail | undefined) ?? "chat_compact",
 		includeTimestamps: values["include-timestamps"] ?? false,
@@ -269,13 +272,13 @@ function tableRow(
 	groupBy: GroupField[],
 	isTotal = false,
 ): Record<string, string | number> {
+	const home = defaultPlatformPathService.getHomeDir();
 	const row: Record<string, string | number> = {};
 	for (const [index, field] of groupBy.entries()) {
 		let value = isTotal && index === 0 ? "Total" : (values?.[field] ?? "");
-		if (field === "harness")
-			value = harnessLabels[value as HarnessName] ?? value;
-		if (field === "project" && value.startsWith(homeDir)) {
-			value = `~${value.slice(homeDir.length)}`;
+		if (field === "harness") value = getHarnessLabel(value);
+		if (field === "project" && value.startsWith(home)) {
+			value = `~${value.slice(home.length)}`;
 		}
 		row[labels[field]] = value;
 	}
@@ -325,10 +328,78 @@ async function main(): Promise<void> {
 		return;
 	}
 	if (options.exportDirectory) {
-		const transcriptSources = readTranscriptSources(options.harnesses);
-		const usageSources = options.includeTokenStats
-			? options.harnesses.map((harness) => readers[harness]())
-			: [];
+		const transcriptSources: TranscriptReadResult[] = [];
+		const usageSources: SourceResult[] = [];
+
+		for (const harness of options.harnesses) {
+			const provider = defaultHarnessRegistry.get(harness);
+			if (
+				provider &&
+				"readTranscripts" in provider &&
+				typeof (provider as any).readTranscripts === "function"
+			) {
+				try {
+					const tRes = await (provider as any).readTranscripts(
+						defaultPlatformPathService,
+					);
+					transcriptSources.push(tRes);
+				} catch (err) {
+					transcriptSources.push({
+						harness,
+						available: false,
+						sessions: [],
+						warnings: [
+							`Failed reading transcripts for ${harness}: ${String(err)}`,
+						],
+					});
+				}
+			} else if (provider) {
+				try {
+					const items = await provider.discoverSessions(
+						defaultPlatformPathService,
+					);
+					const sessions: TranscriptSession[] = [];
+					for (const item of items) {
+						const t = await provider.readTranscript(
+							defaultPlatformPathService,
+							item.sessionId,
+						);
+						if (t) sessions.push(t);
+					}
+					transcriptSources.push({
+						harness,
+						available: await provider.isAvailable(defaultPlatformPathService),
+						sessions,
+						warnings: [],
+					});
+				} catch (err) {
+					transcriptSources.push({
+						harness,
+						available: false,
+						sessions: [],
+						warnings: [
+							`Failed reading transcripts for ${harness}: ${String(err)}`,
+						],
+					});
+				}
+			} else {
+				const legacy = readTranscriptSources([harness as HarnessName]);
+				if (legacy[0]) transcriptSources.push(legacy[0]);
+			}
+
+			if (options.includeTokenStats) {
+				if (provider) {
+					try {
+						const uRes = await provider.readUsage(defaultPlatformPathService);
+						usageSources.push(uRes);
+					} catch {}
+				} else {
+					const reader = readers[harness as HarnessName];
+					if (reader) usageSources.push(reader());
+				}
+			}
+		}
+
 		const sessions = filterTranscriptSessions(
 			transcriptSources.flatMap((source) => source.sessions),
 			{
@@ -375,7 +446,28 @@ async function main(): Promise<void> {
 		return;
 	}
 
-	const sources = options.harnesses.map((harness) => readers[harness]());
+	const sources: SourceResult[] = [];
+	for (const harness of options.harnesses) {
+		const provider = defaultHarnessRegistry.get(harness);
+		if (provider) {
+			try {
+				const res = await provider.readUsage(defaultPlatformPathService);
+				sources.push(res);
+			} catch (err) {
+				sources.push({
+					harness,
+					available: false,
+					records: [],
+					warnings: [`Failed reading usage for ${harness}: ${String(err)}`],
+					messages: new Map(),
+				});
+			}
+		} else {
+			const reader = readers[harness as HarnessName];
+			if (reader) sources.push(reader());
+		}
+	}
+
 	const pricingWarning = await enrichWithModelsDev(
 		sources.flatMap((item) => item.records),
 	);

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { SessionDetailLevel } from "@shared/types";
 import { renderSessionMarkdown } from "../../src/exporter";
-import { homeDir } from "../../src/util";
+import { defaultPlatformPathService } from "../../src/platform/paths";
 import { loadSessionTranscript } from "./session-detail";
 
 export interface SessionExportResult {
@@ -47,8 +47,8 @@ export async function exportSessionMarkdown(
 	});
 	if (!markdown) throw new Error("No messages at this detail level");
 	const targetDirectory = directory
-		? path.resolve(directory)
-		: path.join(homeDir, "Downloads");
+		? defaultPlatformPathService.normalize(directory)
+		: path.join(defaultPlatformPathService.getHomeDir(), "Downloads");
 	mkdirSync(targetDirectory, { recursive: true });
 	const base = `${safeFilename(session.title ?? session.sessionId)}-${safeFilename(
 		session.sessionId,

@@ -8,6 +8,14 @@ import type {
 	UsageRecord,
 } from "@shared/types";
 import { HARNESS_LABELS } from "@shared/types";
+import { defaultPlatformPathService } from "../../src/platform/paths";
+import { defaultHarnessRegistry } from "../../src/providers/registry";
+import {
+	normalizeToolOperations,
+	pairToolItems,
+	type ToolResultLike,
+	unwrapToolOutput,
+} from "../../src/tools/normalize";
 import {
 	codexSessionFiles,
 	isInjectedUserMessage,
@@ -21,6 +29,29 @@ import { summarizeSessionRecords } from "./totals";
 const MAX_MESSAGE = 100_000;
 const MAX_TOOL_INPUT = 50_000;
 const MAX_TOOL_OUTPUT = 50_000;
+
+interface DetailLimits {
+	message: number;
+	input: number;
+	output: number;
+}
+
+function limitsForLevel(level: SessionDetailLevel): DetailLimits {
+	switch (level) {
+		case "agent_full":
+			return {
+				message: MAX_MESSAGE,
+				input: MAX_TOOL_INPUT,
+				output: MAX_TOOL_OUTPUT,
+			};
+		case "agent":
+			return { message: 50_000, input: 8_000, output: 4_000 };
+		case "chat_tools":
+			return { message: 50_000, input: 2_000, output: 800 };
+		default:
+			return { message: 50_000, input: 0, output: 0 };
+	}
+}
 
 function limit(
 	value: string | null | undefined,
@@ -73,36 +104,64 @@ function includeItem(
 	);
 }
 
+function pairedResultsByCall(
+	items: readonly TranscriptItem[],
+): Map<TranscriptItem, ToolResultLike> {
+	const map = new Map<TranscriptItem, ToolResultLike>();
+	for (const pair of pairToolItems(items)) {
+		if (pair.call.kind !== "tool_call" || !pair.results.length) continue;
+		const last = pair.results.at(-1);
+		if (pair.results.length === 1 && last) {
+			map.set(pair.call, last);
+			continue;
+		}
+		const combinedText = pair.results
+			.map((entry) => unwrapToolOutput(entry.output, entry.text))
+			.filter((entry): entry is string => Boolean(entry))
+			.join("\n");
+		const errorResult = pair.results.find(
+			(entry) => entry.status && /error|fail|cancel/iu.test(entry.status),
+		);
+		map.set(pair.call, {
+			output: last?.output,
+			text: combinedText || last?.text,
+			status: errorResult?.status ?? last?.status,
+		});
+	}
+	return map;
+}
+
 function detailItem(
 	item: TranscriptItem,
 	level: SessionDetailLevel,
+	pairedResult?: ToolResultLike,
 ): DetailItem {
-	const messageLimit = level === "agent_full" ? MAX_MESSAGE : 50_000;
-	const inputLimit =
-		level === "agent_full"
-			? MAX_TOOL_INPUT
-			: level === "agent"
-				? 8_000
-				: level === "chat_tools"
-					? 2_000
-					: 0;
-	const outputLimit =
-		level === "agent_full"
-			? MAX_TOOL_OUTPUT
-			: level === "agent"
-				? 4_000
-				: level === "chat_tools"
-					? 800
-					: 0;
-	const text = limit(item.text ?? payloadText(item.output), messageLimit);
+	const limits = limitsForLevel(level);
+	const unwrappedOutput =
+		item.kind === "tool_result"
+			? unwrapToolOutput(item.output, item.text)
+			: payloadText(item.output);
+
+	const text = limit(item.text ?? unwrappedOutput, limits.message);
 	const input =
-		inputLimit > 0
-			? limit(payloadText(item.input), inputLimit)
+		limits.input > 0
+			? limit(payloadText(item.input), limits.input)
 			: { text: null, truncated: false };
 	const output =
-		outputLimit > 0
-			? limit(payloadText(item.output) ?? item.text ?? null, outputLimit)
+		limits.output > 0
+			? limit(unwrappedOutput ?? item.text ?? null, limits.output)
 			: { text: null, truncated: false };
+
+	let operations: DetailItem["operations"];
+	if (item.kind === "tool_call") {
+		operations = normalizeToolOperations(item, pairedResult);
+	} else if (item.kind === "tool_result" && item.name && !item.toolCallId) {
+		operations = normalizeToolOperations(
+			{ name: item.name, category: item.category, status: item.status },
+			item,
+		);
+	}
+
 	return {
 		id: item.id,
 		order: item.order,
@@ -117,6 +176,7 @@ function detailItem(
 		toolCallId: item.toolCallId ?? null,
 		category: item.category ?? null,
 		status: item.status ?? null,
+		operations,
 		timestamp: item.timestamp,
 		truncated: text.truncated || input.truncated || output.truncated,
 	};
@@ -280,6 +340,25 @@ export async function loadSessionTranscript(
 	const entry = store.sessionEntry(key);
 	if (!entry) return { ok: false, warnings: ["Session not found"] };
 	const meta = store.ensureSessionSource(entry);
+
+	// Try HarnessProvider from registry first
+	const provider = defaultHarnessRegistry.get(meta.harness);
+	if (provider) {
+		try {
+			const session = await provider.readTranscript(
+				defaultPlatformPathService,
+				meta.sessionId,
+			);
+			if (session) {
+				session.usageRecords = entry.records;
+				return {
+					ok: true,
+					value: { meta, records: entry.records, session, warnings: [] },
+				};
+			}
+		} catch {}
+	}
+
 	// Codex stores one conversation in multiple rollout segments. The thread's
 	// recorded source is only its latest segment, so resolve every segment.
 	const paths = new Set<string>();
@@ -292,7 +371,7 @@ export async function loadSessionTranscript(
 		return {
 			ok: false,
 			warnings: [
-				`${HARNESS_LABELS[meta.harness]}: no transcript file was found`,
+				`${HARNESS_LABELS[meta.harness] ?? meta.harness}: no transcript file was found`,
 			],
 		};
 	const results = readTranscriptSources([meta.harness], {
@@ -308,7 +387,7 @@ export async function loadSessionTranscript(
 			ok: false,
 			warnings: [
 				...warnings,
-				`${HARNESS_LABELS[meta.harness]}: transcript could not be read`,
+				`${HARNESS_LABELS[meta.harness] ?? meta.harness}: transcript could not be read`,
 			],
 		};
 	}
@@ -327,11 +406,12 @@ export async function sessionDetailPayload(
 	if (!loaded.ok) return emptyPayload(key, level, loaded.warnings);
 	const { meta, records, session, warnings } = loaded.value;
 	const turns = buildTurns(session, records);
+	const pairedResults = pairedResultsByCall(session.items);
 	const selected = session.items.filter((item) =>
 		includeItem(session.harness, item, level),
 	);
 	const items = selected
-		.map((item) => detailItem(item, level))
+		.map((item) => detailItem(item, level, pairedResults.get(item)))
 		.sort((left, right) => left.order - right.order);
 	return {
 		summary: {

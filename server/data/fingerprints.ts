@@ -11,7 +11,7 @@ import {
 	openCodeDbPaths,
 } from "./paths";
 
-const INDEX_VERSION = 10;
+const INDEX_VERSION = 12;
 
 function stamp(filePath: string): string {
 	try {
@@ -56,11 +56,14 @@ function filesFor(harness: HarnessName): string[] {
 				!name.endsWith(".prompts.jsonl"),
 		);
 	}
-	return existingAntigravityRoots().flatMap((root) =>
-		walkFiles(path.join(root, "conversations"), (_filePath, name) =>
-			name.endsWith(".db"),
-		),
-	);
+	if (harness === "antigravity") {
+		return existingAntigravityRoots().flatMap((root) =>
+			walkFiles(path.join(root, "conversations"), (_filePath, name) =>
+				name.endsWith(".db"),
+			),
+		);
+	}
+	return [];
 }
 
 export function sourceFingerprint(harness: HarnessName): string {
