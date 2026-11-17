@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-17
+
 ### Added
 
 - Support for 15 coding harnesses across macOS, Windows, and Linux via dynamic provider registration and cross-platform path resolution.
