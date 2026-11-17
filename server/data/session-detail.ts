@@ -17,7 +17,6 @@ import {
 	unwrapToolOutput,
 } from "../../src/tools/normalize";
 import {
-	codexSessionFiles,
 	isInjectedUserMessage,
 	readTranscriptSources,
 	type TranscriptItem,
@@ -359,20 +358,26 @@ export async function loadSessionTranscript(
 		} catch {}
 	}
 
-	// Codex stores one conversation in multiple rollout segments. The thread's
-	// recorded source is only its latest segment, so resolve every segment.
+	// Resolve all transcript files for providers that split a session across
+	// multiple files (e.g. Codex rollout segments).
 	const paths = new Set<string>();
-	if (meta.harness === "codex") {
-		for (const filePath of codexSessionFiles(meta.sessionId))
+	if (provider?.resolveSessionFiles) {
+		for (const filePath of provider.resolveSessionFiles(
+			defaultPlatformPathService,
+			meta.sessionId,
+		)) {
 			paths.add(filePath);
+		}
 	}
 	if (meta.source) paths.add(meta.source.path);
+	const harnessLabel =
+		provider?.metadata.displayName ??
+		HARNESS_LABELS[meta.harness] ??
+		meta.harness;
 	if (!paths.size)
 		return {
 			ok: false,
-			warnings: [
-				`${HARNESS_LABELS[meta.harness] ?? meta.harness}: no transcript file was found`,
-			],
+			warnings: [`${harnessLabel}: no transcript file was found`],
 		};
 	const results = readTranscriptSources([meta.harness], {
 		[meta.harness]: paths,
@@ -385,10 +390,7 @@ export async function loadSessionTranscript(
 	if (!session) {
 		return {
 			ok: false,
-			warnings: [
-				...warnings,
-				`${HARNESS_LABELS[meta.harness] ?? meta.harness}: transcript could not be read`,
-			],
+			warnings: [...warnings, `${harnessLabel}: transcript could not be read`],
 		};
 	}
 	session.usageRecords = entry.records;

@@ -7,7 +7,11 @@ import type {
 	TranscriptReadResult,
 	TranscriptSession,
 } from "../../types";
-import type { HarnessProvider, SessionDiscoveryItem } from "../types";
+import type {
+	HarnessCapabilities,
+	HarnessProvider,
+	SessionDiscoveryItem,
+} from "../types";
 import { computeFilesFingerprint } from "../utils";
 import {
 	discoverAntigravitySessions,
@@ -22,6 +26,9 @@ import { readAntigravityUsageSync } from "./usage";
 
 export class AntigravityProvider implements HarnessProvider {
 	readonly metadata: HarnessMetadata;
+	readonly capabilities: HarnessCapabilities = {
+		cleanTitleWithUserMessage: true,
+	};
 
 	constructor() {
 		const meta = BUILTIN_HARNESS_METADATA.find((m) => m.id === "antigravity");

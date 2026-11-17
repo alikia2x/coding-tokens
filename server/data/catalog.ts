@@ -4,6 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { zstdDecompressSync } from "node:zlib";
 import type { HarnessName, UsageRecord } from "@shared/types";
+import { defaultHarnessRegistry } from "../../src/providers/registry";
 import {
 	decodeProto,
 	loadSummaries,
@@ -60,7 +61,8 @@ export function cleanSessionTitle(
 	harness?: HarnessName,
 ): string {
 	let text = (value ?? "").trim();
-	if (harness === "codex" || harness === "antigravity") {
+	const provider = harness ? defaultHarnessRegistry.get(harness) : undefined;
+	if (harness && provider?.capabilities?.cleanTitleWithUserMessage) {
 		text = cleanUserMessage(harness, text).trim();
 		if (!text) return "Untitled session";
 	}

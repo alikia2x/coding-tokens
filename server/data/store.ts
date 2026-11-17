@@ -11,7 +11,6 @@ import type {
 import {
 	type AppSettings,
 	DEFAULT_SETTINGS,
-	HARNESS_LABELS,
 	HARNESS_NAMES,
 } from "@shared/types";
 import { defaultPlatformPathService } from "../../src/platform/paths";
@@ -19,17 +18,8 @@ import { enrichWithModelsDev } from "../../src/pricing/modelsdev";
 import { defaultHarnessRegistry } from "../../src/providers/registry";
 import { resolveDatabasePath } from "../../src/services/storage";
 import { extractSearchText } from "../../src/services/transcripts";
-import { readAntigravity } from "../../src/sources/antigravity";
-import { readCodex } from "../../src/sources/codex";
-import { readCommandCode } from "../../src/sources/commandcode";
-import { readDsh } from "../../src/sources/dsh";
-import { readOpenCode } from "../../src/sources/opencode";
 import { extractHarnessSearchTexts } from "../../src/transcripts";
-import {
-	buildSessionCatalog,
-	codexFallbackSource,
-	type SessionMeta,
-} from "./catalog";
+import { buildSessionCatalog, type SessionMeta } from "./catalog";
 import {
 	openStoreDatabase,
 	readHarnessRecords,
@@ -42,7 +32,6 @@ import {
 	replaceHarnessTexts,
 	writeSetting,
 } from "./database";
-import { sourceFingerprint } from "./fingerprints";
 import { harnessPaths } from "./paths";
 import {
 	emptyTotals,
@@ -50,14 +39,6 @@ import {
 	sessionKey,
 	summarizeSessionRecords,
 } from "./totals";
-
-const readers: Partial<Record<HarnessName, () => SourceResult>> = {
-	codex: readCodex,
-	dsh: readDsh,
-	opencode: readOpenCode,
-	commandcode: readCommandCode,
-	antigravity: readAntigravity,
-};
 
 export interface SessionEntry {
 	meta: SessionMeta;
@@ -287,13 +268,9 @@ export class DataStore {
 					replaceHarnessMessages(db, item.harness, item.result.messages);
 					const itemProvider = defaultHarnessRegistry.get(item.harness);
 					let texts = new Map<string, string>();
-					if (
-						itemProvider &&
-						"readTranscripts" in itemProvider &&
-						typeof (itemProvider as any).readTranscripts === "function"
-					) {
+					if (itemProvider?.readTranscripts) {
 						try {
-							const tRes = await (itemProvider as any).readTranscripts(
+							const tRes = await itemProvider.readTranscripts(
 								defaultPlatformPathService,
 							);
 							for (const sess of tRes.sessions) {
@@ -303,7 +280,7 @@ export class DataStore {
 						} catch {}
 					} else {
 						try {
-							texts = extractHarnessSearchTexts(item.harness as any);
+							texts = extractHarnessSearchTexts(item.harness);
 						} catch {}
 					}
 					replaceHarnessTexts(db, item.harness, texts);
@@ -396,27 +373,29 @@ export class DataStore {
 
 	ensureSessionSource(entry: SessionEntry): SessionMeta {
 		if (entry.meta.source) return entry.meta;
-		const harness = entry.meta.harness;
-		if (harness === "codex") {
-			const fallback = codexFallbackSource(entry.meta.sessionId);
-			if (fallback) {
+		const provider = defaultHarnessRegistry.get(entry.meta.harness);
+		if (provider) {
+			const resolvedFiles = provider.resolveSessionFiles?.(
+				defaultPlatformPathService,
+				entry.meta.sessionId,
+			);
+			const fallbackPath = resolvedFiles?.at(-1);
+			if (fallbackPath) {
 				const meta = {
 					...entry.meta,
-					source: fallback,
+					source: { kind: "file" as const, path: fallbackPath },
 					hasTranscript: true,
 				};
 				entry.meta = meta;
 				this.catalog.set(entry.meta.key, meta);
 				return meta;
 			}
-		}
-		const provider = defaultHarnessRegistry.get(harness);
-		if (provider && !entry.meta.source) {
 			const watchPaths = provider.getWatchPaths(defaultPlatformPathService);
-			if (watchPaths.length) {
+			const firstWatchPath = watchPaths[0];
+			if (firstWatchPath) {
 				const meta = {
 					...entry.meta,
-					source: { kind: "file" as const, path: watchPaths[0]! },
+					source: { kind: "file" as const, path: firstWatchPath },
 					hasTranscript: true,
 				};
 				entry.meta = meta;

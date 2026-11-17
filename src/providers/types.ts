@@ -19,11 +19,23 @@ export interface SessionDiscoveryItem {
 }
 
 /**
+ * Optional capability flags describing harness-specific behaviors.
+ */
+export interface HarnessCapabilities {
+	/**
+	 * Whether session titles should be cleaned via `cleanUserMessage(harness, text)`
+	 * (e.g., when raw user messages contain injected wrappers).
+	 */
+	cleanTitleWithUserMessage?: boolean;
+}
+
+/**
  * Pluggable provider interface for an AI coding harness.
  * All harness integrations implement this interface.
  */
 export interface HarnessProvider {
 	readonly metadata: HarnessMetadata;
+	readonly capabilities?: HarnessCapabilities;
 
 	/**
 	 * Checks whether the harness is installed or has local session data on the host.
@@ -71,4 +83,10 @@ export interface HarnessProvider {
 		paths: PlatformPathService,
 		targetFiles?: ReadonlySet<string>,
 	): Promise<TranscriptReadResult>;
+
+	/**
+	 * Optional resolver returning all transcript file paths for a given session ID.
+	 * Useful for harnesses that split one conversation across multiple files.
+	 */
+	resolveSessionFiles?(paths: PlatformPathService, sessionId: string): string[];
 }

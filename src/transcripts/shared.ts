@@ -186,7 +186,69 @@ export function textFromContent(value: unknown): string {
 	return lines.join("\n");
 }
 
-function removeTaggedBlocks(value: string, tags: string[]): string {
+interface HarnessMessageRule {
+	/** Patterns identifying injected/synthetic user messages to drop completely. */
+	injectedPatterns?: readonly RegExp[];
+	/** Patterns identifying post-strip metadata-only messages to drop completely. */
+	emptyAfterCleanPatterns?: readonly RegExp[];
+	/** Custom pre-tag-strip extractor; returning a string short-circuits default stripping. */
+	extract?: (value: string) => string | null;
+	/** Replace the default tag list entirely instead of extending it. */
+	replaceDefaultTags?: readonly string[];
+	/** Additional tags to strip alongside DEFAULT_USER_MESSAGE_TAGS. */
+	extraTags?: readonly string[];
+	/** Optional post-strip transform applied after removeTaggedBlocks. */
+	postStrip?: (value: string) => string;
+}
+
+const DEFAULT_USER_MESSAGE_TAGS = [
+	"system-reminder",
+	"environment_context",
+	"external_codex_apps_open_page",
+	"recommended_plugins",
+	"skills_instructions",
+	"app-context",
+	"Work_Context",
+	"session-context",
+	"auto-slash-command",
+	"command-instruction",
+	"user-request",
+] as const;
+
+const CODEX_EXTRA_TAGS = [
+	"codex_internal_context",
+	"guardian_tool_descriptions",
+	"subagents",
+	"turn_aborted",
+	"subagent_notification",
+	"codex_delegation",
+	"image",
+] as const;
+
+const CODEX_REQUEST_TAGS = [
+	"system-reminder",
+	"environment_context",
+	"external_codex_apps_open_page",
+	"codex_internal_context",
+	"guardian_tool_descriptions",
+	"subagents",
+	"image",
+] as const;
+
+const ANTIGRAVITY_USER_MESSAGE_TAGS = [
+	"t3_code_instructions",
+	"t3_context",
+	"runtime_info",
+	"pull_request_linking",
+	"system-reminder",
+	"environment_context",
+	"skills_instructions",
+] as const;
+
+const CODEX_METADATA_HEADING_RE =
+	/^\s*#{0,6}\s*(?:Files mentioned by the user|Referenced chats with Codex|Response annotations)\b/iu;
+
+function removeTaggedBlocks(value: string, tags: readonly string[]): string {
 	let text = value;
 	for (const tag of tags) {
 		const escaped = tag.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -201,22 +263,6 @@ function removeTaggedBlocks(value: string, tags: string[]): string {
 		.replaceAll(/[ \t]+\n/gu, "\n")
 		.replaceAll(/\n{3,}/gu, "\n\n")
 		.trim();
-}
-
-export function isInjectedUserMessage(
-	harness: HarnessName,
-	value: string,
-): boolean {
-	return (
-		(harness === "codex" &&
-			/^\s*(?:#\s*AGENTS\.md instructions\b|The following is the Codex agent history|<codex_internal_context|<turn_aborted|<subagent_notification|<codex_delegation)\b/iu.test(
-				value,
-			)) ||
-		(harness === "dsh" &&
-			/^\s*Current runtime context\. This snapshot supersedes earlier runtime-context snapshots\./iu.test(
-				value,
-			))
-	);
 }
 
 function codexMyRequest(value: string): string | null {
@@ -253,116 +299,104 @@ function codexAnnotationText(value: string): string | null {
 	}
 }
 
+function extractCodexUserMessage(value: string): string | null {
+	const questionReply = value.match(
+		/<send_user_message_question_reply\b[^>]*>([\s\S]*?)<\/send_user_message_question_reply\s*>/iu,
+	)?.[1];
+	if (questionReply !== undefined) {
+		try {
+			const parsed: unknown = JSON.parse(questionReply);
+			if (Array.isArray(parsed)) {
+				const answers = parsed
+					.map((entry) => textOrNull(objectOrEmpty(entry).answer))
+					.filter((answer): answer is string => answer !== null);
+				if (answers.length) return answers.join("\n");
+			}
+		} catch {
+			// Keep the remaining message when the UI wrapper is malformed.
+		}
+	}
+
+	const annotations = codexAnnotationText(value);
+	const request = codexMyRequest(value);
+	if (annotations !== null || request !== null) {
+		const body = [annotations, request].filter(Boolean).join("\n\n");
+		return body ? removeTaggedBlocks(body, CODEX_REQUEST_TAGS) : "";
+	}
+
+	if (CODEX_METADATA_HEADING_RE.test(value)) return "";
+	return null;
+}
+
+function extractOpenCodeUserMessage(value: string): string | null {
+	const requests = [
+		...value.matchAll(/<user-request\b[^>]*>([\s\S]*?)<\/user-request>/giu),
+	]
+		.map((match) => match[1]?.trim() ?? "")
+		.filter(Boolean);
+	if (!value.includes("<auto-slash-command") && requests.length === 0) {
+		return null;
+	}
+	if (requests.length > 0) {
+		return removeTaggedBlocks(requests.at(-1) ?? "", ["session-context"]);
+	}
+	const fallback = value.match(
+		/(?:^|\n)---\s*\n## User Request\s*\n([\s\S]*?)(?:\n---|$)/iu,
+	)?.[1];
+	return fallback ? removeTaggedBlocks(fallback, ["session-context"]) : "";
+}
+
+const HARNESS_MESSAGE_RULES: Partial<Record<HarnessName, HarnessMessageRule>> =
+	{
+		codex: {
+			injectedPatterns: [
+				/^\s*(?:#\s*AGENTS\.md instructions\b|The following is the Codex agent history|<codex_internal_context|<turn_aborted|<subagent_notification|<codex_delegation)\b/iu,
+			],
+			emptyAfterCleanPatterns: [CODEX_METADATA_HEADING_RE],
+			extract: extractCodexUserMessage,
+			extraTags: CODEX_EXTRA_TAGS,
+		},
+		opencode: {
+			extract: extractOpenCodeUserMessage,
+		},
+		antigravity: {
+			replaceDefaultTags: ANTIGRAVITY_USER_MESSAGE_TAGS,
+			postStrip: (text) =>
+				text.replace(/<\/?user_request\b[^>]*>/giu, "").trim(),
+		},
+		dsh: {
+			injectedPatterns: [
+				/^\s*Current runtime context\. This snapshot supersedes earlier runtime-context snapshots\./iu,
+			],
+		},
+	};
+
+export function isInjectedUserMessage(
+	harness: HarnessName,
+	value: string,
+): boolean {
+	const patterns = HARNESS_MESSAGE_RULES[harness]?.injectedPatterns;
+	return patterns ? patterns.some((pattern) => pattern.test(value)) : false;
+}
+
 export function cleanUserMessage(harness: HarnessName, value: string): string {
 	if (isInjectedUserMessage(harness, value)) return "";
-	if (harness === "codex") {
-		const questionReply = value.match(
-			/<send_user_message_question_reply\b[^>]*>([\s\S]*?)<\/send_user_message_question_reply\s*>/iu,
-		)?.[1];
-		if (questionReply !== undefined) {
-			try {
-				const parsed: unknown = JSON.parse(questionReply);
-				if (Array.isArray(parsed)) {
-					const answers = parsed
-						.map((entry) => textOrNull(objectOrEmpty(entry).answer))
-						.filter((answer): answer is string => answer !== null);
-					if (answers.length) return answers.join("\n");
-				}
-			} catch {
-				// Keep the remaining message when the UI wrapper is malformed.
-			}
-		}
+	const rule = HARNESS_MESSAGE_RULES[harness];
+	const extracted = rule?.extract?.(value);
+	if (extracted !== null && extracted !== undefined) return extracted;
 
-		const annotations = codexAnnotationText(value);
-		const request = codexMyRequest(value);
-		if (annotations !== null || request !== null) {
-			const body = [annotations, request].filter(Boolean).join("\n\n");
-			return body
-				? removeTaggedBlocks(body, [
-						"system-reminder",
-						"environment_context",
-						"external_codex_apps_open_page",
-						"codex_internal_context",
-						"guardian_tool_descriptions",
-						"subagents",
-						"image",
-					])
-				: "";
-		}
+	const tags = rule?.replaceDefaultTags
+		? rule.replaceDefaultTags
+		: rule?.extraTags
+			? [...DEFAULT_USER_MESSAGE_TAGS, ...rule.extraTags]
+			: DEFAULT_USER_MESSAGE_TAGS;
+	const stripped = removeTaggedBlocks(value, tags);
+	const cleaned = rule?.postStrip ? rule.postStrip(stripped) : stripped;
 
-		if (
-			/^\s*#{0,6}\s*(?:Files mentioned by the user|Referenced chats with Codex|Response annotations)\b/iu.test(
-				value,
-			)
-		)
-			return "";
-	}
-
-	if (harness === "opencode") {
-		const requests = [
-			...value.matchAll(/<user-request\b[^>]*>([\s\S]*?)<\/user-request>/giu),
-		]
-			.map((match) => match[1]?.trim() ?? "")
-			.filter(Boolean);
-		if (value.includes("<auto-slash-command") || requests.length > 0) {
-			if (requests.length)
-				return removeTaggedBlocks(requests.at(-1) ?? "", ["session-context"]);
-			const fallback = value.match(
-				/(?:^|\n)---\s*\n## User Request\s*\n([\s\S]*?)(?:\n---|$)/iu,
-			)?.[1];
-			return fallback ? removeTaggedBlocks(fallback, ["session-context"]) : "";
-		}
-	}
-
-	if (harness === "antigravity") {
-		const stripped = removeTaggedBlocks(value, [
-			"t3_code_instructions",
-			"t3_context",
-			"runtime_info",
-			"pull_request_linking",
-			"system-reminder",
-			"environment_context",
-			"skills_instructions",
-		]).replace(/<\/?user_request\b[^>]*>/giu, "");
-		const cleanedAntigravity = stripped.trim();
-		return isInjectedUserMessage(harness, cleanedAntigravity)
-			? ""
-			: cleanedAntigravity;
-	}
-
-	const tags = [
-		"system-reminder",
-		"environment_context",
-		"external_codex_apps_open_page",
-		"recommended_plugins",
-		"skills_instructions",
-		"app-context",
-		"Work_Context",
-		"session-context",
-		"auto-slash-command",
-		"command-instruction",
-		"user-request",
-	];
-	if (harness === "codex") {
-		tags.push(
-			"codex_internal_context",
-			"guardian_tool_descriptions",
-			"subagents",
-			"turn_aborted",
-			"subagent_notification",
-			"codex_delegation",
-			"image",
-		);
-	}
-	const cleaned = removeTaggedBlocks(value, tags);
 	if (isInjectedUserMessage(harness, cleaned)) return "";
-	if (
-		harness === "codex" &&
-		/^\s*#{0,6}\s*(?:Files mentioned by the user|Referenced chats with Codex|Response annotations)\b/iu.test(
-			cleaned,
-		)
-	)
+	if (rule?.emptyAfterCleanPatterns?.some((pattern) => pattern.test(cleaned))) {
 		return "";
+	}
 	return cleaned;
 }
 

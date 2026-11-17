@@ -7,9 +7,14 @@ import type {
 	TranscriptReadResult,
 	TranscriptSession,
 } from "../../types";
-import type { HarnessProvider, SessionDiscoveryItem } from "../types";
+import type {
+	HarnessCapabilities,
+	HarnessProvider,
+	SessionDiscoveryItem,
+} from "../types";
 import { computeFilesFingerprint } from "../utils";
 import {
+	codexSessionFiles,
 	discoverCodexSessions,
 	getCodexRolloutFiles,
 	getCodexRoots,
@@ -22,6 +27,9 @@ import { readCodexUsageSync } from "./usage";
 
 export class CodexProvider implements HarnessProvider {
 	readonly metadata: HarnessMetadata;
+	readonly capabilities: HarnessCapabilities = {
+		cleanTitleWithUserMessage: true,
+	};
 
 	constructor() {
 		const meta = BUILTIN_HARNESS_METADATA.find((m) => m.id === "codex");
@@ -74,5 +82,9 @@ export class CodexProvider implements HarnessProvider {
 		targetFiles?: ReadonlySet<string>,
 	): Promise<TranscriptReadResult> {
 		return readCodexTranscriptsSync(paths, targetFiles);
+	}
+
+	resolveSessionFiles(paths: PlatformPathService, sessionId: string): string[] {
+		return codexSessionFiles(sessionId, paths);
 	}
 }

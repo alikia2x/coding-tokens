@@ -5,11 +5,6 @@ import { exportSessionsToMarkdown } from "./exporter";
 import { defaultPlatformPathService } from "./platform/paths";
 import { enrichWithModelsDev } from "./pricing/modelsdev";
 import { defaultHarnessRegistry } from "./providers/registry";
-import { readAntigravity } from "./sources/antigravity";
-import { readCodex } from "./sources/codex";
-import { readCommandCode } from "./sources/commandcode";
-import { readDsh } from "./sources/dsh";
-import { readOpenCode } from "./sources/opencode";
 import {
 	type ExportDetail,
 	filterTranscriptSessions,
@@ -45,13 +40,6 @@ function getHarnessLabel(id: string): string {
 	return defaultHarnessRegistry.get(id)?.metadata.displayName ?? id;
 }
 
-const readers: Partial<Record<HarnessName, () => SourceResult>> = {
-	codex: readCodex,
-	dsh: readDsh,
-	opencode: readOpenCode,
-	commandcode: readCommandCode,
-	antigravity: readAntigravity,
-};
 const numberFormat = new Intl.NumberFormat("en-US");
 const costFormat = new Intl.NumberFormat("en-US", {
 	style: "currency",
@@ -333,13 +321,9 @@ async function main(): Promise<void> {
 
 		for (const harness of options.harnesses) {
 			const provider = defaultHarnessRegistry.get(harness);
-			if (
-				provider &&
-				"readTranscripts" in provider &&
-				typeof (provider as any).readTranscripts === "function"
-			) {
+			if (provider?.readTranscripts) {
 				try {
-					const tRes = await (provider as any).readTranscripts(
+					const tRes = await provider.readTranscripts(
 						defaultPlatformPathService,
 					);
 					transcriptSources.push(tRes);
@@ -387,16 +371,11 @@ async function main(): Promise<void> {
 				if (legacy[0]) transcriptSources.push(legacy[0]);
 			}
 
-			if (options.includeTokenStats) {
-				if (provider) {
-					try {
-						const uRes = await provider.readUsage(defaultPlatformPathService);
-						usageSources.push(uRes);
-					} catch {}
-				} else {
-					const reader = readers[harness as HarnessName];
-					if (reader) usageSources.push(reader());
-				}
+			if (options.includeTokenStats && provider) {
+				try {
+					const uRes = await provider.readUsage(defaultPlatformPathService);
+					usageSources.push(uRes);
+				} catch {}
 			}
 		}
 
@@ -449,22 +428,18 @@ async function main(): Promise<void> {
 	const sources: SourceResult[] = [];
 	for (const harness of options.harnesses) {
 		const provider = defaultHarnessRegistry.get(harness);
-		if (provider) {
-			try {
-				const res = await provider.readUsage(defaultPlatformPathService);
-				sources.push(res);
-			} catch (err) {
-				sources.push({
-					harness,
-					available: false,
-					records: [],
-					warnings: [`Failed reading usage for ${harness}: ${String(err)}`],
-					messages: new Map(),
-				});
-			}
-		} else {
-			const reader = readers[harness as HarnessName];
-			if (reader) sources.push(reader());
+		if (!provider) continue;
+		try {
+			const res = await provider.readUsage(defaultPlatformPathService);
+			sources.push(res);
+		} catch (err) {
+			sources.push({
+				harness,
+				available: false,
+				records: [],
+				warnings: [`Failed reading usage for ${harness}: ${String(err)}`],
+				messages: new Map(),
+			});
 		}
 	}
 
