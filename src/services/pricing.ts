@@ -78,6 +78,13 @@ export const STATIC_FALLBACK_RATES: Record<string, Rates> = {
 		cacheRead: 0.3,
 		cacheWrite: 3.75,
 	},
+	"claude-3-7-sonnet": {
+		input: 3.0,
+		output: 15.0,
+		reasoning: 15.0,
+		cacheRead: 0.3,
+		cacheWrite: 3.75,
+	},
 	"gpt-4o": {
 		input: 2.5,
 		output: 10.0,
