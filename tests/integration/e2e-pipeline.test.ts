@@ -5,9 +5,13 @@ import path from "node:path";
 import { handleApi } from "../../server/api";
 import { store } from "../../server/data/store";
 import { MockOsEnvProvider } from "../../src/platform/env";
-import { DefaultPlatformPathService } from "../../src/platform/paths";
+import {
+	DefaultPlatformPathService,
+	defaultPlatformPathService,
+} from "../../src/platform/paths";
 import { AntigravityProvider } from "../../src/providers/antigravity";
 import { ClineProvider } from "../../src/providers/cline";
+import { CodexProvider } from "../../src/providers/codex";
 import { readCodexUsageSync } from "../../src/providers/codex/usage";
 import { CursorProvider } from "../../src/providers/cursor";
 import { readDshUsageSync } from "../../src/providers/dsh/usage";
@@ -251,7 +255,14 @@ describe("End-to-End Pipeline Integration Suite (Milestone EM3 Tier 3)", () => {
 		try {
 			store.configure({ dbPath: apiDbPath });
 
-			// Seed storage directly via DefaultStorageService
+			// Seed storage directly via DefaultStorageService using current host fingerprints
+			// so store.start() preserves the seeded records on clean CI runners.
+			const codexFp = await new CodexProvider().computeFingerprint(
+				defaultPlatformPathService,
+			);
+			const clineFp = await new ClineProvider().computeFingerprint(
+				defaultPlatformPathService,
+			);
 			const storage = createStorageService({ dbPath: apiDbPath });
 			await storage.init();
 			await storage.saveHarnessBatch({
@@ -275,7 +286,7 @@ describe("End-to-End Pipeline Integration Suite (Milestone EM3 Tier 3)", () => {
 				],
 				state: {
 					harness: "codex",
-					fingerprint: "cdx-fp",
+					fingerprint: codexFp,
 					indexedAt: Date.now(),
 					available: true,
 					warnings: [],
@@ -303,7 +314,7 @@ describe("End-to-End Pipeline Integration Suite (Milestone EM3 Tier 3)", () => {
 				],
 				state: {
 					harness: "cline",
-					fingerprint: "cline-fp",
+					fingerprint: clineFp,
 					indexedAt: Date.now(),
 					available: true,
 					warnings: [],

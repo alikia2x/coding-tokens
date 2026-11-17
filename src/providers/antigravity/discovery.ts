@@ -44,23 +44,30 @@ export function t3UserDataDirs(): string[] {
 export function antigravityRoots(
 	paths: PlatformPathService = defaultPlatformPathService,
 ): string[] {
-	if (process.env.ANTIGRAVITY_HOME) {
-		return [path.resolve(expandHome(process.env.ANTIGRAVITY_HOME))];
+	const resolved = paths.resolveHarnessPaths("antigravity");
+	if (resolved.length === 1) {
+		return resolved;
 	}
-	const roots = [
-		path.join(paths.getHomeDir(), ".gemini/antigravity"),
-		path.join(paths.getHomeDir(), ".antigravity"),
-	];
-	for (const userDataDir of t3UserDataDirs()) {
-		const providersDir = path.join(userDataDir, "providers", "antigravity");
-		for (const accountEntry of safeDirents(providersDir)) {
-			if (!accountEntry.isDirectory()) continue;
-			const accountDir = path.join(providersDir, accountEntry.name);
-			for (const modeEntry of safeDirents(accountDir)) {
-				if (!modeEntry.isDirectory()) continue;
-				const modeDir = path.join(accountDir, modeEntry.name);
-				if (existsSync(path.join(modeDir, "conversations"))) {
-					roots.push(modeDir);
+	const roots: string[] = [];
+	for (const entry of resolved) {
+		if (
+			entry.endsWith("/.gemini/antigravity") ||
+			entry.endsWith("\\.gemini\\antigravity") ||
+			entry.endsWith("/.antigravity") ||
+			entry.endsWith("\\.antigravity")
+		) {
+			roots.push(entry);
+		} else {
+			const providersDir = path.join(entry, "providers", "antigravity");
+			for (const accountEntry of safeDirents(providersDir)) {
+				if (!accountEntry.isDirectory()) continue;
+				const accountDir = path.join(providersDir, accountEntry.name);
+				for (const modeEntry of safeDirents(accountDir)) {
+					if (!modeEntry.isDirectory()) continue;
+					const modeDir = path.join(accountDir, modeEntry.name);
+					if (existsSync(path.join(modeDir, "conversations"))) {
+						roots.push(modeDir);
+					}
 				}
 			}
 		}
