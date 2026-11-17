@@ -91,7 +91,7 @@ jobs:
 
       - name: Check macOS signing configuration
         id: signing
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && matrix.os != 'macos-15-intel'
         env:
           CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
@@ -114,7 +114,7 @@ jobs:
           fi
 
       - name: Import Developer ID certificate
-        if: runner.os == 'macOS' && steps.signing.outputs.enabled == 'true'
+        if: runner.os == 'macOS' && matrix.os != 'macos-15-intel' && steps.signing.outputs.enabled == 'true'
         env:
           CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
@@ -145,6 +145,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build app bundle
+        if: matrix.os != 'macos-15-intel'
         run: bun run build:app
         env:
           CODESIGN: ${{ steps.signing.outputs.enabled == 'true' && '1' || '0' }}
@@ -154,7 +155,7 @@ jobs:
         run: bun run build:cli
 
       - name: Verify signature and notarization
-        if: runner.os == 'macOS' && steps.signing.outputs.enabled == 'true'
+        if: runner.os == 'macOS' && matrix.os != 'macos-15-intel' && steps.signing.outputs.enabled == 'true'
         run: |
           set -euo pipefail
           APP="$(find build -maxdepth 2 -type d -name 'Coding Tokens.app' -print -quit)"
@@ -169,7 +170,7 @@ jobs:
           xcrun stapler validate "$APP"
 
       - name: Check notarization ticket on installer
-        if: runner.os == 'macOS' && steps.signing.outputs.enabled == 'true'
+        if: runner.os == 'macOS' && matrix.os != 'macos-15-intel' && steps.signing.outputs.enabled == 'true'
         continue-on-error: true
         run: |
           DMG="$(find artifacts -maxdepth 1 -name '*.dmg' -print -quit)"
@@ -184,7 +185,7 @@ jobs:
           retention-days: 7
 
       - name: Remove signing keychain
-        if: always() && runner.os == 'macOS' && steps.signing.outputs.enabled == 'true'
+        if: always() && runner.os == 'macOS' && matrix.os != 'macos-15-intel' && steps.signing.outputs.enabled == 'true'
         run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
 
   publish:

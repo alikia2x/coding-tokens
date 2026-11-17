@@ -84,6 +84,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build app bundle
+        if: matrix.os != 'macos-15-intel'
         run: bun run build:app
         env:
           CREATE_DMG: "false"
