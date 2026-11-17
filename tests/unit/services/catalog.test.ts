@@ -5,6 +5,12 @@ import {
 	cleanSessionTitle,
 	codexFallbackSource,
 } from "../../../server/data/catalog";
+import {
+	createCatalogService,
+	DefaultSessionCatalogService,
+	defaultSessionCatalogService,
+} from "../../../server/services/catalog";
+import { DefaultHarnessRegistry } from "../../../src/providers/registry";
 
 describe("Services: Session Catalog & Title Sanitization (Feature 9)", () => {
 	// =========================================================================
@@ -176,5 +182,52 @@ describe("Services: Session Catalog & Title Sanitization (Feature 9)", () => {
 		expect(entry).toBeDefined();
 		expect(entry?.isSubagent).toBe(true);
 		expect(entry?.isReview).toBe(true);
+	});
+});
+
+describe("Services: DefaultSessionCatalogService (Feature 9)", () => {
+	test("F9-T1-04: SessionCatalogService initialization and query APIs", async () => {
+		const emptyRegistry = new DefaultHarnessRegistry();
+		emptyRegistry.clear();
+		const catalogService = createCatalogService(undefined, emptyRegistry);
+		expect(catalogService).toBeInstanceOf(DefaultSessionCatalogService);
+
+		await catalogService.init();
+
+		const catalog = await catalogService.getCatalog();
+		expect(Array.isArray(catalog)).toBe(true);
+
+		const summaries = await catalogService.getSessionSummaries({
+			from: null,
+			until: null,
+		});
+		expect(Array.isArray(summaries)).toBe(true);
+
+		const searchResult = await catalogService.search(
+			"nonexistent_unique_term_9999",
+		);
+		expect(searchResult).toBeDefined();
+		expect(searchResult.sessions).toHaveLength(0);
+	}, 15000);
+
+	test("F9-T1-05: SessionCatalogService detail lookup for non-existent session returns null", async () => {
+		const emptyRegistry = new DefaultHarnessRegistry();
+		emptyRegistry.clear();
+		const catalogService = new DefaultSessionCatalogService(
+			undefined,
+			emptyRegistry,
+		);
+		const detail = await catalogService.getSessionDetail(
+			"codex",
+			"missing-id-999",
+		);
+		expect(detail).toBeNull();
+	}, 15000);
+
+	test("F9-T1-06: defaultSessionCatalogService singleton export", () => {
+		expect(defaultSessionCatalogService).toBeDefined();
+		expect(defaultSessionCatalogService).toBeInstanceOf(
+			DefaultSessionCatalogService,
+		);
 	});
 });

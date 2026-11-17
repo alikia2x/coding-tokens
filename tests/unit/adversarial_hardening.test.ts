@@ -160,7 +160,6 @@ describe("Feature 26: Adversarial Hardening (Tier 5)", () => {
 			writeFileSync(sessionFile, corruptedContent, "utf8");
 
 			const paths = makePaths(claudeHome);
-			const provider = new ClaudeProvider();
 
 			const result = readClaudeUsageSync(paths, {
 				sessionId: "sess-adv-1",

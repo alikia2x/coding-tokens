@@ -1,12 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { DefaultPlatformPathService } from "../../../src/platform/paths";
+import { MockOsEnvProvider } from "../../../src/platform/env";
+import {
+	DefaultPlatformPathService,
+	defaultPlatformPathService,
+} from "../../../src/platform/paths";
 import { AntigravityProvider } from "../../../src/providers/antigravity";
 import { CodexProvider } from "../../../src/providers/codex";
 import { CommandCodeProvider } from "../../../src/providers/commandcode";
 import { DshProvider } from "../../../src/providers/dsh";
 import { OpenCodeProvider } from "../../../src/providers/opencode";
+import { computeFilesFingerprint } from "../../../src/providers/utils";
 import {
 	writeJsonlFile,
 	writeZstdJsonlFile,
@@ -14,7 +20,6 @@ import {
 import { withSandboxEnvironment } from "../../fixtures/helpers/mock-env";
 import {
 	buildAntigravityGenMetadata,
-	buildAntigravityStepPayload,
 	buildAntigravityTrajectoryMetadata,
 	protoBytes,
 	protoConcat,
@@ -108,12 +113,12 @@ describe("Core Provider: Codex (Feature 10)", () => {
 
 				const items = await provider.discoverSessions(mockPaths);
 				expect(items.length).toBe(1);
-				expect(items[0]!.sessionId).toBe("codex-sess-1");
-				expect(items[0]!.harness).toBe("codex");
-				expect(items[0]!.cwd).toBe("/workspace/codex-project");
-				expect(items[0]!.mtimeMs).toBeGreaterThan(0);
-				expect(items[0]!.sizeBytes).toBeGreaterThan(0);
-				expect(items[0]!.filePath).toContain(
+				expect(items[0]?.sessionId).toBe("codex-sess-1");
+				expect(items[0]?.harness).toBe("codex");
+				expect(items[0]?.cwd).toBe("/workspace/codex-project");
+				expect(items[0]?.mtimeMs).toBeGreaterThan(0);
+				expect(items[0]?.sizeBytes).toBeGreaterThan(0);
+				expect(items[0]?.filePath).toContain(
 					"rollout-2026-03-15T10-00-00-codex-sess-1.jsonl",
 				);
 			});
@@ -173,14 +178,14 @@ describe("Core Provider: Codex (Feature 10)", () => {
 				const result = await provider.readUsage(mockPaths, items[0]);
 				expect(result.available).toBe(true);
 				expect(result.records.length).toBe(1);
-				expect(result.records[0]!.sessionId).toBe("codex-sess-1");
-				expect(result.records[0]!.model).toBe("gpt-5");
+				expect(result.records[0]?.sessionId).toBe("codex-sess-1");
+				expect(result.records[0]?.model).toBe("gpt-5");
 				// inputTokens is uncached: 2000 - 1200 = 800
-				expect(result.records[0]!.inputTokens).toBe(800);
-				expect(result.records[0]!.outputTokens).toBe(400);
-				expect(result.records[0]!.cacheReadTokens).toBe(1200);
-				expect(result.records[0]!.cacheWriteTokens).toBe(0);
-				expect(result.records[0]!.reasoningTokens).toBe(60);
+				expect(result.records[0]?.inputTokens).toBe(800);
+				expect(result.records[0]?.outputTokens).toBe(400);
+				expect(result.records[0]?.cacheReadTokens).toBe(1200);
+				expect(result.records[0]?.cacheWriteTokens).toBe(0);
+				expect(result.records[0]?.reasoningTokens).toBe(60);
 				expect(result.messages.get("codex-sess-1")).toBe(1);
 			});
 		});
@@ -286,8 +291,8 @@ describe("Core Provider: Codex (Feature 10)", () => {
 					"codex-sess-1",
 				);
 				expect(transcript).not.toBeNull();
-				expect(transcript!.sessionId).toBe("codex-sess-1");
-				expect(transcript!.items.length).toBeGreaterThanOrEqual(2);
+				expect(transcript?.sessionId).toBe("codex-sess-1");
+				expect(transcript?.items.length).toBeGreaterThanOrEqual(2);
 
 				const fp = await provider.computeFingerprint(mockPaths);
 				expect(fp).toMatch(/^v12:1:[0-9a-f]{64}$/);
@@ -396,9 +401,9 @@ describe("Core Provider: Codex (Feature 10)", () => {
 				const provider = new CodexProvider();
 				const result = await provider.readUsage(mockPaths);
 				expect(result.records.length).toBe(1);
-				expect(result.records[0]!.inputTokens).toBe(0); // Math.max(0, 1000 - 1500)
-				expect(result.records[0]!.outputTokens).toBe(200);
-				expect(result.records[0]!.cacheReadTokens).toBe(1500);
+				expect(result.records[0]?.inputTokens).toBe(0); // Math.max(0, 1000 - 1500)
+				expect(result.records[0]?.outputTokens).toBe(200);
+				expect(result.records[0]?.cacheReadTokens).toBe(1500);
 			});
 		});
 	});
@@ -539,7 +544,7 @@ describe("Core Provider: Codex (Feature 10)", () => {
 				const sessions = await provider.discoverSessions(mockPaths);
 				// Deduplicated by session id
 				expect(sessions.length).toBe(1);
-				expect(sessions[0]!.sessionId).toBe("thread-multi");
+				expect(sessions[0]?.sessionId).toBe("thread-multi");
 
 				const usage = await provider.readUsage(mockPaths);
 				expect(usage.records.length).toBe(2);
@@ -604,11 +609,11 @@ describe("Core Provider: DSH (Feature 10)", () => {
 
 				const items = await provider.discoverSessions(mockPaths);
 				expect(items.length).toBe(1);
-				expect(items[0]!.sessionId).toBe("dsh-sess-1");
-				expect(items[0]!.harness).toBe("dsh");
-				expect(items[0]!.cwd).toBe("/workspace/dsh-project");
-				expect(items[0]!.mtimeMs).toBeGreaterThan(0);
-				expect(items[0]!.filePath).toContain("session.jsonl");
+				expect(items[0]?.sessionId).toBe("dsh-sess-1");
+				expect(items[0]?.harness).toBe("dsh");
+				expect(items[0]?.cwd).toBe("/workspace/dsh-project");
+				expect(items[0]?.mtimeMs).toBeGreaterThan(0);
+				expect(items[0]?.filePath).toContain("session.jsonl");
 			});
 		});
 	});
@@ -663,12 +668,12 @@ describe("Core Provider: DSH (Feature 10)", () => {
 				const result = await provider.readUsage(mockPaths, items[0]);
 				expect(result.available).toBe(true);
 				expect(result.records.length).toBe(1);
-				expect(result.records[0]!.model).toBe("deepseek/deepseek-coder");
-				expect(result.records[0]!.pricingModel).toBe("deepseek/deepseek-coder");
-				expect(result.records[0]!.inputTokens).toBe(1800);
-				expect(result.records[0]!.outputTokens).toBe(500);
-				expect(result.records[0]!.cacheReadTokens).toBe(1000);
-				expect(result.records[0]!.reasoningTokens).toBe(50);
+				expect(result.records[0]?.model).toBe("deepseek/deepseek-coder");
+				expect(result.records[0]?.pricingModel).toBe("deepseek/deepseek-coder");
+				expect(result.records[0]?.inputTokens).toBe(1800);
+				expect(result.records[0]?.outputTokens).toBe(500);
+				expect(result.records[0]?.cacheReadTokens).toBe(1000);
+				expect(result.records[0]?.reasoningTokens).toBe(50);
 				expect(result.messages.get("dsh-sess-1")).toBe(1);
 			});
 		});
@@ -749,8 +754,8 @@ describe("Core Provider: DSH (Feature 10)", () => {
 					"dsh-sess-1",
 				);
 				expect(transcript).not.toBeNull();
-				expect(transcript!.sessionId).toBe("dsh-sess-1");
-				expect(transcript!.items.length).toBeGreaterThanOrEqual(2);
+				expect(transcript?.sessionId).toBe("dsh-sess-1");
+				expect(transcript?.items.length).toBeGreaterThanOrEqual(2);
 
 				const fp = await provider.computeFingerprint(mockPaths);
 				expect(fp).toMatch(/^v12:1:[0-9a-f]{64}$/);
@@ -873,12 +878,12 @@ describe("Core Provider: DSH (Feature 10)", () => {
 				const provider = new DshProvider();
 				const items = await provider.discoverSessions(mockPaths);
 				expect(items.length).toBe(1);
-				expect(items[0]!.filePath).toContain("session.v3.jsonl.zstd");
+				expect(items[0]?.filePath).toContain("session.v3.jsonl.zstd");
 
 				const usage = await provider.readUsage(mockPaths);
 				// Only v3 is parsed for this session directory
 				expect(usage.records.length).toBe(1);
-				expect(usage.records[0]!.inputTokens).toBe(500);
+				expect(usage.records[0]?.inputTokens).toBe(500);
 			});
 		});
 	});
@@ -920,8 +925,8 @@ describe("Core Provider: DSH (Feature 10)", () => {
 				const provider = new DshProvider();
 				const result = await provider.readUsage(mockPaths);
 				expect(result.records.length).toBe(1);
-				expect(result.records[0]!.inputTokens).toBe(2500);
-				expect(result.records[0]!.outputTokens).toBe(600);
+				expect(result.records[0]?.inputTokens).toBe(2500);
+				expect(result.records[0]?.outputTokens).toBe(600);
 			});
 		});
 	});
@@ -1054,11 +1059,11 @@ describe("Core Provider: OpenCode (Feature 10)", () => {
 
 				const items = await provider.discoverSessions(mockPaths);
 				expect(items.length).toBe(1);
-				expect(items[0]!.sessionId).toBe("oc-sess-default");
-				expect(items[0]!.harness).toBe("opencode");
-				expect(items[0]!.cwd).toBe("/workspace/opencode-demo");
-				expect(items[0]!.mtimeMs).toBeGreaterThan(0);
-				expect(items[0]!.filePath).toContain("opencode.db");
+				expect(items[0]?.sessionId).toBe("oc-sess-default");
+				expect(items[0]?.harness).toBe("opencode");
+				expect(items[0]?.cwd).toBe("/workspace/opencode-demo");
+				expect(items[0]?.mtimeMs).toBeGreaterThan(0);
+				expect(items[0]?.filePath).toContain("opencode.db");
 			});
 		});
 	});
@@ -1129,18 +1134,18 @@ describe("Core Provider: OpenCode (Feature 10)", () => {
 				const result = await provider.readUsage(mockPaths, items[0]);
 				expect(result.available).toBe(true);
 				expect(result.records.length).toBe(1);
-				expect(result.records[0]!.sessionId).toBe("oc-sess-custom");
-				expect(result.records[0]!.model).toBe("claude-3-5-sonnet");
-				expect(result.records[0]!.pricingModel).toBe(
+				expect(result.records[0]?.sessionId).toBe("oc-sess-custom");
+				expect(result.records[0]?.model).toBe("claude-3-5-sonnet");
+				expect(result.records[0]?.pricingModel).toBe(
 					"anthropic/claude-3-5-sonnet",
 				);
-				expect(result.records[0]!.inputTokens).toBe(2400);
+				expect(result.records[0]?.inputTokens).toBe(2400);
 				// OpenCode sums output + reasoning: 580 + 60 = 640
-				expect(result.records[0]!.outputTokens).toBe(640);
-				expect(result.records[0]!.cacheReadTokens).toBe(1200);
-				expect(result.records[0]!.cacheWriteTokens).toBe(300);
-				expect(result.records[0]!.reasoningTokens).toBe(60);
-				expect(result.records[0]!.costUsd).toBe(0.0125);
+				expect(result.records[0]?.outputTokens).toBe(640);
+				expect(result.records[0]?.cacheReadTokens).toBe(1200);
+				expect(result.records[0]?.cacheWriteTokens).toBe(300);
+				expect(result.records[0]?.reasoningTokens).toBe(60);
+				expect(result.records[0]?.costUsd).toBe(0.0125);
 				expect(result.messages.get("oc-sess-custom")).toBe(1);
 			});
 		});
@@ -1181,7 +1186,7 @@ describe("Core Provider: OpenCode (Feature 10)", () => {
 				const result = await provider.readUsage(mockPaths);
 				expect(result.available).toBe(true);
 				expect(result.records.length).toBe(1);
-				expect(result.records[0]!.sessionId).toBe("oc-sess-default");
+				expect(result.records[0]?.sessionId).toBe("oc-sess-default");
 				expect(result.messages.get("oc-sess-default")).toBe(1);
 			});
 		});
@@ -1239,7 +1244,7 @@ describe("Core Provider: OpenCode (Feature 10)", () => {
 						"oc-sess-1",
 					);
 					expect(transcript).not.toBeNull();
-					expect(transcript!.sessionId).toBe("oc-sess-1");
+					expect(transcript?.sessionId).toBe("oc-sess-1");
 
 					const fp = await provider.computeFingerprint(mockPaths);
 					expect(fp).toMatch(/^v12:1:[0-9a-f]{64}$/);
@@ -1410,7 +1415,7 @@ describe("Core Provider: OpenCode (Feature 10)", () => {
 				});
 
 				expect(result.records.length).toBe(1);
-				expect(result.records[0]!.sessionId).toBe("oc-1");
+				expect(result.records[0]?.sessionId).toBe("oc-1");
 			});
 		});
 	});
@@ -1467,11 +1472,11 @@ describe("Core Provider: Command Code (Feature 10)", () => {
 
 				const items = await provider.discoverSessions(mockPaths);
 				expect(items.length).toBe(1);
-				expect(items[0]!.sessionId).toBe("cc-sess-1");
-				expect(items[0]!.harness).toBe("commandcode");
-				expect(items[0]!.cwd).toBe("/workspace/commandcode-project");
-				expect(items[0]!.mtimeMs).toBeGreaterThan(0);
-				expect(items[0]!.filePath).toContain("commandcode-1.jsonl");
+				expect(items[0]?.sessionId).toBe("cc-sess-1");
+				expect(items[0]?.harness).toBe("commandcode");
+				expect(items[0]?.cwd).toBe("/workspace/commandcode-project");
+				expect(items[0]?.mtimeMs).toBeGreaterThan(0);
+				expect(items[0]?.filePath).toContain("commandcode-1.jsonl");
 			});
 		});
 	});
@@ -1520,13 +1525,13 @@ describe("Core Provider: Command Code (Feature 10)", () => {
 				const result = await provider.readUsage(mockPaths, items[0]);
 				expect(result.available).toBe(true);
 				expect(result.records.length).toBe(1);
-				expect(result.records[0]!.model).toBe("claude-3-7-sonnet");
-				expect(result.records[0]!.inputTokens).toBe(1600);
-				expect(result.records[0]!.outputTokens).toBe(380);
-				expect(result.records[0]!.cacheReadTokens).toBe(900);
-				expect(result.records[0]!.cacheWriteTokens).toBe(150);
-				expect(result.records[0]!.reasoningTokens).toBe(40);
-				expect(result.records[0]!.costUsd).toBe(0.0075);
+				expect(result.records[0]?.model).toBe("claude-3-7-sonnet");
+				expect(result.records[0]?.inputTokens).toBe(1600);
+				expect(result.records[0]?.outputTokens).toBe(380);
+				expect(result.records[0]?.cacheReadTokens).toBe(900);
+				expect(result.records[0]?.cacheWriteTokens).toBe(150);
+				expect(result.records[0]?.reasoningTokens).toBe(40);
+				expect(result.records[0]?.costUsd).toBe(0.0075);
 				expect(result.messages.get("cc-sess-1")).toBe(1);
 			});
 		});
@@ -1604,8 +1609,8 @@ describe("Core Provider: Command Code (Feature 10)", () => {
 					"cc-sess-1",
 				);
 				expect(transcript).not.toBeNull();
-				expect(transcript!.sessionId).toBe("cc-sess-1");
-				expect(transcript!.items.length).toBeGreaterThanOrEqual(2);
+				expect(transcript?.sessionId).toBe("cc-sess-1");
+				expect(transcript?.items.length).toBeGreaterThanOrEqual(2);
 
 				const fp = await provider.computeFingerprint(mockPaths);
 				expect(fp).toMatch(/^v12:1:[0-9a-f]{64}$/);
@@ -1690,9 +1695,9 @@ describe("Core Provider: Command Code (Feature 10)", () => {
 				const provider = new CommandCodeProvider();
 				const items = await provider.discoverSessions(mockPaths);
 				expect(items.length).toBe(1);
-				expect(items[0]!.filePath).toContain("valid-session.jsonl");
-				expect(items[0]!.filePath).not.toContain("checkpoints");
-				expect(items[0]!.filePath).not.toContain("prompts");
+				expect(items[0]?.filePath).toContain("valid-session.jsonl");
+				expect(items[0]?.filePath).not.toContain("checkpoints");
+				expect(items[0]?.filePath).not.toContain("prompts");
 			});
 		});
 	});
@@ -1719,7 +1724,7 @@ describe("Core Provider: Command Code (Feature 10)", () => {
 				const provider = new CommandCodeProvider();
 				const items = await provider.discoverSessions(mockPaths);
 				expect(items.length).toBe(1);
-				expect(items[0]!.sessionId).toBe("custom-slug");
+				expect(items[0]?.sessionId).toBe("custom-slug");
 			});
 		});
 	});
@@ -1758,7 +1763,7 @@ describe("Core Provider: Command Code (Feature 10)", () => {
 				const provider = new CommandCodeProvider();
 				const result = await provider.readUsage(mockPaths);
 				expect(result.records.length).toBe(1);
-				expect(result.records[0]!.reasoningTokens).toBe(85);
+				expect(result.records[0]?.reasoningTokens).toBe(85);
 			});
 		});
 	});
@@ -1812,11 +1817,11 @@ describe("Core Provider: Antigravity (Feature 10)", () => {
 
 					const items = await provider.discoverSessions(mockPaths);
 					expect(items.length).toBe(1);
-					expect(items[0]!.sessionId).toBe("ag-sess-1");
-					expect(items[0]!.harness).toBe("antigravity");
-					expect(items[0]!.cwd).toBe("/workspace/antigravity-project");
-					expect(items[0]!.mtimeMs).toBeGreaterThan(0);
-					expect(items[0]!.filePath).toContain("ag-sess-1.db");
+					expect(items[0]?.sessionId).toBe("ag-sess-1");
+					expect(items[0]?.harness).toBe("antigravity");
+					expect(items[0]?.cwd).toBe("/workspace/antigravity-project");
+					expect(items[0]?.mtimeMs).toBeGreaterThan(0);
+					expect(items[0]?.filePath).toContain("ag-sess-1.db");
 				},
 			);
 		});
@@ -1860,13 +1865,13 @@ describe("Core Provider: Antigravity (Feature 10)", () => {
 					const result = await provider.readUsage(mockPaths, items[0]);
 					expect(result.available).toBe(true);
 					expect(result.records.length).toBe(1);
-					expect(result.records[0]!.sessionId).toBe("ag-sess-1");
-					expect(result.records[0]!.model).toBe("gemini-2.5-pro");
-					expect(result.records[0]!.messageId).toBe("req-ag-1");
-					expect(result.records[0]!.inputTokens).toBe(2500);
-					expect(result.records[0]!.outputTokens).toBe(450);
-					expect(result.records[0]!.cacheReadTokens).toBe(1800);
-					expect(result.records[0]!.reasoningTokens).toBe(50);
+					expect(result.records[0]?.sessionId).toBe("ag-sess-1");
+					expect(result.records[0]?.model).toBe("gemini-2.5-pro");
+					expect(result.records[0]?.messageId).toBe("req-ag-1");
+					expect(result.records[0]?.inputTokens).toBe(2500);
+					expect(result.records[0]?.outputTokens).toBe(450);
+					expect(result.records[0]?.cacheReadTokens).toBe(1800);
+					expect(result.records[0]?.reasoningTokens).toBe(50);
 					expect(result.messages.get("ag-sess-1")).toBe(1);
 				},
 			);
@@ -1917,9 +1922,9 @@ describe("Core Provider: Antigravity (Feature 10)", () => {
 
 					const result = await provider.readUsage(mockPaths, items[0]);
 					expect(result.records.length).toBe(1);
-					expect(result.records[0]!.inputTokens).toBe(1500);
-					expect(result.records[0]!.outputTokens).toBe(300);
-					expect(result.records[0]!.reasoningTokens).toBe(25);
+					expect(result.records[0]?.inputTokens).toBe(1500);
+					expect(result.records[0]?.outputTokens).toBe(300);
+					expect(result.records[0]?.reasoningTokens).toBe(25);
 				},
 			);
 		});
@@ -1955,7 +1960,7 @@ describe("Core Provider: Antigravity (Feature 10)", () => {
 						"ag-sess-1",
 					);
 					expect(transcript).not.toBeNull();
-					expect(transcript!.sessionId).toBe("ag-sess-1");
+					expect(transcript?.sessionId).toBe("ag-sess-1");
 
 					const fp = await provider.computeFingerprint(mockPaths);
 					expect(fp).toMatch(/^v12:1:[0-9a-f]{64}$/);
@@ -2075,7 +2080,7 @@ describe("Core Provider: Antigravity (Feature 10)", () => {
 					const provider = new AntigravityProvider();
 					const result = await provider.readUsage(mockPaths);
 					expect(result.records.length).toBe(1);
-					expect(result.records[0]!.isSubagent).toBe(true);
+					expect(result.records[0]?.isSubagent).toBe(true);
 				},
 			);
 		});
@@ -2175,9 +2180,127 @@ describe("Core Provider: Antigravity (Feature 10)", () => {
 						"ag-tool-status",
 					);
 					expect(transcript).not.toBeNull();
-					expect(transcript!.sessionId).toBe("ag-tool-status");
+					expect(transcript?.sessionId).toBe("ag-tool-status");
 				},
 			);
 		});
+	});
+});
+
+describe("Providers: Built-in Harness Providers Shared Utilities & Smoke (Feature 10)", () => {
+	const tmpDir = path.join(
+		os.tmpdir(),
+		`ct-builtin-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+	);
+
+	test("F10-T1-02: Fingerprint format complies with v12:count:sha256", () => {
+		mkdirSync(tmpDir, { recursive: true });
+		const file1 = path.join(tmpDir, "file1.txt");
+		const file2 = path.join(tmpDir, "file2.txt");
+
+		writeFileSync(file1, "content-1");
+		writeFileSync(file2, "content-2");
+
+		const fpEmpty = computeFilesFingerprint([]);
+		expect(fpEmpty).toMatch(/^v12:0:[0-9a-f]{64}$/);
+
+		const fpTwo = computeFilesFingerprint([file1, file2]);
+		expect(fpTwo).toMatch(/^v12:2:[0-9a-f]{64}$/);
+
+		// Determinism test: same files produce identical fingerprint
+		const fpTwoRepeat = computeFilesFingerprint([file2, file1]); // order should be normalized
+		expect(fpTwoRepeat).toBe(fpTwo);
+
+		rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	test("F10-T1-03: Provider methods execute cleanly against host paths", async () => {
+		const providers = [
+			new CodexProvider(),
+			new DshProvider(),
+			new OpenCodeProvider(),
+			new CommandCodeProvider(),
+			new AntigravityProvider(),
+		];
+
+		for (const provider of providers) {
+			const watchPaths = provider.getWatchPaths(defaultPlatformPathService);
+			expect(Array.isArray(watchPaths)).toBe(true);
+			expect(watchPaths.length).toBeGreaterThan(0);
+
+			const isAvail = await provider.isAvailable(defaultPlatformPathService);
+			expect(typeof isAvail).toBe("boolean");
+
+			const sessions = await provider.discoverSessions(
+				defaultPlatformPathService,
+			);
+			expect(Array.isArray(sessions)).toBe(true);
+
+			const fp = await provider.computeFingerprint(defaultPlatformPathService);
+			expect(fp).toMatch(/^v12:\d+:[0-9a-f]{64}$/);
+
+			const transcriptNull = await provider.readTranscript(
+				defaultPlatformPathService,
+				"non-existent-session-id-12345",
+			);
+			expect(transcriptNull).toBeNull();
+		}
+	}, 20000);
+
+	test("F10-T1-04: Isolated Mock PlatformPathService session discovery and usage", async () => {
+		const mockRoot = path.join(
+			os.tmpdir(),
+			`ct-mock-paths-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+		);
+		const mockCodexDir = path.join(mockRoot, ".codex", "sessions");
+		mkdirSync(mockCodexDir, { recursive: true });
+
+		const rolloutFile = path.join(
+			mockCodexDir,
+			"rollout-2026-11-16T12-00-00-thread-mock1.jsonl",
+		);
+		const sampleLine = JSON.stringify({
+			timestamp: "2026-11-16T12:00:00.000Z",
+			type: "turn_context",
+			turn_id: "t1",
+			payload: {
+				cwd: "/home/user/project",
+				model: "gpt-4o",
+			},
+		});
+		const sampleUsageLine = JSON.stringify({
+			timestamp: "2026-11-16T12:00:01.000Z",
+			type: "token_usage_record",
+			turn_id: "t1",
+			payload: {
+				usage: {
+					input_tokens: 100,
+					output_tokens: 50,
+				},
+			},
+		});
+		writeFileSync(rolloutFile, `${sampleLine}\n${sampleUsageLine}\n`);
+
+		// Create mock platform path service pointing home to mockRoot
+		const mockEnv = new MockOsEnvProvider({
+			platform: "darwin",
+			home: mockRoot,
+		});
+		const mockPaths = new DefaultPlatformPathService(mockEnv);
+
+		const codex = new CodexProvider();
+		const isAvail = await codex.isAvailable(mockPaths);
+		expect(isAvail).toBe(true);
+
+		const discovered = await codex.discoverSessions(mockPaths);
+		expect(discovered.length).toBeGreaterThanOrEqual(1);
+		expect(discovered[0]?.sessionId).toContain("mock1");
+
+		const usage = await codex.readUsage(mockPaths);
+		expect(usage.records.length).toBeGreaterThanOrEqual(1);
+		expect(usage.records[0]?.inputTokens).toBe(100);
+		expect(usage.records[0]?.outputTokens).toBe(50);
+
+		rmSync(mockRoot, { recursive: true, force: true });
 	});
 });

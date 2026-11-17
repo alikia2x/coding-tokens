@@ -1,11 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-	existsSync,
-	mkdirSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { MockOsEnvProvider } from "../../../src/platform/env";
@@ -128,8 +122,6 @@ describe("Providers: VS Code Extension Ecosystem (Milestone 3 Batch 2)", () => {
 		});
 
 		test("M3-B2-05: Cross-platform directory discovery for macOS, Linux, and Windows", async () => {
-			const provider = new ClineProvider();
-
 			// Darwin
 			const darwinEnv = new MockOsEnvProvider({
 				platform: "darwin",

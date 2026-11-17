@@ -116,9 +116,11 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			);
 			expect(session).toBeDefined();
 
-			const usage = await provider.readUsage(paths, session!);
+			if (!session) throw new Error("Expected session");
+			const usage = await provider.readUsage(paths, session);
 			expect(usage.records.length).toBeGreaterThan(0);
-			const rec = usage.records[0]!;
+			const rec = usage.records[0];
+			if (!rec) throw new Error("Expected usage record");
 			expect(rec.inputTokens).toBe(1500);
 			expect(rec.outputTokens).toBe(450);
 			expect(rec.cacheReadTokens).toBe(8000);
@@ -197,8 +199,9 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			});
 			const sessions = await provider.discoverSessions(paths);
 			const session = sessions.find((s) => s.sessionId.includes("ceda31df"));
-			const usage = await provider.readUsage(paths, session!);
-			const rec = usage.records[0]!;
+			const usage = await provider.readUsage(paths, session);
+			const rec = usage.records[0];
+			if (!rec) throw new Error("Expected usage record");
 			// Uncached input must not be subtracted by cacheRead
 			expect(rec.inputTokens).toBe(1500);
 			expect(rec.cacheReadTokens).toBe(8000);
@@ -219,7 +222,7 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			const subSessionFile = path.join(subDir, "sub-agent-1.jsonl");
 			writeFileSync(
 				subSessionFile,
-				JSON.stringify({
+				`${JSON.stringify({
 					type: "assistant",
 					sessionId: "sub-agent-1",
 					parentUuid: "p1",
@@ -230,7 +233,7 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 						content: [{ type: "text", text: "Subagent running task." }],
 						usage: { input_tokens: 300, output_tokens: 80 },
 					},
-				}) + "\n",
+				})}\n`,
 			);
 
 			const paths = makePaths(path.join(suiteTmp, "claude-sub"));
@@ -252,20 +255,20 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			mkdirSync(winDir, { recursive: true });
 			writeFileSync(
 				path.join(winDir, "sess-win.jsonl"),
-				JSON.stringify({
+				`${JSON.stringify({
 					type: "user",
 					sessionId: "sess-win",
 					message: {
 						role: "user",
 						content: [{ type: "text", text: "Win query" }],
 					},
-				}) + "\n",
+				})}\n`,
 			);
 
 			const paths = makePaths(path.join(suiteTmp, "claude-win"));
 			const sessions = await provider.discoverSessions(paths);
 			expect(sessions.length).toBeGreaterThan(0);
-			expect(sessions[0]!.cwd).toBeDefined();
+			expect(sessions[0]?.cwd).toBeDefined();
 		});
 	});
 
@@ -323,7 +326,7 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			const paths = makePaths(mockHome);
 			const sessions = await provider.discoverSessions(paths);
 			expect(sessions.length).toBeGreaterThan(0);
-			expect(sessions[0]!.sessionId).toBe("task-cline-101");
+			expect(sessions[0]?.sessionId).toBe("task-cline-101");
 		});
 
 		test("F12-T1-04: Per-Request Telemetry Parsing", async () => {
@@ -358,9 +361,12 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 
 			const paths = makePaths(mockHome);
 			const sessions = await provider.discoverSessions(paths);
-			const usage = await provider.readUsage(paths, sessions[0]!);
+			const firstSession = sessions[0];
+			if (!firstSession) throw new Error("Expected session");
+			const usage = await provider.readUsage(paths, firstSession);
 			expect(usage.records.length).toBeGreaterThan(0);
-			const rec = usage.records[0]!;
+			const rec = usage.records[0];
+			if (!rec) throw new Error("Expected usage record");
 			expect(rec.inputTokens).toBe(12500);
 			expect(rec.outputTokens).toBe(850);
 			expect(rec.cacheReadTokens).toBe(6000);
@@ -458,7 +464,9 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			const paths = makePaths(mockHome);
 			const sessions = await provider.discoverSessions(paths);
 			expect(sessions.length).toBeGreaterThan(0);
-			const usage = await provider.readUsage(paths, sessions[0]!);
+			const firstSession = sessions[0];
+			if (!firstSession) throw new Error("Expected session");
+			const usage = await provider.readUsage(paths, firstSession);
 			expect(usage.records.length).toBeGreaterThan(0);
 		});
 
@@ -621,10 +629,11 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			const session = sessions.find((s) => s.sessionId === "task-roo-101");
 			expect(session).toBeDefined();
 
-			const usage = await provider.readUsage(paths, session!);
+			if (!session) throw new Error("Expected session");
+			const usage = await provider.readUsage(paths, session);
 			expect(usage.records.length).toBeGreaterThan(0);
-			expect(usage.records[0]!.inputTokens).toBe(50000);
-			expect(usage.records[0]!.outputTokens).toBe(4500);
+			expect(usage.records[0]?.inputTokens).toBe(50000);
+			expect(usage.records[0]?.outputTokens).toBe(4500);
 		});
 
 		test("F13-T1-05: Transcript Reconstruction", async () => {
@@ -863,8 +872,8 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			const paths = makePaths(mockHome);
 			const sessions = await provider.discoverSessions(paths);
 			expect(sessions.length).toBeGreaterThan(0);
-			expect(sessions[0]!.sessionId).toBe("cont-sess-01");
-			expect(sessions[0]!.cwd).toBe("/workspace/project-alpha");
+			expect(sessions[0]?.sessionId).toBe("cont-sess-01");
+			expect(sessions[0]?.cwd).toBe("/workspace/project-alpha");
 		});
 
 		test("F14-T1-04: Token Stream Extraction", async () => {
@@ -883,7 +892,8 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			const paths = makePaths(mockHome);
 			const usage = await provider.readUsage(paths);
 			expect(usage.records.length).toBeGreaterThanOrEqual(2);
-			const first = usage.records[0]!;
+			const first = usage.records[0];
+			if (!first) throw new Error("Expected usage record");
 			expect(first.inputTokens).toBe(2500);
 			expect(first.outputTokens).toBe(600);
 			expect(first.model).toBe("gpt-4o");
@@ -964,7 +974,7 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 
 			const paths = makePaths(mockHome);
 			const sessions = await provider.discoverSessions(paths);
-			expect(sessions[0]!.cwd).toBe("/Users/user/My Projects/App#1");
+			expect(sessions[0]?.cwd).toBe("/Users/user/My Projects/App#1");
 		});
 
 		test("F14-T2-04: Empty Session Catalog", async () => {
@@ -999,11 +1009,11 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			mkdirSync(versionedDir, { recursive: true });
 			writeFileSync(
 				path.join(versionedDir, "tokensGenerated.jsonl"),
-				JSON.stringify({
+				`${JSON.stringify({
 					eventName: "tokensGenerated",
 					promptTokens: 300,
 					generatedTokens: 50,
-				}) + "\n",
+				})}\n`,
 			);
 
 			const paths = makePaths(mockHome);
@@ -1066,7 +1076,7 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			const paths = makePaths(mockHome);
 			const sessions = await provider.discoverSessions(paths);
 			expect(sessions.length).toBeGreaterThan(0);
-			expect(sessions[0]!.cwd).toBe("/workspace/my-cursor-app");
+			expect(sessions[0]?.cwd).toBe("/workspace/my-cursor-app");
 		});
 
 		test("F15-T1-04: Usage Extraction from cursorDiskKV", async () => {
@@ -1086,7 +1096,8 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			const paths = makePaths(mockHome);
 			const usage = await provider.readUsage(paths);
 			expect(usage.records.length).toBeGreaterThan(0);
-			const rec = usage.records[0]!;
+			const rec = usage.records[0];
+			if (!rec) throw new Error("Expected usage record");
 			expect(rec.inputTokens).toBeGreaterThan(0);
 			expect(rec.outputTokens).toBeGreaterThan(0);
 		});
@@ -1282,7 +1293,7 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			const paths = makePaths(mockHome);
 			const sessions = await provider.discoverSessions(paths);
 			expect(sessions.length).toBeGreaterThan(0);
-			expect(sessions[0]!.sessionId).toBe("copilot-sess-1");
+			expect(sessions[0]?.sessionId).toBe("copilot-sess-1");
 		});
 
 		test("F16-T1-04: Turn Parsing", async () => {
@@ -1308,9 +1319,11 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 
 			const paths = makePaths(mockHome);
 			const sessions = await provider.discoverSessions(paths);
-			const usage = await provider.readUsage(paths, sessions[0]!);
+			const firstSession = sessions[0];
+			if (!firstSession) throw new Error("Expected session");
+			const usage = await provider.readUsage(paths, firstSession);
 			expect(usage.records.length).toBeGreaterThan(0);
-			expect(usage.records[0]!.model).toBe("copilot/gpt-4o");
+			expect(usage.records[0]?.model).toBe("copilot/gpt-4o");
 		});
 
 		test("F16-T1-05: Transcript Reconstruction", async () => {
@@ -1356,14 +1369,14 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			mkdirSync(chatDir, { recursive: true });
 			writeFileSync(
 				path.join(chatDir, "session-line.jsonl"),
-				JSON.stringify({
+				`${JSON.stringify({
 					requests: [
 						{
 							message: { text: "Explain quicksort" },
 							response: [{ value: "Done" }],
 						},
 					],
-				}) + "\n",
+				})}\n`,
 			);
 
 			const paths = makePaths(mockHome);
@@ -1429,7 +1442,7 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 				cwd: "/workspace",
 			});
 			expect(usage.records.length).toBeGreaterThan(0);
-			expect(usage.records[0]!.costEstimated).toBe(true);
+			expect(usage.records[0]?.costEstimated).toBe(true);
 		});
 
 		test("F16-T2-04: Multi-Fragment Responses", async () => {
@@ -1535,7 +1548,8 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			const paths = makePaths(mockHome);
 			const usage = await provider.readUsage(paths);
 			expect(usage.records.length).toBeGreaterThan(0);
-			const rec = usage.records[0]!;
+			const rec = usage.records[0];
+			if (!rec) throw new Error("Expected usage record");
 			expect(rec.inputTokens).toBe(1400);
 			expect(rec.outputTokens).toBe(320);
 			expect(rec.model).toBe("gpt-4o");
@@ -1568,7 +1582,7 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			const sessions = await provider.discoverSessions(paths);
 			const transcript = await provider.readTranscript(
 				paths,
-				sessions[0]!.sessionId,
+				sessions[0]?.sessionId ?? "",
 			);
 			expect(transcript).not.toBeNull();
 		});
@@ -1673,7 +1687,7 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			const sessions = await provider.discoverSessions(paths);
 			const transcript = await provider.readTranscript(
 				paths,
-				sessions[0]!.sessionId,
+				sessions[0]?.sessionId ?? "",
 			);
 			expect(transcript?.items.length).toBeGreaterThan(0);
 		});
@@ -1722,8 +1736,8 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			const paths = makePaths(mockHome);
 			const sessions = await provider.discoverSessions(paths);
 			expect(sessions.length).toBeGreaterThan(0);
-			expect(sessions[0]!.sessionId).toBe("windsurf-sess-1");
-			expect(sessions[0]!.filePath).toContain("workspace_windsurf_project");
+			expect(sessions[0]?.sessionId).toBe("windsurf-sess-1");
+			expect(sessions[0]?.filePath).toContain("workspace_windsurf_project");
 		});
 
 		test("F18-T1-04: Protobuf Wire Decoding", async () => {
@@ -1739,9 +1753,11 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 
 			const paths = makePaths(mockHome);
 			const sessions = await provider.discoverSessions(paths);
-			const usage = await provider.readUsage(paths, sessions[0]!);
+			const firstSession = sessions[0];
+			if (!firstSession) throw new Error("Expected session");
+			const usage = await provider.readUsage(paths, firstSession);
 			expect(usage.records.length).toBeGreaterThan(0);
-			expect(usage.records[0]!.inputTokens).toBeGreaterThan(0);
+			expect(usage.records[0]?.inputTokens).toBeGreaterThan(0);
 		});
 
 		test("F18-T1-05: Cascade Plan Integration", async () => {
@@ -1765,7 +1781,7 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			const sessions = await provider.discoverSessions(paths);
 			const transcript = await provider.readTranscript(
 				paths,
-				sessions[0]!.sessionId,
+				sessions[0]?.sessionId ?? "",
 			);
 			expect(transcript).not.toBeNull();
 		});
@@ -1816,7 +1832,7 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 
 			const paths = makePaths(mockHome);
 			const sessions = await provider.discoverSessions(paths);
-			const usage = await provider.readUsage(paths, sessions[0]!);
+			const usage = await provider.readUsage(paths, sessions[0]);
 			expect(usage.records.length).toBe(0);
 		});
 
@@ -1830,7 +1846,7 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 
 			const paths = makePaths(mockHome);
 			const sessions = await provider.discoverSessions(paths);
-			expect(sessions[0]!.cwd).toBeDefined();
+			expect(sessions[0]?.cwd).toBeDefined();
 		});
 
 		test("F18-T2-05: Dual Directory Coexistence", async () => {
@@ -1914,7 +1930,7 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			const paths = makePaths(mockHome, {}, "linux");
 			const sessions = await provider.discoverSessions(paths);
 			expect(sessions.length).toBeGreaterThan(0);
-			expect(sessions[0]!.sessionId).toContain("goose-sess");
+			expect(sessions[0]?.sessionId).toContain("goose-sess");
 		});
 
 		test("F19-T1-04: Accumulated Token Delta Calculation", async () => {
@@ -1932,9 +1948,12 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 
 			const paths = makePaths(mockHome, {}, "linux");
 			const sessions = await provider.discoverSessions(paths);
-			const usage = await provider.readUsage(paths, sessions[0]!);
+			const firstSession = sessions[0];
+			if (!firstSession) throw new Error("Expected session");
+			const usage = await provider.readUsage(paths, firstSession);
 			expect(usage.records.length).toBeGreaterThan(0);
-			const rec = usage.records[0]!;
+			const rec = usage.records[0];
+			if (!rec) throw new Error("Expected usage record");
 			expect(rec.inputTokens).toBeGreaterThan(0);
 			expect(rec.outputTokens).toBeGreaterThan(0);
 		});
@@ -1956,7 +1975,7 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			const sessions = await provider.discoverSessions(paths);
 			const transcript = await provider.readTranscript(
 				paths,
-				sessions[0]!.sessionId,
+				sessions[0]?.sessionId ?? "",
 			);
 			expect(transcript).not.toBeNull();
 			expect(transcript?.items.length).toBeGreaterThan(0);
@@ -2159,8 +2178,8 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			const paths = makePaths(mockHome);
 			const sessions = await provider.discoverSessions(paths);
 			expect(sessions.length).toBeGreaterThan(0);
-			expect(sessions[0]!.sessionId).toBe("conv-12345");
-			expect(sessions[0]!.cwd).toBe("/workspace/openhands-project");
+			expect(sessions[0]?.sessionId).toBe("conv-12345");
+			expect(sessions[0]?.cwd).toBe("/workspace/openhands-project");
 		});
 
 		test("F20-T1-04: Token & Cost Extraction", async () => {
@@ -2187,9 +2206,12 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 
 			const paths = makePaths(mockHome);
 			const sessions = await provider.discoverSessions(paths);
-			const usage = await provider.readUsage(paths, sessions[0]!);
+			const firstSession = sessions[0];
+			if (!firstSession) throw new Error("Expected session");
+			const usage = await provider.readUsage(paths, firstSession);
 			expect(usage.records.length).toBeGreaterThan(0);
-			const rec = usage.records[0]!;
+			const rec = usage.records[0];
+			if (!rec) throw new Error("Expected usage record");
 			expect(rec.inputTokens).toBe(13000);
 			expect(rec.outputTokens).toBe(3000);
 			expect(rec.costUsd).toBe(0.052);
@@ -2302,9 +2324,11 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 
 			const paths = makePaths(mockHome);
 			const sessions = await provider.discoverSessions(paths);
-			const usage = await provider.readUsage(paths, sessions[0]!);
+			const firstSession = sessions[0];
+			if (!firstSession) throw new Error("Expected session");
+			const usage = await provider.readUsage(paths, firstSession);
 			expect(usage.records.length).toBeGreaterThan(0);
-			expect(usage.records[0]!.inputTokens).toBe(5000);
+			expect(usage.records[0]?.inputTokens).toBe(5000);
 		});
 
 		test("F20-T2-03: Status Variations", async () => {

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
+import type { DateRange } from "react-day-picker";
 
 // Setup happy-dom environment before importing React and UI components
 const win = new GlobalWindow();
@@ -10,27 +11,35 @@ globalThis.PointerEvent = win.PointerEvent;
 globalThis.FocusEvent = win.FocusEvent;
 globalThis.KeyboardEvent = win.KeyboardEvent;
 globalThis.UIEvent = win.UIEvent;
-globalThis.window = win as any;
-globalThis.document = win.document as any;
-globalThis.navigator = win.navigator as any;
+globalThis.window = win as unknown as Window & typeof globalThis;
+globalThis.document = win.document as unknown as Document;
+globalThis.navigator = win.navigator as unknown as Navigator;
 Object.defineProperty(globalThis.navigator, "language", {
 	value: "en-US",
 	configurable: true,
 });
-globalThis.HTMLElement = win.HTMLElement as any;
-globalThis.HTMLButtonElement = win.HTMLButtonElement as any;
-globalThis.HTMLInputElement = win.HTMLInputElement as any;
-globalThis.Element = win.Element as any;
-globalThis.Node = win.Node as any;
-globalThis.NodeFilter = win.NodeFilter as any;
-(globalThis as any).getComputedStyle = win.getComputedStyle.bind(win);
+globalThis.HTMLElement = win.HTMLElement as unknown as typeof HTMLElement;
+globalThis.HTMLButtonElement =
+	win.HTMLButtonElement as unknown as typeof HTMLButtonElement;
+globalThis.HTMLInputElement =
+	win.HTMLInputElement as unknown as typeof HTMLInputElement;
+globalThis.Element = win.Element as unknown as typeof Element;
+globalThis.Node = win.Node as unknown as typeof Node;
+globalThis.NodeFilter = win.NodeFilter as unknown as typeof NodeFilter;
+(
+	globalThis as unknown as {
+		getComputedStyle: typeof win.getComputedStyle;
+	}
+).getComputedStyle = win.getComputedStyle.bind(win);
 globalThis.ResizeObserver = class {
 	observe() {}
 	unobserve() {}
 	disconnect() {}
-} as any;
-globalThis.requestAnimationFrame = (cb) => setTimeout(cb, 0) as any;
-globalThis.cancelAnimationFrame = (id) => clearTimeout(id) as any;
+} as unknown as typeof ResizeObserver;
+globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) =>
+	setTimeout(cb, 0)) as unknown as typeof requestAnimationFrame;
+globalThis.cancelAnimationFrame = ((id: number) =>
+	clearTimeout(id)) as unknown as typeof cancelAnimationFrame;
 
 const React = await import("react");
 const ReactDOM = await import("react-dom/client");
@@ -42,7 +51,6 @@ const { Calendar } = await import("~/components/ui/calendar");
 const { TimeRangePicker } = await import("~/components/time-range-picker");
 const { RangeProvider, useRange } = await import("~/lib/range");
 const { SettingsProvider } = await import("~/lib/settings");
-const { startOfDay, formatRangeDates } = await import("~/lib/date-locale");
 
 function sleep(ms: number) {
 	return new Promise((resolve) => setTimeout(resolve, ms));
@@ -52,13 +60,6 @@ function click(element: Element | null | undefined) {
 	if (!element) throw new Error("Element not found for click");
 	element.dispatchEvent(
 		new win.MouseEvent("click", { bubbles: true, cancelable: true }),
-	);
-}
-
-function pointerDown(element: Element | null | undefined) {
-	if (!element) throw new Error("Element not found for pointerDown");
-	element.dispatchEvent(
-		new win.PointerEvent("pointerdown", { bubbles: true, cancelable: true }),
 	);
 }
 
@@ -74,16 +75,18 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 	});
 
 	test("Calendar: mode='range' onSelect fires immediately with DateRange and triggerDate", async () => {
-		let firedRange: any = null;
+		let firedRange: DateRange | undefined;
 		let firedTrigger: Date | null = null;
 
 		function TestCalendar() {
-			const [selected, setSelected] = React.useState<any>(undefined);
+			const [selected, setSelected] = React.useState<DateRange | undefined>(
+				undefined,
+			);
 			return React.createElement(Calendar, {
 				mode: "range",
 				selected,
 				month: new Date(2026, 9, 1), // October 2026
-				onSelect: (range: any, triggerDate: Date) => {
+				onSelect: (range: DateRange | undefined, triggerDate: Date) => {
 					firedRange = range;
 					firedTrigger = triggerDate;
 					setSelected(range);
@@ -196,7 +199,7 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false } },
 		});
-		let capturedRange: any = null;
+		let capturedRange: ReturnType<typeof useRange> | null = null;
 
 		function RangeProbe() {
 			const { range } = useRange();
@@ -311,7 +314,7 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false } },
 		});
-		let capturedRange: any = null;
+		let capturedRange: ReturnType<typeof useRange> | null = null;
 
 		function RangeProbe() {
 			const { range } = useRange();
@@ -385,7 +388,7 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false } },
 		});
-		let capturedRange: any = null;
+		let capturedRange: ReturnType<typeof useRange> | null = null;
 
 		function RangeProbe() {
 			const { range } = useRange();
@@ -456,7 +459,7 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false } },
 		});
-		let capturedRange: any = null;
+		let capturedRange: ReturnType<typeof useRange> | null = null;
 
 		function RangeProbe() {
 			const { range } = useRange();
