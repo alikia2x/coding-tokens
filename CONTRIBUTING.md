@@ -38,11 +38,11 @@ notarization are opt-in; see [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Layout conventions
 
-- `app/` is UI only. Data access goes through `app/lib/api.ts`.
+- `app/` is UI only. Data access goes through `app/lib/api.ts`, and localization catalogs live in `app/lib/locales/`.
 - `server/` owns the SQLite index and the HTTP API.
 - `src/` stays usable from the CLI without importing React or Electrobun.
-- `shared/` holds types that both sides need.
-- Keep harness-specific parsing behind the readers in `src/sources/`.
+- `src/providers/` owns harness discovery, usage, and transcript readers; `src/platform/` handles cross-platform paths and SQLite locking; `src/metrics/` calculates generation performance metrics.
+- `shared/` holds types and registries that both sides need.
 
 ## Icon changes
 

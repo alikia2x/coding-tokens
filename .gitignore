@@ -2,6 +2,7 @@ node_modules/
 .DS_Store
 coverage/
 dist/
+tests/.tmp/
 
 .hutch/
 build/
@@ -14,6 +15,8 @@ artifacts/
 *.p12
 *.cer
 *.p8
+*.certSigningRequest
+*.key
 *.mobileprovision
 .env
 .env.local

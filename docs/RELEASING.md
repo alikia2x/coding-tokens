@@ -1,27 +1,17 @@
 # Releasing Coding Tokens
 
-Coding Tokens ships as a signed and notarized macOS app plus unsigned Windows
-and Linux installers from the same tag. This guide covers the one-time Apple
-setup, the GitHub secrets, the platform matrix, local signed builds, and the
-release checklist.
+Coding Tokens ships desktop installers and standalone CLI binaries for macOS, Windows, and Linux from every `v*` tag. macOS builds are automatically signed and notarized when Apple signing secrets are configured, and fall back to unsigned builds when they are not yet set. This guide covers Apple certificate setup, the signing helper script, GitHub secrets, the platform matrix, local signed builds, and the release checklist.
 
 ## What you need to do
 
-The workflows are already committed. You only need to provide Apple signing
-material and the repository URL:
+The workflows are already committed. To enable signed and notarized macOS releases:
 
-1. Create a **Developer ID Application** certificate and export the certificate
-   plus its private key as a `.p12` file. See section 1.
+1. Create a **Developer ID Application** certificate and export the certificate plus its private key as a `.p12` file. See section 1, or run `bun run setup:signing` on macOS to generate a CSR and guide the upload.
 2. Create an app-specific password for your Apple ID. See section 1.
-3. Add the seven repository secrets listed in section 2.
-4. Make sure the GitHub repository name in `RELEASES_BASE_URL` is correct. The
-   workflows derive it from `${{ github.repository }}`, so no edit is needed.
-5. Push a `v*` tag. The matrix builds macOS arm64, macOS x64, Windows x64 and
-   Linux x64, then publishes one GitHub Release with every installer, update
-   archive and checksum.
+3. Add the seven repository secrets listed in section 2 (for example with `gh secret set`).
+4. Push a `v*` tag. The matrix builds macOS arm64, macOS x64, Windows x64, and Linux x64 desktop installers plus standalone CLI binaries, then publishes one GitHub Release with checksums.
 
-If any macOS signing secret is missing, the macOS jobs fail before building, so
-a broken or unnotarized DMG cannot be published.
+If the Apple signing secrets are absent, the workflow emits a warning and produces unsigned macOS installers so multi-platform releases can still proceed while credentials are being prepared.
 
 The pipeline is:
 
@@ -104,10 +94,22 @@ secret**:
 | `APPLE_ID`                    | Apple ID email used for notarization                  |
 | `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password from the step above             |
 
-Create the base64 value without extra wrapping:
+Create the base64 value without extra wrapping, or run `bun run setup:signing` to guide CSR generation and secret uploads:
 
 ```sh
 base64 -i DeveloperID.p12 | tr -d '\n' | pbcopy
+```
+
+With the GitHub CLI (`gh`), you can set all seven secrets directly:
+
+```sh
+gh secret set MACOS_CERT_P12 < DeveloperID.p12.b64
+gh secret set MACOS_CERT_PASSWORD
+gh secret set MACOS_KEYCHAIN_PASSWORD
+gh secret set MACOS_DEVELOPER_ID
+gh secret set APPLE_TEAM_ID
+gh secret set APPLE_ID
+gh secret set APPLE_APP_SPECIFIC_PASSWORD
 ```
 
 The certificate expires after five years; when it does, repeat step 1 and
@@ -122,12 +124,12 @@ if you later need it.
 Every release tag builds on native runners. Electrobun does not cross-compile,
 so each row must run on its own runner.
 
-| Runner           | Platform    | Installer artifact                    | Updater artifact                              |
-| ---------------- | ----------- | ------------------------------------- | --------------------------------------------- |
-| `macos-15`       | macOS arm64 | `macos-arm64-CodingTokens.dmg`        | `stable-macos-arm64-CodingTokens.app.tar.zst` |
-| `macos-15-intel` | macOS x64   | `macos-x64-CodingTokens.dmg`          | `stable-macos-x64-CodingTokens.app.tar.zst`   |
-| `windows-2025`   | Windows x64 | `win-x64-CodingTokens-Setup.zip`      | `stable-win-x64-CodingTokens.tar.zst`         |
-| `ubuntu-24.04`   | Linux x64   | `linux-x64-CodingTokens-Setup.tar.gz` | `stable-linux-x64-CodingTokens.tar.zst`       |
+| Runner           | Platform    | Installer artifact                    | Updater artifact                              | CLI binary                      |
+| ---------------- | ----------- | ------------------------------------- | --------------------------------------------- | ------------------------------- |
+| `macos-15`       | macOS arm64 | `macos-arm64-CodingTokens.dmg`        | `stable-macos-arm64-CodingTokens.app.tar.zst` | `coding-tokens-cli-macos-arm64` |
+| `macos-15-intel` | macOS x64   | `macos-x64-CodingTokens.dmg`          | `stable-macos-x64-CodingTokens.app.tar.zst`   | `coding-tokens-cli-macos-x64`   |
+| `windows-2025`   | Windows x64 | `win-x64-CodingTokens-Setup.zip`      | `stable-win-x64-CodingTokens.tar.zst`         | `coding-tokens-cli-win-x64.exe` |
+| `ubuntu-24.04`   | Linux x64   | `linux-x64-CodingTokens-Setup.tar.gz` | `stable-linux-x64-CodingTokens.tar.zst`       | `coding-tokens-cli-linux-x64`   |
 
 Each row also emits `*-update.json`. All files are uploaded to the same release.
 The update feed uses:
@@ -211,9 +213,10 @@ hdiutil attach -readonly artifacts/macos-arm64-CodingTokens.dmg
    git push origin main v0.3.0
    ```
 
-5. Watch the **Release** workflow. It fails fast if the tag does not match
-   `package.json`, if a macOS secret is missing, or if signature verification
-   fails.
+5. Watch the **Release** workflow. It verifies that the tag matches
+   `package.json`, builds signed and notarized macOS bundles when all seven Apple
+   secrets are configured (or unsigned bundles otherwise), builds Windows/Linux
+   installers and CLI binaries, and publishes the GitHub Release.
 
 6. Sanity-check the published release: download the DMG on a machine that has
    never seen the app, install, launch, and confirm the version in the About
