@@ -1,5 +1,6 @@
 import type {
 	DetailItem,
+	GenerationMetrics,
 	HarnessName,
 	SessionDetailLevel,
 	SessionDetailPayload,
@@ -8,6 +9,10 @@ import type {
 	UsageRecord,
 } from "@shared/types";
 import { HARNESS_LABELS } from "@shared/types";
+import {
+	computeSessionGenerationMetrics,
+	turnForRecord,
+} from "../../src/metrics/generation";
 import { defaultPlatformPathService } from "../../src/platform/paths";
 import { defaultHarnessRegistry } from "../../src/providers/registry";
 import {
@@ -134,6 +139,7 @@ function detailItem(
 	item: TranscriptItem,
 	level: SessionDetailLevel,
 	pairedResult?: ToolResultLike,
+	durationMs?: number | null,
 ): DetailItem {
 	const limits = limitsForLevel(level);
 	const unwrappedOutput =
@@ -177,26 +183,9 @@ function detailItem(
 		status: item.status ?? null,
 		operations,
 		timestamp: item.timestamp,
+		durationMs: durationMs ?? null,
 		truncated: text.truncated || input.truncated || output.truncated,
 	};
-}
-
-function turnForRecord(
-	record: UsageRecord,
-	users: TranscriptItem[],
-	knownTurns: ReadonlySet<string>,
-): string {
-	if (record.turnId && knownTurns.has(record.turnId)) return record.turnId;
-	if (record.timestamp !== null) {
-		let latest: TranscriptItem | undefined;
-		for (const user of users) {
-			if (user.timestamp !== null && user.timestamp <= record.timestamp)
-				latest = user;
-		}
-		if (latest) return latest.turnId;
-	}
-	if (record.turnId) return record.turnId;
-	return users.at(-1)?.turnId ?? "untracked";
 }
 
 function buildTurns(
@@ -260,6 +249,7 @@ function sessionStats(
 	session: TranscriptSession,
 	records: UsageRecord[],
 	turns: TurnSummary[],
+	metrics?: GenerationMetrics,
 ): SessionStats {
 	const calls = session.items.filter((item) => item.kind === "tool_call");
 	const byModel = new Map<string, UsageRecord[]>();
@@ -281,6 +271,7 @@ function sessionStats(
 				totals: summarizeSessionRecords(modelRecords),
 			}))
 			.sort((left, right) => right.totals.costUsd - left.totals.costUsd),
+		metrics,
 	};
 }
 
@@ -407,13 +398,25 @@ export async function sessionDetailPayload(
 	const loaded = await loadSessionTranscript(key);
 	if (!loaded.ok) return emptyPayload(key, level, loaded.warnings);
 	const { meta, records, session, warnings } = loaded.value;
-	const turns = buildTurns(session, records);
+	const rawTurns = buildTurns(session, records);
+	const { turns, toolDurations, metrics } = computeSessionGenerationMetrics(
+		session,
+		records,
+		rawTurns,
+	);
 	const pairedResults = pairedResultsByCall(session.items);
 	const selected = session.items.filter((item) =>
 		includeItem(session.harness, item, level),
 	);
 	const items = selected
-		.map((item) => detailItem(item, level, pairedResults.get(item)))
+		.map((item) =>
+			detailItem(
+				item,
+				level,
+				pairedResults.get(item),
+				toolDurations.get(item) ?? null,
+			),
+		)
 		.sort((left, right) => left.order - right.order);
 	return {
 		summary: {
@@ -424,7 +427,7 @@ export async function sessionDetailPayload(
 					? meta.title
 					: (session.title ?? meta.title),
 		},
-		stats: sessionStats(session, records, turns),
+		stats: sessionStats(session, records, turns, metrics),
 		level,
 		items,
 		turns,

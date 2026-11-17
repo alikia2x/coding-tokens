@@ -270,6 +270,17 @@ export function readAntigravityTranscripts(
 						});
 
 						if (output !== null && output !== undefined) {
+							const nextStep = steps[i + 1];
+							const nextTs = nextStep
+								? readAntigravityStepTimestamp(nextStep.metadata)
+								: null;
+							const resultTimestamp =
+								nextTs !== null &&
+								timestamp !== null &&
+								nextTs >= timestamp &&
+								nextTs - timestamp <= 30 * 60 * 1000
+									? nextTs
+									: timestamp;
 							addItem(session, {
 								id: `${callId ?? `${sessionId}:tool-${step.idx}`}-result`,
 								turnId,
@@ -281,7 +292,7 @@ export function readAntigravityTranscripts(
 								text: output,
 								toolCallId: callId ?? undefined,
 								status,
-								timestamp,
+								timestamp: resultTimestamp,
 							});
 						}
 					}

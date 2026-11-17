@@ -67,7 +67,11 @@ function openCodeToolPart(
 		status = "cancelled";
 	}
 
-	addToolCall(session, name, state.input, callId, turnId, timestamp, status);
+	const stateTime = objectOrEmpty(state.time);
+	const startTs = timestampMs(stateTime.start) ?? timestamp;
+	const endTs = timestampMs(stateTime.end) ?? startTs;
+
+	addToolCall(session, name, state.input, callId, turnId, startTs, status);
 
 	const rawContent = state.output ?? state.content;
 	if (rawContent !== undefined || state.error !== undefined) {
@@ -94,7 +98,7 @@ function openCodeToolPart(
 			output,
 			toolCallId: callId ?? undefined,
 			status,
-			timestamp,
+			timestamp: endTs,
 		});
 	}
 }

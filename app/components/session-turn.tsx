@@ -7,7 +7,13 @@ import { ChevronRight, Wrench } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ToolChain } from "~/components/tool-chain";
-import { formatCost, formatDateTime, formatTokens } from "~/lib/format";
+import {
+	formatCost,
+	formatDateTime,
+	formatLatency,
+	formatThroughput,
+	formatTokens,
+} from "~/lib/format";
 import { type TranslationKey, useT } from "~/lib/i18n";
 
 type Block =
@@ -131,6 +137,23 @@ export function SessionTurn({
 				{turn.requests ? (
 					<span>
 						{formatCost(turn.totals.costUsd, turn.totals.estimatedRequests > 0)}
+					</span>
+				) : null}
+				{turn.durationMs !== null &&
+				turn.durationMs !== undefined &&
+				turn.durationMs > 0 ? (
+					<span className="tabular">{formatLatency(turn.durationMs)}</span>
+				) : null}
+				{turn.ttftMs !== null && turn.ttftMs !== undefined ? (
+					<span className="tabular">
+						{t("metric.ttft")} {formatLatency(turn.ttftMs)}
+					</span>
+				) : null}
+				{turn.tokensPerSecond !== null &&
+				turn.tokensPerSecond !== undefined &&
+				turn.tokensPerSecond > 0 ? (
+					<span className="tabular">
+						{formatThroughput(turn.tokensPerSecond)}
 					</span>
 				) : null}
 				<span className="ml-auto truncate">

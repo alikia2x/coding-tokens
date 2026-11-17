@@ -16,8 +16,10 @@ import {
 	formatCost,
 	formatDateTime,
 	formatDuration,
+	formatLatency,
 	formatNumber,
 	formatPercent,
+	formatThroughput,
 	formatTokens,
 } from "~/lib/format";
 import { useT } from "~/lib/i18n";
@@ -73,7 +75,24 @@ export function SessionUsagePanel({
 			label: `T${turn.index + 1}`,
 			tokens: totalTokens(turn.totals),
 			cost: turn.totals.costUsd,
+			durationMs: turn.durationMs ?? null,
+			ttftMs: turn.ttftMs ?? null,
+			tokensPerSecond: turn.tokensPerSecond ?? null,
 		}));
+	const metrics = stats.metrics;
+	const hasGenerationMetrics = Boolean(
+		metrics &&
+			(metrics.avgTtftMs !== null ||
+				metrics.tokensPerSecond !== null ||
+				metrics.modelDurationMs !== null ||
+				metrics.toolDurationMs !== null),
+	);
+	const splitTotalMs =
+		(metrics?.modelDurationMs ?? 0) + (metrics?.toolDurationMs ?? 0);
+	const showTimeSplit =
+		Boolean(metrics?.modelDurationMs && metrics.modelDurationMs > 0) &&
+		Boolean(metrics?.toolDurationMs && metrics.toolDurationMs > 0) &&
+		splitTotalMs > 0;
 
 	return (
 		<section className="pb-3">
@@ -116,6 +135,78 @@ export function SessionUsagePanel({
 								value={formatDuration(summary.durationMs)}
 							/>
 						</div>
+
+						{hasGenerationMetrics && metrics ? (
+							<div className="mt-5 border-t pt-4">
+								<div className="text-[11px] text-muted-foreground">
+									{t("metric.generationPerformance")}
+								</div>
+								<div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
+									<Stat
+										label={t("metric.ttft")}
+										value={formatLatency(metrics.avgTtftMs)}
+										detail={
+											metrics.p50TtftMs !== null &&
+											metrics.p50TtftMs !== metrics.avgTtftMs
+												? t("metric.p50", {
+														value: formatLatency(metrics.p50TtftMs),
+													})
+												: undefined
+										}
+									/>
+									<Stat
+										label={t("metric.throughput")}
+										value={formatThroughput(metrics.tokensPerSecond)}
+									/>
+									<Stat
+										label={t("metric.modelTime")}
+										value={formatLatency(metrics.modelDurationMs)}
+									/>
+									<Stat
+										label={t("metric.toolTime")}
+										value={formatLatency(metrics.toolDurationMs)}
+										detail={
+											metrics.avgToolDurationMs !== null
+												? t("metric.avgToolDuration", {
+														value: formatLatency(metrics.avgToolDurationMs),
+													})
+												: undefined
+										}
+									/>
+								</div>
+								{showTimeSplit ? (
+									<div className="mt-3">
+										<div className="flex items-baseline justify-between text-[10px] text-muted-foreground">
+											<span>{t("metric.timeSplit")}</span>
+											<span className="tabular">
+												{t("metric.modelTime")}{" "}
+												{formatPercent(
+													(metrics.modelDurationMs ?? 0) / splitTotalMs,
+												)}{" "}
+												· {t("metric.toolTime")}{" "}
+												{formatPercent(
+													(metrics.toolDurationMs ?? 0) / splitTotalMs,
+												)}
+											</span>
+										</div>
+										<div className="mt-1.5 flex h-2 overflow-hidden rounded-[2px] bg-muted">
+											<div
+												style={{
+													width: `${((metrics.modelDurationMs ?? 0) / splitTotalMs) * 100}%`,
+													background: "var(--chart-1)",
+												}}
+											/>
+											<div
+												style={{
+													width: `${((metrics.toolDurationMs ?? 0) / splitTotalMs) * 100}%`,
+													background: "var(--chart-2)",
+												}}
+											/>
+										</div>
+									</div>
+								) : null}
+							</div>
+						) : null}
 
 						<div className="mt-5 grid gap-6 lg:grid-cols-[1.2fr_1fr]">
 							<div>
@@ -336,14 +427,22 @@ function TurnTooltip({
 	label,
 }: {
 	active?: boolean;
-	payload?: Array<{ payload?: { tokens: number; cost: number } }>;
+	payload?: Array<{
+		payload?: {
+			tokens: number;
+			cost: number;
+			durationMs?: number | null;
+			ttftMs?: number | null;
+			tokensPerSecond?: number | null;
+		};
+	}>;
 	label?: string;
 }) {
 	const t = useT();
 	const point = payload?.[0]?.payload;
 	if (!active || !point) return null;
 	return (
-		<div className="min-w-36 rounded-md border bg-popover px-3 py-2 text-popover-foreground shadow-md">
+		<div className="min-w-40 rounded-md border bg-popover px-3 py-2 text-popover-foreground shadow-md">
 			<div className="text-[11px] font-medium">{label}</div>
 			<div className="mt-1 flex items-center justify-between gap-4 text-[11px]">
 				<span className="text-muted-foreground">{t("metric.tokens")}</span>
@@ -353,17 +452,52 @@ function TurnTooltip({
 				<span className="text-muted-foreground">{t("metric.cost")}</span>
 				<span className="tabular">{formatCost(point.cost)}</span>
 			</div>
+			{point.ttftMs !== null && point.ttftMs !== undefined ? (
+				<div className="flex items-center justify-between gap-4 text-[11px]">
+					<span className="text-muted-foreground">{t("metric.ttft")}</span>
+					<span className="tabular">{formatLatency(point.ttftMs)}</span>
+				</div>
+			) : null}
+			{point.tokensPerSecond !== null && point.tokensPerSecond !== undefined ? (
+				<div className="flex items-center justify-between gap-4 text-[11px]">
+					<span className="text-muted-foreground">
+						{t("metric.throughput")}
+					</span>
+					<span className="tabular">
+						{formatThroughput(point.tokensPerSecond)}
+					</span>
+				</div>
+			) : null}
+			{point.durationMs !== null && point.durationMs !== undefined ? (
+				<div className="flex items-center justify-between gap-4 text-[11px]">
+					<span className="text-muted-foreground">{t("metric.duration")}</span>
+					<span className="tabular">{formatLatency(point.durationMs)}</span>
+				</div>
+			) : null}
 		</div>
 	);
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({
+	label,
+	value,
+	detail,
+}: {
+	label: string;
+	value: string;
+	detail?: string;
+}) {
 	return (
 		<div className="min-w-0">
 			<div className="text-[10px] text-muted-foreground">{label}</div>
 			<div className="mt-0.5 text-[15px] font-medium leading-5 tabular">
 				{value}
 			</div>
+			{detail ? (
+				<div className="mt-0.5 text-[10px] text-muted-foreground tabular">
+					{detail}
+				</div>
+			) : null}
 		</div>
 	);
 }

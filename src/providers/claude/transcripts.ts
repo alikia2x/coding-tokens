@@ -20,6 +20,28 @@ import {
 } from "../../util";
 import { decodeClaudeProjectPath, getClaudeSessionFiles } from "./discovery";
 
+function appendClaudeToolResultBlock(
+	session: TranscriptSession,
+	block: Record<string, unknown>,
+	id: string,
+	turnId: string,
+	timestamp: number | null,
+): void {
+	const callId = textOrNull(block.tool_use_id) ?? textOrNull(block.id);
+	const output = block.content ?? block.text ?? block.output;
+	addItem(session, {
+		id,
+		turnId,
+		role: "tool",
+		kind: "tool_result",
+		phase: "intermediate",
+		output,
+		toolCallId: callId ?? undefined,
+		status: block.is_error === true ? "error" : "completed",
+		timestamp,
+	});
+}
+
 export function readClaudeSingleTranscriptSync(
 	paths: PlatformPathService = defaultPlatformPathService,
 	sessionId: string,
@@ -80,9 +102,30 @@ export function readClaudeSingleTranscriptSync(
 
 			if (rowType === "user") {
 				const message = objectOrEmpty(row.message);
-				const rawText = textFromContent(
-					message.content ?? message.text ?? row.text,
-				);
+				const content = message.content;
+				const nonToolBlocks: unknown[] = [];
+				let hasToolResult = false;
+				if (Array.isArray(content)) {
+					for (let blockIdx = 0; blockIdx < content.length; blockIdx++) {
+						const block = objectOrEmpty(content[blockIdx]);
+						const blockType = textOrNull(block.type) ?? "";
+						if (blockType === "tool_result" || blockType === "tool-result") {
+							hasToolResult = true;
+							appendClaudeToolResultBlock(
+								session,
+								block,
+								`result-${i}-${blockIdx}`,
+								turnId,
+								timestamp,
+							);
+						} else {
+							nonToolBlocks.push(content[blockIdx]);
+						}
+					}
+				}
+				const rawText = hasToolResult
+					? textFromContent(nonToolBlocks)
+					: textFromContent(content ?? message.text ?? row.text);
 				const cleaned = cleanUserMessage("claude", rawText);
 				if (cleaned) {
 					addItem(session, {
@@ -120,6 +163,22 @@ export function readClaudeSingleTranscriptSync(
 									timestamp,
 								});
 							}
+						} else if (
+							blockType === "thinking" &&
+							typeof block.thinking === "string"
+						) {
+							const thinkingText = block.thinking.trim();
+							if (thinkingText) {
+								addItem(session, {
+									id: `${textOrNull(row.uuid) ?? `asst-${i}`}-thinking-${blockIdx}`,
+									turnId,
+									role: "other",
+									kind: "other",
+									phase: "intermediate",
+									text: thinkingText,
+									timestamp,
+								});
+							}
 						} else if (blockType === "tool_use") {
 							const name = textOrNull(block.name) ?? "tool";
 							const callId = textOrNull(block.id);
@@ -135,19 +194,13 @@ export function readClaudeSingleTranscriptSync(
 							blockType === "tool_result" ||
 							blockType === "tool-result"
 						) {
-							const callId =
-								textOrNull(block.tool_use_id) ?? textOrNull(block.id);
-							const output = block.content ?? block.text ?? block.output;
-							addItem(session, {
-								id: `result-${i}-${blockIdx}`,
+							appendClaudeToolResultBlock(
+								session,
+								block,
+								`result-${i}-${blockIdx}`,
 								turnId,
-								role: "tool",
-								kind: "tool_result",
-								phase: "intermediate",
-								output,
-								toolCallId: callId ?? undefined,
 								timestamp,
-							});
+							);
 						}
 					}
 				} else if (typeof message.content === "string") {

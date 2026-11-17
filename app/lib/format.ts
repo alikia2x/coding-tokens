@@ -106,6 +106,35 @@ export function formatDuration(value: number | null): string {
 	return `${days}d ${hours % 24}h`;
 }
 
+export function formatLatency(value: number | null | undefined): string {
+	if (
+		value === null ||
+		value === undefined ||
+		!Number.isFinite(value) ||
+		value < 0
+	)
+		return "—";
+	if (value < 1000) return `${Math.round(value)}ms`;
+	if (value < 60_000) {
+		const seconds = value / 1000;
+		return seconds < 10
+			? `${trimFixed(seconds, 2)}s`
+			: `${trimFixed(seconds, 1)}s`;
+	}
+	return formatDuration(value);
+}
+
+export function formatThroughput(value: number | null | undefined): string {
+	if (
+		value === null ||
+		value === undefined ||
+		!Number.isFinite(value) ||
+		value <= 0
+	)
+		return "—";
+	return `${trimFixed(value, 1)} tok/s`;
+}
+
 export function formatDate(value: number | null): string {
 	if (value === null || !Number.isFinite(value)) return "—";
 	return dateFormat().format(new Date(value));

@@ -345,6 +345,17 @@ export interface ToolOperation {
 	errorBadge?: string;
 }
 
+export interface GenerationMetrics {
+	avgTtftMs: number | null;
+	p50TtftMs: number | null;
+	tokensPerSecond: number | null;
+	modelDurationMs: number | null;
+	toolDurationMs: number | null;
+	measuredToolCalls: number;
+	avgToolDurationMs: number | null;
+	measuredTurns: number;
+}
+
 export interface DetailItem {
 	id: string;
 	order: number;
@@ -361,6 +372,7 @@ export interface DetailItem {
 	status: string | null;
 	operations?: ToolOperation[];
 	timestamp: number | null;
+	durationMs?: number | null;
 	truncated: boolean;
 }
 
@@ -369,6 +381,11 @@ export interface TurnSummary {
 	index: number;
 	startedAt: number | null;
 	endedAt: number | null;
+	durationMs?: number | null;
+	ttftMs?: number | null;
+	modelDurationMs?: number | null;
+	toolDurationMs?: number | null;
+	tokensPerSecond?: number | null;
 	requests: number;
 	totals: UsageTotals;
 	models: string[];
@@ -474,6 +491,7 @@ export interface SessionStats {
 	writeCalls: number;
 	otherCalls: number;
 	models: SessionModelUsage[];
+	metrics?: GenerationMetrics;
 }
 
 export type AppLocale = "en" | "zh-CN";

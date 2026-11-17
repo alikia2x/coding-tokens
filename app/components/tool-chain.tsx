@@ -21,6 +21,7 @@ import {
 	Terminal,
 	Wrench,
 } from "lucide-react";
+import { formatLatency } from "~/lib/format";
 import { type TranslationKey, useT } from "~/lib/i18n";
 
 const VERB_LABEL_KEYS: Partial<Record<ToolVerb, TranslationKey>> = {
@@ -160,11 +161,18 @@ function summarizeOperations(
 	return rawSummary.charAt(0).toUpperCase() + rawSummary.slice(1);
 }
 
-function ToolRowLine({ op }: { op: ToolOperation }) {
+function ToolRowLine({
+	op,
+	durationMs,
+}: {
+	op: ToolOperation;
+	durationMs?: number | null;
+}) {
 	const t = useT();
 	const labelKey = VERB_LABEL_KEYS[op.verb];
 	const actionLabel = labelKey ? t(labelKey) : op.rawName;
 	const isFile = FILE_VERBS.has(op.verb);
+	const hasDuration = Boolean(durationMs && durationMs > 0);
 
 	return (
 		<div className="flex min-w-0 flex-1 items-baseline gap-1.5 py-0.5 text-[12px]">
@@ -190,9 +198,18 @@ function ToolRowLine({ op }: { op: ToolOperation }) {
 					{op.meta}
 				</span>
 			) : null}
-			{op.errorBadge ? (
-				<span className="ml-auto shrink-0 rounded bg-destructive/15 px-1.5 py-0.2 font-mono text-[10px] text-destructive">
-					{op.errorBadge}
+			{hasDuration || op.errorBadge ? (
+				<span className="ml-auto flex shrink-0 items-center gap-1.5">
+					{hasDuration ? (
+						<span className="font-mono text-[10px] text-muted-foreground/75 tabular">
+							{formatLatency(durationMs)}
+						</span>
+					) : null}
+					{op.errorBadge ? (
+						<span className="rounded bg-destructive/15 px-1.5 py-0.2 font-mono text-[10px] text-destructive">
+							{op.errorBadge}
+						</span>
+					) : null}
 				</span>
 			) : null}
 		</div>
@@ -240,11 +257,17 @@ function ToolRow({ pair }: { pair: ToolPair }) {
 	const hasDetails = Boolean(inputText || outputText);
 	const counts = new Map<string, number>();
 
-	const operationLines = operations.map((op) => {
+	const operationLines = operations.map((op, index) => {
 		const base = `${op.rawName}-${op.target}-${call.order}`;
 		const seen = (counts.get(base) ?? 0) + 1;
 		counts.set(base, seen);
-		return <ToolRowLine key={`${base}-${seen}`} op={op} />;
+		return (
+			<ToolRowLine
+				key={`${base}-${seen}`}
+				op={op}
+				durationMs={index === 0 ? call.durationMs : undefined}
+			/>
+		);
 	});
 
 	if (!hasDetails) {
@@ -276,6 +299,10 @@ export function ToolChain({
 	const allOps = pairs.flatMap((pair) => pair.operations);
 	const summaryLabel = summarizeOperations(allOps, pairs.length, t);
 	const hasErrors = allOps.some((op) => Boolean(op.errorBadge));
+	const totalDurationMs = pairs.reduce(
+		(sum, pair) => sum + (pair.call.durationMs ?? 0),
+		0,
+	);
 
 	return (
 		<details
@@ -287,6 +314,7 @@ export function ToolChain({
 				<span className="truncate font-medium">{summaryLabel}</span>
 				<span className="ml-auto shrink-0 text-[10px] tabular text-muted-foreground/75">
 					{allOps.length}
+					{totalDurationMs > 0 ? ` · ${formatLatency(totalDurationMs)}` : ""}
 					{hasErrors ? " · !" : ""}
 				</span>
 			</summary>
