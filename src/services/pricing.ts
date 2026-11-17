@@ -298,7 +298,14 @@ export class DefaultPricingService implements PricingService {
 
 		// Fallback to static rates for any record that remains un-estimated/unpriced
 		for (const record of records) {
-			if (record.costUsd === null) {
+			const needsEstimate =
+				record.costUsd === null ||
+				(record.costUsd === 0 &&
+					!record.costEstimated &&
+					(record.inputTokens > 0 ||
+						record.outputTokens > 0 ||
+						(record.reasoningTokens ?? 0) > 0));
+			if (needsEstimate) {
 				if (
 					record.inputTokens === 0 &&
 					record.outputTokens === 0 &&
@@ -308,7 +315,7 @@ export class DefaultPricingService implements PricingService {
 					continue;
 				}
 				const rates = this.getModelRates(record.model, record.harness);
-				if (rates) {
+				if (rates && (rates.input > 0 || rates.output > 0)) {
 					const netOutput = Math.max(
 						0,
 						record.outputTokens - (record.reasoningTokens ?? 0),
