@@ -9,6 +9,7 @@ export interface StartServerOptions {
 	staticDir?: string;
 	development?: boolean;
 	dbPath?: string;
+	desktopPlatform?: string;
 }
 
 const contentTypes: Record<string, string> = {
@@ -84,7 +85,10 @@ export function startServer(options: StartServerOptions = {}) {
 	const hostname = options.hostname ?? "127.0.0.1";
 	const staticDir =
 		options.staticDir ?? path.join(import.meta.dir, "..", "dist");
-	store.configure({ dbPath: options.dbPath });
+	store.configure({
+		dbPath: options.dbPath,
+		desktopPlatform: options.desktopPlatform,
+	});
 	void store.start();
 	const server = Bun.serve({
 		port,

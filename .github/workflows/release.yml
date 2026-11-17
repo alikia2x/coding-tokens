@@ -206,6 +206,7 @@ jobs:
         run: |
           set -euo pipefail
           cd release-assets
+          rm -f stable-*-update.json stable-*.tar.zst *.patch
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
 

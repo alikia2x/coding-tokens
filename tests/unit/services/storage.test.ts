@@ -704,4 +704,64 @@ describe("Services: DefaultStorageService (Feature 7)", () => {
 		expect(val).toBe("persisted_value");
 		await service2.close();
 	});
+
+	test("F7-T1-09: Upgrades legacy user_version=1 database missing session_texts", async () => {
+		const { Database } = await import("bun:sqlite");
+		const dbDir = path.join(tmpRoot, "legacy-v1-upgrade");
+		mkdirSync(dbDir, { recursive: true });
+		const dbPath = path.join(dbDir, "legacy.sqlite");
+
+		const legacyDb = new Database(dbPath, { create: true });
+		legacyDb.exec(`
+			CREATE TABLE usage_records (
+				harness TEXT NOT NULL,
+				session_id TEXT NOT NULL,
+				message_id TEXT NOT NULL,
+				turn_id TEXT,
+				is_subagent INTEGER NOT NULL DEFAULT 0,
+				cwd TEXT,
+				model TEXT NOT NULL,
+				timestamp INTEGER,
+				input_tokens INTEGER NOT NULL DEFAULT 0,
+				output_tokens INTEGER NOT NULL DEFAULT 0,
+				cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+				cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+				reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+				cost_usd REAL,
+				cost_estimated INTEGER NOT NULL DEFAULT 0,
+				PRIMARY KEY (harness, session_id, message_id)
+			);
+			CREATE TABLE session_messages (
+				harness TEXT NOT NULL,
+				session_id TEXT NOT NULL,
+				messages INTEGER NOT NULL DEFAULT 0,
+				PRIMARY KEY (harness, session_id)
+			);
+			CREATE TABLE source_state (
+				harness TEXT PRIMARY KEY,
+				fingerprint TEXT NOT NULL,
+				indexed_at INTEGER NOT NULL,
+				available INTEGER NOT NULL,
+				warnings TEXT NOT NULL DEFAULT '[]'
+			);
+			CREATE TABLE settings (
+				key TEXT PRIMARY KEY,
+				value TEXT NOT NULL
+			);
+			PRAGMA user_version = 1;
+		`);
+		legacyDb.close();
+
+		const upgraded = openStoreDatabase(dbPath);
+		try {
+			const texts = readSessionTexts(upgraded);
+			expect(texts.size).toBe(0);
+			const version = upgraded
+				.query<{ user_version: number }, []>("PRAGMA user_version")
+				.get()?.user_version;
+			expect(version).toBe(3);
+		} finally {
+			upgraded.close();
+		}
+	});
 });

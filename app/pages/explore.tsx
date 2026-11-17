@@ -133,18 +133,29 @@ export function ExplorePage() {
 
 	const harnessOptions = useMemo<FacetOption[]>(() => {
 		if (status.data?.harnesses?.length) {
-			return status.data.harnesses.map((item) => ({
-				value: item.harness,
-				label: getHarnessLabel(item.harness),
-				count: item.sessions,
-			}));
+			return status.data.harnesses
+				.filter(
+					(item) =>
+						item.sessions > 0 ||
+						item.records > 0 ||
+						harnesses.includes(item.harness),
+				)
+				.map((item) => ({
+					value: item.harness,
+					label: getHarnessLabel(item.harness),
+					count: item.sessions,
+				}));
 		}
-		return HARNESS_NAMES.map((harness) => ({
-			value: harness,
-			label: getHarnessLabel(harness),
-			count: 0,
-		}));
-	}, [status.data]);
+		return harnesses
+			.filter((value): value is (typeof HARNESS_NAMES)[number] =>
+				HARNESS_NAMES.includes(value as (typeof HARNESS_NAMES)[number]),
+			)
+			.map((harness) => ({
+				value: harness,
+				label: getHarnessLabel(harness),
+				count: 0,
+			}));
+	}, [status.data, harnesses]);
 	const projectOptions = useMemo<FacetOption[]>(
 		() =>
 			(projects.data?.rows ?? [])

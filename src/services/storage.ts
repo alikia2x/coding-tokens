@@ -223,6 +223,12 @@ const MIGRATIONS: Migration[] = [
 		name: "fts5_and_performance_indexes",
 		up: (db) => {
 			db.exec(`
+				CREATE TABLE IF NOT EXISTS session_texts (
+					harness TEXT NOT NULL,
+					session_id TEXT NOT NULL,
+					body TEXT NOT NULL,
+					PRIMARY KEY (harness, session_id)
+				);
 				CREATE INDEX IF NOT EXISTS usage_records_timestamp
 					ON usage_records (timestamp);
 				CREATE INDEX IF NOT EXISTS usage_records_session
@@ -237,6 +243,20 @@ const MIGRATIONS: Migration[] = [
 				);
 				INSERT OR IGNORE INTO fts_session_text (harness, session_id, body)
 				SELECT harness, session_id, body FROM session_texts;
+			`);
+		},
+	},
+	{
+		version: 3,
+		name: "ensure_session_texts_table",
+		up: (db) => {
+			db.exec(`
+				CREATE TABLE IF NOT EXISTS session_texts (
+					harness TEXT NOT NULL,
+					session_id TEXT NOT NULL,
+					body TEXT NOT NULL,
+					PRIMARY KEY (harness, session_id)
+				);
 			`);
 		},
 	},

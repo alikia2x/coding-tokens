@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-17
+
+### Changed
+
+- Hide Windows and Linux application menu bars and remove macOS traffic-light left padding when not running in the macOS desktop shell.
+- Hide harnesses with zero sessions and zero records from the Sessions sidebar, Explore harness filter, and Harnesses page.
+- Strip Electrobun internal auto-updater artifacts from GitHub Releases so only platform GUI installers, CLI binaries, and `SHA256SUMS.txt` are published.
+
+### Fixed
+
+- Ensure SQLite migration v2/v3 creates `session_texts` before indexing FTS5 so upgrading from older `v0.2.0` local databases no longer stalls on `Opening local index 0/15`.
+- Move database initialization inside `DataStore.refresh()` error handling so database errors report cleanly instead of leaving indexing stuck.
+
 ## [0.3.0] - 2026-11-17
 
 ### Added

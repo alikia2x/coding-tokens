@@ -47,21 +47,23 @@ export function HarnessesPage() {
 	const parsed = useMemo(() => parseSearchQuery(query), [query]);
 	const rows = useMemo(
 		() =>
-			(harnesses.data?.rows ?? []).filter((row) =>
-				matchesTextQuery(
-					parsed,
-					[
-						row.label,
-						row.harness,
-						...row.paths,
-						...row.topModels.map((model) => model.model),
-					],
-					{
-						harness: [row.label, row.harness],
-						model: row.topModels.map((model) => model.model),
-					},
+			(harnesses.data?.rows ?? [])
+				.filter((row) => row.totals.sessions > 0 || row.totals.requests > 0)
+				.filter((row) =>
+					matchesTextQuery(
+						parsed,
+						[
+							row.label,
+							row.harness,
+							...row.paths,
+							...row.topModels.map((model) => model.model),
+						],
+						{
+							harness: [row.label, row.harness],
+							model: row.topModels.map((model) => model.model),
+						},
+					),
 				),
-			),
 		[harnesses.data, parsed],
 	);
 	const totals = harnesses.data?.totals;

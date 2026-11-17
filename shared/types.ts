@@ -312,6 +312,7 @@ export interface StatusPayload {
 	indexedAt: number | null;
 	durationMs: number | null;
 	error: string | null;
+	desktopPlatform?: string;
 	totals: { sessions: number; records: number };
 	harnesses: HarnessInfo[];
 	warnings: string[];

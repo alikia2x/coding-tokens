@@ -26,9 +26,15 @@ export function AppHeader({ status }: { status: StatusPayload }) {
 	const range = useResolvedRange();
 	const rangeQuery = rangeQueryString(range);
 	const isDetail = /^\/sessions\/[^/]+\/[^/]+/u.test(location.pathname);
+	const hasTrafficLights = status.desktopPlatform === "darwin";
 	return (
 		<header className="drag-region sticky top-0 z-40 border-b bg-background">
-			<div className="mx-auto flex h-16 max-w-[1480px] items-center gap-5 pl-[96px] pr-5 sm:pr-8">
+			<div
+				className={cn(
+					"mx-auto flex h-16 max-w-[1480px] items-center gap-5 pr-5 sm:pr-8",
+					hasTrafficLights ? "pl-[96px]" : "pl-5 sm:pl-8",
+				)}
+			>
 				<Link
 					to={`/?${rangeQuery}`}
 					className="no-drag flex shrink-0 items-center"

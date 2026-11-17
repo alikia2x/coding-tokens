@@ -28,37 +28,39 @@ appSubmenu.push({
 	accelerator: isMac ? "Command+Q" : "Control+Q",
 });
 
-setApplicationMenu([
-	{
-		label: "Coding Tokens",
-		submenu: appSubmenu,
-	},
-	{
-		label: "Edit",
-		submenu: [
-			{ role: "undo", accelerator: `${cmdOrCtrl}+Z` },
-			{ role: "redo", accelerator: `${cmdOrCtrl}+Shift+Z` },
-			{ type: "divider" },
-			{ role: "cut", accelerator: `${cmdOrCtrl}+X` },
-			{ role: "copy", accelerator: `${cmdOrCtrl}+C` },
-			{ role: "paste", accelerator: `${cmdOrCtrl}+V` },
-			{ role: "pasteAndMatchStyle", accelerator: `${cmdOrCtrl}+Shift+V` },
-			{ role: "delete" },
-			{ type: "divider" },
-			{ role: "selectAll", accelerator: `${cmdOrCtrl}+A` },
-		],
-	},
-	{
-		label: "Window",
-		submenu: [
-			{ role: "minimize", accelerator: `${cmdOrCtrl}+M` },
-			{ role: "zoom" },
-			{ role: "close", accelerator: `${cmdOrCtrl}+W` },
-			{ type: "divider" },
-			{ role: "bringAllToFront" },
-		],
-	},
-]);
+if (isMac) {
+	setApplicationMenu([
+		{
+			label: "Coding Tokens",
+			submenu: appSubmenu,
+		},
+		{
+			label: "Edit",
+			submenu: [
+				{ role: "undo", accelerator: `${cmdOrCtrl}+Z` },
+				{ role: "redo", accelerator: `${cmdOrCtrl}+Shift+Z` },
+				{ type: "divider" },
+				{ role: "cut", accelerator: `${cmdOrCtrl}+X` },
+				{ role: "copy", accelerator: `${cmdOrCtrl}+C` },
+				{ role: "paste", accelerator: `${cmdOrCtrl}+V` },
+				{ role: "pasteAndMatchStyle", accelerator: `${cmdOrCtrl}+Shift+V` },
+				{ role: "delete" },
+				{ type: "divider" },
+				{ role: "selectAll", accelerator: `${cmdOrCtrl}+A` },
+			],
+		},
+		{
+			label: "Window",
+			submenu: [
+				{ role: "minimize", accelerator: `${cmdOrCtrl}+M` },
+				{ role: "zoom" },
+				{ role: "close", accelerator: `${cmdOrCtrl}+W` },
+				{ type: "divider" },
+				{ role: "bringAllToFront" },
+			],
+		},
+	]);
+}
 
 const staticDir = path.join(VIEWS_FOLDER, "mainview");
 const userDataDir =
@@ -70,6 +72,7 @@ const { port } = startServer({
 	hostname: "127.0.0.1",
 	staticDir,
 	dbPath: databasePath,
+	desktopPlatform: process.platform,
 });
 
 const mainWindow = new BrowserWindow({

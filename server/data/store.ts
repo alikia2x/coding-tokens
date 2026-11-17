@@ -66,9 +66,13 @@ export class DataStore {
 	};
 	private refreshPromise: Promise<void> | null = null;
 	private dbPath: string = resolveDatabasePath({});
+	private desktopPlatform?: string;
 
-	configure(options: { dbPath?: string } = {}): void {
+	configure(options: { dbPath?: string; desktopPlatform?: string } = {}): void {
 		if (options.dbPath) this.dbPath = options.dbPath;
+		if (options.desktopPlatform !== undefined) {
+			this.desktopPlatform = options.desktopPlatform;
+		}
 	}
 
 	databasePath(): string {
@@ -128,6 +132,9 @@ export class DataStore {
 			indexedAt: this.indexedAt,
 			durationMs: this.durationMs,
 			error: this.error,
+			...(this.desktopPlatform
+				? { desktopPlatform: this.desktopPlatform }
+				: {}),
 			totals: {
 				sessions: this.recordsBySession.size,
 				records: this.records.length,
@@ -177,10 +184,11 @@ export class DataStore {
 			result: SourceResult;
 			fingerprint: string;
 		}> = [];
-		const db = openStoreDatabase(this.dbPath);
-		this.messagesBySession = readSessionMessages(db);
-		this.textsBySession = readSessionTexts(db);
+		let db: ReturnType<typeof openStoreDatabase> | null = null;
 		try {
+			db = openStoreDatabase(this.dbPath);
+			this.messagesBySession = readSessionMessages(db);
+			this.textsBySession = readSessionTexts(db);
 			for (const [index, provider] of providers.entries()) {
 				const harness = provider.metadata.id;
 				const label = provider.metadata.displayName;
@@ -316,7 +324,7 @@ export class DataStore {
 			this.phase = "Failed";
 			if (!this.ready) this.ready = false;
 		} finally {
-			db.close();
+			db?.close();
 			this.indexing = false;
 			this.refreshPromise = null;
 			this.progress = {

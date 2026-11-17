@@ -56,16 +56,25 @@ export function SessionsSidebar({
 	const t = useT();
 	const harnessItems = useMemo(() => {
 		if (status?.harnesses?.length) {
-			return status.harnesses.map((info) => ({
-				name: info.harness,
-				info,
-			}));
+			return status.harnesses
+				.filter(
+					(info) =>
+						(counts.get(info.harness) ?? info.sessions) > 0 ||
+						info.records > 0 ||
+						harness === info.harness,
+				)
+				.map((info) => ({
+					name: info.harness,
+					info,
+				}));
 		}
-		return HARNESS_NAMES.map((name) => ({
+		return HARNESS_NAMES.filter(
+			(name) => (counts.get(name) ?? 0) > 0 || harness === name,
+		).map((name) => ({
 			name,
 			info: undefined,
 		}));
-	}, [status]);
+	}, [status, counts, harness]);
 
 	return (
 		<aside className="lg:sticky lg:top-20 lg:self-start">
