@@ -64,7 +64,7 @@ export function OverviewPage() {
 		return (
 			<PageContainer>
 				<div className="rounded-lg border border-destructive/30 bg-destructive-surface p-4 text-sm text-destructive">
-					Could not load usage data. {overview.error.message}
+					{t("error.usageLoad")} {overview.error.message}
 				</div>
 			</PageContainer>
 		);
@@ -75,6 +75,15 @@ export function OverviewPage() {
 	const estimated = data.totals.estimatedRequests > 0;
 	const cacheShare = tokens > 0 ? data.totals.cacheReadTokens / tokens : 0;
 	const previousRequests = data.previous?.requests ?? 0;
+	const activeHarnessCount = data.harnesses.filter(
+		(row) => row.totals.requests > 0,
+	).length;
+	const requestsPerSession = data.totals.sessions
+		? Math.round(data.totals.requests / data.totals.sessions)
+		: 0;
+	const messagesPerSession = data.totals.sessions
+		? Math.round(data.totals.messages / data.totals.sessions)
+		: 0;
 
 	return (
 		<PageContainer>
@@ -84,9 +93,16 @@ export function OverviewPage() {
 						{t("nav.overview")}
 					</h1>
 					<p className="mt-0.5 text-[12px] text-muted-foreground">
-						{rangeLabel}, {formatNumber(data.totals.requests)}{" "}
-						{t("metric.requestsLower")}, {formatNumber(data.totals.sessions)}{" "}
-						{t("metric.sessionsLower")}
+						{rangeLabel} ·{" "}
+						{t("count.requests", {
+							count: data.totals.requests,
+							formatted: formatNumber(data.totals.requests),
+						})}{" "}
+						·{" "}
+						{t("count.sessions", {
+							count: data.totals.sessions,
+							formatted: formatNumber(data.totals.sessions),
+						})}
 					</p>
 				</div>
 				<span className="text-[11px] text-muted-foreground tabular">
@@ -99,7 +115,10 @@ export function OverviewPage() {
 					className="rounded-none border-0 bg-card"
 					label={t("metric.cost")}
 					value={formatCost(data.totals.costUsd, estimated)}
-					detail={`${data.harnesses.filter((row) => row.totals.requests > 0).length} ${t("metric.harnessCount")}`}
+					detail={t("count.harnesses", {
+						count: activeHarnessCount,
+						formatted: formatNumber(activeHarnessCount),
+					})}
 					previous={
 						previousRequests
 							? {
@@ -129,12 +148,14 @@ export function OverviewPage() {
 					className="rounded-none border-0 bg-card"
 					label={t("metric.requests")}
 					value={formatNumber(data.totals.requests)}
-					detail={`${formatCost(
-						data.totals.requests
-							? data.totals.costUsd / data.totals.requests
-							: 0,
-						estimated,
-					)} ${t("metric.perRequest")}`}
+					detail={t("metric.costPerRequestValue", {
+						value: formatCost(
+							data.totals.requests
+								? data.totals.costUsd / data.totals.requests
+								: 0,
+							estimated,
+						),
+					})}
 					previous={
 						previousRequests
 							? {
@@ -148,11 +169,10 @@ export function OverviewPage() {
 					className="rounded-none border-0 bg-card"
 					label={t("common.sessions")}
 					value={formatNumber(data.totals.sessions)}
-					detail={`${formatNumber(
-						data.totals.sessions
-							? Math.round(data.totals.requests / data.totals.sessions)
-							: 0,
-					)} ${t("metric.requestsPerSession")}`}
+					detail={t("count.requestsPerSession", {
+						count: requestsPerSession,
+						formatted: formatNumber(requestsPerSession),
+					})}
 					previous={
 						previousRequests
 							? {
@@ -166,11 +186,10 @@ export function OverviewPage() {
 					className="rounded-none border-0 bg-card"
 					label={t("metric.messages")}
 					value={formatNumber(data.totals.messages)}
-					detail={`${formatNumber(
-						data.totals.sessions
-							? Math.round(data.totals.messages / data.totals.sessions)
-							: 0,
-					)} ${t("metric.messagesPerSession")}`}
+					detail={t("count.messagesPerSession", {
+						count: messagesPerSession,
+						formatted: formatNumber(messagesPerSession),
+					})}
 					previous={
 						previousRequests
 							? {

@@ -502,7 +502,15 @@ export interface SessionStats {
 	metrics?: GenerationMetrics;
 }
 
-export type AppLocale = "en" | "zh-CN";
+export type AppLocale =
+	| "en"
+	| "zh-CN"
+	| "zh-TW"
+	| "ja"
+	| "ko"
+	| "es"
+	| "fr"
+	| "de";
 
 export interface AppSettings {
 	theme: "light" | "dark" | "system";

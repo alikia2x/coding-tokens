@@ -11,6 +11,7 @@ import {
 } from "recharts";
 import { ToggleGroup, ToggleGroupItem } from "~/components/ui/toggle-group";
 import {
+	type DateLocaleCode,
 	formatBucketLabelFor,
 	formatBucketTooltipLabelFor,
 	useDateLocale,
@@ -51,7 +52,7 @@ interface Point {
 function pointOf(
 	bucket: UsageBucket,
 	unit: "hour" | "day" | "week" | "month",
-	code: "en" | "zh-CN",
+	code: DateLocaleCode,
 ): Point {
 	return {
 		key: bucket.key,

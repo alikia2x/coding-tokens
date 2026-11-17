@@ -196,7 +196,10 @@ export function SessionsSidebar({
 
 			<div className="mt-4 hidden border-t pt-3 lg:block">
 				<div className="text-[11px] text-muted-foreground">
-					{formatNumber(totalFiltered)} {t("metric.sessionsLower")}
+					{t("count.sessions", {
+						count: totalFiltered,
+						formatted: formatNumber(totalFiltered),
+					})}
 				</div>
 				<div className="mt-1 text-[11px] text-muted-foreground">
 					{rangeLabel}

@@ -56,7 +56,16 @@ describe("hourly chart bucket keys and tooltip labels", () => {
 
 		// Compact axis labels collide on clock hour, which is why charts must key by bucket.key
 		// and display formatBucketTooltipLabelFor in tooltips.
-		for (const code of ["zh-CN", "en"] as const) {
+		for (const code of [
+			"en",
+			"zh-CN",
+			"zh-TW",
+			"ja",
+			"ko",
+			"es",
+			"fr",
+			"de",
+		] as const) {
 			const axisA = formatBucketLabelFor(first.start, "hour", code);
 			const axisB = formatBucketLabelFor(second.start, "hour", code);
 			expect(axisA).toBe(axisB);

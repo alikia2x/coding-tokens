@@ -224,10 +224,16 @@ export function SessionList({
 								</span>
 								<span className="ml-auto flex items-center gap-3 text-[10px] text-muted-foreground tabular">
 									<span>
-										{rows.length} {t("metric.sessionsLower")}
+										{t("count.sessions", {
+											count: rows.length,
+											formatted: formatNumber(rows.length),
+										})}
 									</span>
 									<span>
-										{formatTokens(tokens)} {t("metric.tokensLower")}
+										{t("count.tokens", {
+											count: tokens,
+											formatted: formatTokens(tokens),
+										})}
 									</span>
 									<span>{formatCost(cost, true)}</span>
 								</span>

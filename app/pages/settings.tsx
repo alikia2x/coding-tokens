@@ -1,4 +1,4 @@
-import { SESSION_DETAIL_LEVELS } from "@shared/types";
+import { type AppLocale, SESSION_DETAIL_LEVELS } from "@shared/types";
 import { RotateCw } from "lucide-react";
 import { Link } from "react-router";
 import { PageContainer } from "~/components/page-container";
@@ -13,8 +13,13 @@ import {
 } from "~/components/ui/select";
 import { Switch } from "~/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "~/components/ui/toggle-group";
-import { formatDateTime } from "~/lib/format";
-import { type TranslationKey, useT } from "~/lib/i18n";
+import { formatDateTime, formatNumber } from "~/lib/format";
+import {
+	SUPPORTED_LOCALES,
+	setAppLocale,
+	type TranslationKey,
+	useT,
+} from "~/lib/i18n";
 import { useRefreshData, useStatus } from "~/lib/queries";
 import { useSettings } from "~/lib/settings";
 import { useTheme } from "~/lib/theme";
@@ -64,16 +69,21 @@ export function SettingsPage() {
 					<Row label={t("settings.language")}>
 						<Select
 							value={settings.locale}
-							onValueChange={(value) =>
-								update({ locale: value as "en" | "zh-CN" })
-							}
+							onValueChange={(value) => {
+								const locale = value as AppLocale;
+								update({ locale });
+								setAppLocale(locale);
+							}}
 						>
 							<SelectTrigger size="sm" className="w-[150px] text-[12px]">
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent align="end">
-								<SelectItem value="en">English</SelectItem>
-								<SelectItem value="zh-CN">简体中文</SelectItem>
+								{SUPPORTED_LOCALES.map((item) => (
+									<SelectItem key={item.code} value={item.code}>
+										{item.label}
+									</SelectItem>
+								))}
 							</SelectContent>
 						</Select>
 					</Row>
@@ -203,7 +213,10 @@ export function SettingsPage() {
 								<SelectItem value="0">{t("settings.off")}</SelectItem>
 								{[5, 15, 30, 60].map((minutes) => (
 									<SelectItem key={minutes} value={String(minutes)}>
-										{minutes} {t("units.minuteShort")}
+										{t("units.minutesCount", {
+											count: minutes,
+											formatted: formatNumber(minutes),
+										})}
 									</SelectItem>
 								))}
 							</SelectContent>

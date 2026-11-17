@@ -467,7 +467,9 @@ export function ExplorePage() {
 						description={`${rangeLabel}, ${mode === "time" ? t(`chart.by.${bucket}`) : t(`chart.by.${dimension}`)}`}
 					/>
 					<span className="text-[11px] text-muted-foreground tabular">
-						{t("common.total")} {formatMetric(totalMetric, activeMetric)}
+						{t("common.totalValue", {
+							value: formatMetric(totalMetric, activeMetric),
+						})}
 					</span>
 				</div>
 				{explore.isLoading && !explore.data ? (

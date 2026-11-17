@@ -142,7 +142,10 @@ export function ModelsPage() {
 		<PageContainer>
 			<SectionHeading
 				title={t("common.models")}
-				description={`${formatNumber(rows.length)} ${t("models.withActivity")}`}
+				description={t("count.activeModels", {
+					count: rows.length,
+					formatted: formatNumber(rows.length),
+				})}
 			/>
 			<SummaryStrip
 				items={[

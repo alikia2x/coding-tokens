@@ -21,7 +21,7 @@ import {
 	Terminal,
 	Wrench,
 } from "lucide-react";
-import { formatLatency } from "~/lib/format";
+import { formatLatency, formatNumber } from "~/lib/format";
 import { type TranslationKey, useT } from "~/lib/i18n";
 
 const VERB_LABEL_KEYS: Partial<Record<ToolVerb, TranslationKey>> = {
@@ -135,7 +135,7 @@ function pairChainItems(items: DetailItem[]): ToolPair[] {
 function summarizeOperations(
 	ops: ToolOperation[],
 	pairCount: number,
-	t: (key: TranslationKey) => string,
+	t: (key: TranslationKey, options?: Record<string, unknown>) => string,
 ): string {
 	const hasRead = ops.some((op) => op.verb === "read" || op.verb === "list");
 	const hasSearch = ops.some(
@@ -157,7 +157,12 @@ function summarizeOperations(
 	if (!parts.length && ops.length > 0) parts.push(t("tool.summary.other"));
 
 	const rawSummary = parts.join(", ");
-	if (!rawSummary) return `${pairCount} ${t("session.calls")}`;
+	if (!rawSummary) {
+		return t("count.calls", {
+			count: pairCount,
+			formatted: formatNumber(pairCount),
+		});
+	}
 	return rawSummary.charAt(0).toUpperCase() + rawSummary.slice(1);
 }
 

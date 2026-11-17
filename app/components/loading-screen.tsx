@@ -2,6 +2,36 @@ import { AlertTriangle, RotateCw } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { type TranslationKey, useT } from "~/lib/i18n";
 
+const STATIC_PHASE_KEYS: Record<string, TranslationKey> = {
+	Starting: "status.starting",
+	Indexing: "status.indexing",
+	"Opening local index": "status.openingIndex",
+	"Matching model prices": "status.matchingPrices",
+	"Saving local index": "status.savingIndex",
+	"Building session index": "status.buildingCatalog",
+	Ready: "status.ready",
+	Failed: "status.failed",
+};
+
+function translatePhase(
+	phase: string,
+	t: (key: TranslationKey, options?: Record<string, unknown>) => string,
+): string {
+	const staticKey = STATIC_PHASE_KEYS[phase];
+	if (staticKey) return t(staticKey);
+	if (phase.startsWith("Loading ")) {
+		return t("status.loadingTarget", {
+			target: phase.slice("Loading ".length),
+		});
+	}
+	if (phase.startsWith("Reading ")) {
+		return t("status.readingTarget", {
+			target: phase.slice("Reading ".length),
+		});
+	}
+	return t("status.indexing");
+}
+
 export function LoadingScreen({
 	phase,
 	progress,
@@ -14,12 +44,6 @@ export function LoadingScreen({
 	onRetry?: () => void;
 }) {
 	const t = useT();
-	const phaseKeys: Record<string, TranslationKey> = {
-		Starting: "status.starting",
-		Indexing: "status.indexing",
-		Ready: "status.ready",
-		Failed: "status.failed",
-	};
 	const percent =
 		progress.total > 0
 			? Math.min(100, Math.round((progress.completed / progress.total) * 100))
@@ -52,7 +76,7 @@ export function LoadingScreen({
 					<>
 						<div className="flex items-baseline justify-between text-[12px]">
 							<span className="text-muted-foreground">
-								{t(phaseKeys[phase] ?? "status.ready")}
+								{translatePhase(phase, t)}
 							</span>
 							<span className="text-muted-foreground tabular">
 								{progress.completed}/{progress.total}

@@ -117,8 +117,9 @@ export function SessionTurn({
 	const blocks = blocksOf(items);
 	const turnLabel =
 		turn.index >= 0
-			? `${t("session.turn")} ${turn.index + 1}`
+			? t("session.turnNumber", { index: turn.index + 1 })
 			: t("session.untracked");
+	const turnTokens = totalTokens(turn.totals);
 
 	return (
 		<section className="py-3 first:pt-1">
@@ -131,7 +132,10 @@ export function SessionTurn({
 				) : null}
 				{turn.requests ? (
 					<span>
-						{formatTokens(totalTokens(turn.totals))} {t("metric.tokensLower")}
+						{t("count.tokens", {
+							count: turnTokens,
+							formatted: formatTokens(turnTokens),
+						})}
 					</span>
 				) : null}
 				{turn.requests ? (

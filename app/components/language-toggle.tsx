@@ -1,3 +1,4 @@
+import type { AppLocale } from "@shared/types";
 import { Globe } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import {
@@ -9,7 +10,7 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
-import { setAppLocale, useT } from "~/lib/i18n";
+import { SUPPORTED_LOCALES, setAppLocale, useT } from "~/lib/i18n";
 import { useSettings } from "~/lib/settings";
 
 export function LanguageToggle() {
@@ -32,12 +33,16 @@ export function LanguageToggle() {
 				<DropdownMenuRadioGroup
 					value={settings.locale}
 					onValueChange={(value) => {
-						update({ locale: value as "en" | "zh-CN" });
-						setAppLocale(value as "en" | "zh-CN");
+						const locale = value as AppLocale;
+						update({ locale });
+						setAppLocale(locale);
 					}}
 				>
-					<DropdownMenuRadioItem value="en">English</DropdownMenuRadioItem>
-					<DropdownMenuRadioItem value="zh-CN">简体中文</DropdownMenuRadioItem>
+					{SUPPORTED_LOCALES.map((item) => (
+						<DropdownMenuRadioItem key={item.code} value={item.code}>
+							{item.label}
+						</DropdownMenuRadioItem>
+					))}
 				</DropdownMenuRadioGroup>
 			</DropdownMenuContent>
 		</DropdownMenu>

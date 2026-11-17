@@ -74,7 +74,7 @@ export function FacetFilter({
 						<Input
 							value={query}
 							onChange={(event) => setQuery(event.target.value)}
-							placeholder={`${t("common.filter")} ${label}`}
+							placeholder={t("common.filterBy", { label })}
 							className="h-8 pl-7 text-[12px]"
 						/>
 					</div>

@@ -175,12 +175,12 @@ export function useRangeLabel(): string {
 			return formatRangeDates(range.from, range.until, code);
 		if (range.from !== null) {
 			const startLabel = formatRangeDates(range.from, range.from + 1, code);
-			return code === "zh-CN" ? `${startLabel} 起` : `From ${startLabel}`;
+			return t("range.fromDate", { date: startLabel });
 		}
 		if (range.until !== null) {
 			const end = Math.max(0, range.until - 1);
 			const endLabel = formatRangeDates(end, end + 1, code);
-			return code === "zh-CN" ? `截至 ${endLabel}` : `Until ${endLabel}`;
+			return t("range.untilDate", { date: endLabel });
 		}
 	}
 	return t(range.label as TranslationKey);

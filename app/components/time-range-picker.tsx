@@ -501,7 +501,7 @@ function EndpointField({
 				<button
 					type="button"
 					data-clear-endpoint={endpoint}
-					aria-label={`Clear ${label}`}
+					aria-label={t("common.clearField", { label })}
 					onClick={onClear}
 					className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
 				>

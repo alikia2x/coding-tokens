@@ -314,8 +314,10 @@ export function SessionUsagePanel({
 											</div>
 											<div className="mt-0.5 flex justify-between text-[10px] text-muted-foreground tabular">
 												<span>
-													{formatNumber(model.totals.requests)}{" "}
-													{t("metric.requestsLower")}
+													{t("count.requests", {
+														count: model.totals.requests,
+														formatted: formatNumber(model.totals.requests),
+													})}
 												</span>
 												{model.totals.costUsd > 0 ? (
 													<span>{formatCost(model.totals.costUsd)}</span>
@@ -334,7 +336,10 @@ export function SessionUsagePanel({
 										{t("metric.tokensByTurn")}
 									</span>
 									<span className="text-[10px] text-muted-foreground tabular">
-										{formatNumber(stats.turns)} {t("metric.turns")}
+										{t("count.turns", {
+											count: stats.turns,
+											formatted: formatNumber(stats.turns),
+										})}
 									</span>
 								</div>
 								<div className="mt-1 h-[112px]">

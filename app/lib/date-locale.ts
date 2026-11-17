@@ -1,9 +1,10 @@
+import type { AppLocale } from "@shared/types";
 import { useMemo } from "react";
 import type { DayPickerLocale } from "react-day-picker";
-import { enUS, zhCN } from "react-day-picker/locale";
+import { de, enUS, es, fr, ja, ko, zhCN, zhTW } from "react-day-picker/locale";
 import { useTranslation } from "react-i18next";
 
-export type DateLocaleCode = "en" | "zh-CN";
+export type DateLocaleCode = AppLocale;
 
 export interface DateLocale {
 	code: DateLocaleCode;
@@ -11,11 +12,34 @@ export interface DateLocale {
 	weekStartsOn: 0 | 1;
 }
 
+const LOCALE_CONFIG: Record<DateLocaleCode, DateLocale> = {
+	en: { code: "en", locale: enUS, weekStartsOn: 0 },
+	"zh-CN": { code: "zh-CN", locale: zhCN, weekStartsOn: 1 },
+	"zh-TW": { code: "zh-TW", locale: zhTW, weekStartsOn: 1 },
+	ja: { code: "ja", locale: ja, weekStartsOn: 0 },
+	ko: { code: "ko", locale: ko, weekStartsOn: 0 },
+	es: { code: "es", locale: es, weekStartsOn: 1 },
+	fr: { code: "fr", locale: fr, weekStartsOn: 1 },
+	de: { code: "de", locale: de, weekStartsOn: 1 },
+};
+
 export function dateLocaleFor(language: string): DateLocale {
-	if (language.toLowerCase().startsWith("zh")) {
-		return { code: "zh-CN", locale: zhCN, weekStartsOn: 1 };
+	const lower = language.toLowerCase();
+	if (
+		lower.startsWith("zh-tw") ||
+		lower.startsWith("zh-hk") ||
+		lower.startsWith("zh-mo") ||
+		lower.includes("hant")
+	) {
+		return LOCALE_CONFIG["zh-TW"];
 	}
-	return { code: "en", locale: enUS, weekStartsOn: 0 };
+	if (lower.startsWith("zh")) return LOCALE_CONFIG["zh-CN"];
+	if (lower.startsWith("ja")) return LOCALE_CONFIG.ja;
+	if (lower.startsWith("ko")) return LOCALE_CONFIG.ko;
+	if (lower.startsWith("es")) return LOCALE_CONFIG.es;
+	if (lower.startsWith("fr")) return LOCALE_CONFIG.fr;
+	if (lower.startsWith("de")) return LOCALE_CONFIG.de;
+	return LOCALE_CONFIG.en;
 }
 
 export function useDateLocale(): DateLocale {
@@ -101,7 +125,7 @@ export function formatRangeDates(
 
 	if (startYear === endYear) {
 		const showYear = startYear !== currentYear;
-		if (code === "zh-CN") {
+		if (code === "zh-CN" || code === "zh-TW") {
 			return `${rangeFormat(code, showYear).format(start)} – ${rangeFormat(
 				code,
 				false,
@@ -110,7 +134,7 @@ export function formatRangeDates(
 		return rangeFormat(code, showYear).formatRange(start, end);
 	}
 
-	if (code === "zh-CN") {
+	if (code === "zh-CN" || code === "zh-TW") {
 		return `${rangeFormat(code, true).format(start)} – ${rangeFormat(
 			code,
 			true,

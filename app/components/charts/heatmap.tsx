@@ -2,6 +2,7 @@ import type { HeatmapDay } from "@shared/types";
 import { Flame } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
 import {
+	type DateLocaleCode,
 	formatDateFor,
 	formatMonthShortFor,
 	formatWeekdayShortFor,
@@ -12,7 +13,7 @@ import { useT } from "~/lib/i18n";
 
 const weekdayIds = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
 
-function monthLabel(day: HeatmapDay, code: "en" | "zh-CN"): string {
+function monthLabel(day: HeatmapDay, code: DateLocaleCode): string {
 	return formatMonthShortFor(day.start, code);
 }
 
@@ -107,10 +108,16 @@ export function ContributionHeatmap({
 								{formatDateFor(hovered.start, code)}
 							</span>
 							<span>
-								{formatTokens(hovered.tokens)} {t("metric.tokensLower")}
+								{t("count.tokens", {
+									count: hovered.tokens,
+									formatted: formatTokens(hovered.tokens),
+								})}
 							</span>
 							<span>
-								{formatNumber(hovered.requests)} {t("metric.requestsLower")}
+								{t("count.requests", {
+									count: hovered.requests,
+									formatted: formatNumber(hovered.requests),
+								})}
 							</span>
 							<span>{formatCost(hovered.costUsd)}</span>
 						</>
@@ -121,10 +128,16 @@ export function ContributionHeatmap({
 								{t("heatmap.streak", { count: streak })}
 							</span>
 							<span>
-								{formatTokens(totals.tokens)} {t("metric.tokensLower")}
+								{t("count.tokens", {
+									count: totals.tokens,
+									formatted: formatTokens(totals.tokens),
+								})}
 							</span>
 							<span>
-								{formatNumber(totals.requests)} {t("metric.requestsLower")}
+								{t("count.requests", {
+									count: totals.requests,
+									formatted: formatNumber(totals.requests),
+								})}
 							</span>
 							<span>{formatCost(totals.costUsd, true)}</span>
 							<span>
@@ -174,7 +187,7 @@ export function ContributionHeatmap({
 									onMouseEnter={() => setHovered(day)}
 									onMouseLeave={() => setHovered(null)}
 									role="img"
-									aria-label={`${formatDateFor(day.start, code)}: ${formatNumber(day.tokens)} ${t("metric.tokensLower")}`}
+									aria-label={`${formatDateFor(day.start, code)}: ${t("count.tokens", { count: day.tokens, formatted: formatNumber(day.tokens) })}`}
 								/>
 							);
 						})}

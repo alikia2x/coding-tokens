@@ -137,7 +137,10 @@ export function ProjectsPage() {
 		<PageContainer>
 			<SectionHeading
 				title={t("common.projects")}
-				description={`${formatNumber(rows.length)} ${t("projects.withActivity")}`}
+				description={t("count.activeProjects", {
+					count: rows.length,
+					formatted: formatNumber(rows.length),
+				})}
 			/>
 			<SummaryStrip
 				items={[
