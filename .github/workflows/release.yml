@@ -53,24 +53,18 @@ jobs:
           - name: macOS arm64
             os: macos-15
             artifact: CodingTokens-macos-arm64
-            sign: "1"
           - name: macOS x64
             os: macos-15-intel
             artifact: CodingTokens-macos-x64
-            sign: "1"
           - name: Linux x64
             os: ubuntu-24.04
             artifact: CodingTokens-linux-x64
-            sign: "0"
           - name: Windows x64
             os: windows-2025
             artifact: CodingTokens-win-x64
-            sign: "0"
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
-      CODESIGN: ${{ matrix.sign }}
-      NOTARIZE: ${{ matrix.sign }}
       RELEASES_BASE_URL: https://github.com/${{ github.repository }}/releases/latest/download
       ELECTROBUN_DEVELOPER_ID: ${{ secrets.MACOS_DEVELOPER_ID }}
       ELECTROBUN_TEAMID: ${{ secrets.APPLE_TEAM_ID }}
@@ -92,7 +86,8 @@ jobs:
             libgtk-3-dev libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev libpipewire-0.3-dev librsvg2-dev
 
-      - name: Check macOS signing prerequisites
+      - name: Check macOS signing configuration
+        id: signing
         if: runner.os == 'macOS'
         env:
           CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
@@ -107,13 +102,16 @@ jobs:
           for name in ELECTROBUN_DEVELOPER_ID ELECTROBUN_TEAMID ELECTROBUN_APPLEID ELECTROBUN_APPLEIDPASS; do
             if [ -z "${!name}" ]; then missing="$missing $name"; fi
           done
-          if [ -n "$missing" ]; then
-            echo "::error::Missing signing configuration:$missing"
-            exit 1
+          if [ -z "$missing" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Apple Developer ID signing secrets configured."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Apple signing secrets missing ($missing). Building unsigned macOS installer."
           fi
 
       - name: Import Developer ID certificate
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && steps.signing.outputs.enabled == 'true'
         env:
           CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
@@ -143,11 +141,17 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build, sign and notarize
+      - name: Build app bundle
         run: bun run build:app
+        env:
+          CODESIGN: ${{ steps.signing.outputs.enabled == 'true' && '1' || '0' }}
+          NOTARIZE: ${{ steps.signing.outputs.enabled == 'true' && '1' || '0' }}
+
+      - name: Build standalone CLI binary
+        run: bun run build:cli
 
       - name: Verify signature and notarization
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && steps.signing.outputs.enabled == 'true'
         run: |
           set -euo pipefail
           APP="$(find build -maxdepth 2 -type d -name 'Coding Tokens.app' -print -quit)"
@@ -162,7 +166,7 @@ jobs:
           xcrun stapler validate "$APP"
 
       - name: Check notarization ticket on installer
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && steps.signing.outputs.enabled == 'true'
         continue-on-error: true
         run: |
           DMG="$(find artifacts -maxdepth 1 -name '*.dmg' -print -quit)"
@@ -177,7 +181,7 @@ jobs:
           retention-days: 7
 
       - name: Remove signing keychain
-        if: always() && runner.os == 'macOS'
+        if: always() && runner.os == 'macOS' && steps.signing.outputs.enabled == 'true'
         run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
 
   publish:

@@ -13,6 +13,8 @@
 		"web:serve": "bun run server/index.ts",
 		"dev": "bun run scripts/dev.ts",
 		"build": "vite build",
+		"build:cli": "bun run scripts/build-cli.ts",
+		"setup:signing": "bun run scripts/setup-signing.ts",
 		"check": "biome check --config-path=biome.json .",
 		"format": "biome format --config-path=biome.json --write .",
 		"typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.server.json",

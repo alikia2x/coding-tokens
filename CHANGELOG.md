@@ -8,10 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Support for 15 coding harnesses across macOS, Windows, and Linux via dynamic provider registration and cross-platform path resolution.
+- Batch Markdown export for filtered sessions from the Sessions explorer (`POST /api/sessions/export`).
+- Generation performance metrics per session, turn, and tool call, including TTFT, output throughput (tokens/s), model duration, tool execution duration, and active time split.
+- Multi-language localization for English, Simplified Chinese, Traditional Chinese, Japanese, Korean, Spanish, French, and German with natural localized quantifiers.
+- Standalone cross-platform CLI executable builds (`bun run build:cli`) and macOS Developer ID signing setup helper (`bun run setup:signing`).
 - Deterministic colors for chart series and legends: the same harness, project or model keeps the same color regardless of sort order or filters.
 - Current activity streak in the contribution heatmap header.
-- CI now packages unsigned builds for macOS (arm64 and x64), Windows x64 and Linux x64; releases build the full platform matrix.
-- macOS releases are signed with a Developer ID certificate and notarized.
+- CI now packages unsigned builds and standalone CLI binaries for macOS (arm64 and x64), Windows x64 and Linux x64; releases build the full platform matrix.
+- macOS releases sign and notarize automatically when Apple Developer ID secrets are configured, falling back cleanly to unsigned builds otherwise.
 
 ### Changed
 

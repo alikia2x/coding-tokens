@@ -87,6 +87,9 @@ jobs:
           CODESIGN: "false"
           NOTARIZE: "false"
 
+      - name: Build standalone CLI binary
+        run: bun run build:cli
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
