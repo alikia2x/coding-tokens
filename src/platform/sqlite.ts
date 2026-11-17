@@ -80,6 +80,20 @@ async function asyncCopyWithRetry(
 	}
 }
 
+function openReadonlyCandidate(dbPath: string, hasSidecar: boolean): Database {
+	if (!hasSidecar) {
+		const immutableUri = `${pathToUri(dbPath)}?immutable=1`;
+		try {
+			return new Database(immutableUri, { readonly: true, create: false });
+		} catch (error) {
+			// Some SQLite builds (such as Linux bun:sqlite without SQLITE_USE_URI)
+			// reject file:// URIs; fall back to opening the filesystem path directly.
+			if (isLockError(error)) throw error;
+		}
+	}
+	return new Database(dbPath, { readonly: true, create: false });
+}
+
 export function openSafeReadonlyDatabase(
 	dbPath: string,
 	options: OpenReadonlySqliteOptions = {},
@@ -101,12 +115,7 @@ export function openSafeReadonlyDatabase(
 	for (let attempt = 0; attempt <= maxRetries; attempt++) {
 		let db: Database | undefined;
 		try {
-			if (!hasSidecar) {
-				const immutableUri = `${pathToUri(dbPath)}?immutable=1`;
-				db = new Database(immutableUri, { readonly: true, create: false });
-			} else {
-				db = new Database(dbPath, { readonly: true, create: false });
-			}
+			db = openReadonlyCandidate(dbPath, hasSidecar);
 			try {
 				db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs};`);
 				db.exec("PRAGMA query_only = ON;");
@@ -260,12 +269,7 @@ export async function openSafeReadonlyDatabaseAsync(
 	for (let attempt = 0; attempt <= maxRetries; attempt++) {
 		let db: Database | undefined;
 		try {
-			if (!hasSidecar) {
-				const immutableUri = `${pathToUri(dbPath)}?immutable=1`;
-				db = new Database(immutableUri, { readonly: true, create: false });
-			} else {
-				db = new Database(dbPath, { readonly: true, create: false });
-			}
+			db = openReadonlyCandidate(dbPath, hasSidecar);
 			try {
 				db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs};`);
 				db.exec("PRAGMA query_only = ON;");
