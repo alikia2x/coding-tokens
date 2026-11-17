@@ -499,10 +499,14 @@ export function openReadonlyDatabase(dbPath: string): Database {
 		hasNonEmptySidecar(`${dbPath}-journal`);
 	if (hasPendingSidecar)
 		return new Database(dbPath, { readonly: true, create: false });
-	return new Database(`${pathToFileURL(dbPath).href}?immutable=1`, {
-		readonly: true,
-		create: false,
-	});
+	try {
+		return new Database(`${pathToFileURL(dbPath).href}?immutable=1`, {
+			readonly: true,
+			create: false,
+		});
+	} catch {
+		return new Database(dbPath, { readonly: true, create: false });
+	}
 }
 
 export function tablesIn(db: Database): Set<string> {

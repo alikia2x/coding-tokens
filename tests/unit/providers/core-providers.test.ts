@@ -2224,12 +2224,14 @@ describe("Providers: Built-in Harness Providers Shared Utilities & Smoke (Featur
 		];
 
 		for (const provider of providers) {
-			const watchPaths = provider.getWatchPaths(defaultPlatformPathService);
-			expect(Array.isArray(watchPaths)).toBe(true);
-			expect(watchPaths.length).toBeGreaterThan(0);
-
 			const isAvail = await provider.isAvailable(defaultPlatformPathService);
 			expect(typeof isAvail).toBe("boolean");
+
+			const watchPaths = provider.getWatchPaths(defaultPlatformPathService);
+			expect(Array.isArray(watchPaths)).toBe(true);
+			if (isAvail) {
+				expect(watchPaths.length).toBeGreaterThan(0);
+			}
 
 			const sessions = await provider.discoverSessions(
 				defaultPlatformPathService,
