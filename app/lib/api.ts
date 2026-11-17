@@ -1,5 +1,6 @@
 import type {
 	AppSettings,
+	BatchSessionExportResult,
 	ExploreBucket,
 	ExploreDimension,
 	ExploreMetric,
@@ -45,8 +46,29 @@ async function getJson<T>(path: string): Promise<T> {
 	const response = await fetch(path, {
 		headers: { Accept: "application/json" },
 	});
+	return readJsonResponse<T>(response);
+}
+
+async function sendJson<T>(
+	path: string,
+	method: "POST" | "PUT",
+	body: unknown,
+	fallbackMessage?: string,
+): Promise<T> {
+	const response = await fetch(path, {
+		method,
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(body),
+	});
+	return readJsonResponse<T>(response, fallbackMessage);
+}
+
+async function readJsonResponse<T>(
+	response: Response,
+	fallbackMessage?: string,
+): Promise<T> {
 	if (!response.ok) {
-		let message = response.statusText;
+		let message = fallbackMessage ?? response.statusText;
 		try {
 			const body = (await response.json()) as { error?: string };
 			if (body.error) message = body.error;
@@ -66,18 +88,13 @@ function rangeQuery(range: { from: number | null; until: number | null }) {
 export const api = {
 	status: () => getJson<StatusPayload>("/api/status"),
 	settings: () => getJson<AppSettings>("/api/settings"),
-	updateSettings: async (
-		partial: Partial<AppSettings>,
-	): Promise<AppSettings> => {
-		const response = await fetch("/api/settings", {
-			method: "PUT",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(partial),
-		});
-		if (!response.ok)
-			throw new ApiError("Could not save settings", response.status);
-		return (await response.json()) as AppSettings;
-	},
+	updateSettings: async (partial: Partial<AppSettings>): Promise<AppSettings> =>
+		sendJson<AppSettings>(
+			"/api/settings",
+			"PUT",
+			partial,
+			"Could not save settings",
+		),
 	refresh: async (): Promise<void> => {
 		const response = await fetch("/api/refresh", { method: "POST" });
 		if (!response.ok) throw new ApiError("Refresh failed", response.status);
@@ -135,35 +152,26 @@ export const api = {
 				sessionId,
 			)}${queryString({ level })}`,
 		),
-	exportSession: async (
+	exportSession: (
 		harness: string,
 		sessionId: string,
 		level: SessionDetailLevel,
-	): Promise<{ path: string; filename: string; bytes: number }> => {
-		const response = await fetch(
+	): Promise<{ path: string; filename: string; bytes: number }> =>
+		sendJson(
 			`/api/sessions/${encodeURIComponent(harness)}/${encodeURIComponent(
 				sessionId,
 			)}/export`,
-			{
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ level }),
-			},
-		);
-		if (!response.ok) {
-			let message = response.statusText;
-			try {
-				const body = (await response.json()) as { error?: string };
-				if (body.error) message = body.error;
-			} catch {}
-			throw new ApiError(message, response.status);
-		}
-		return (await response.json()) as {
-			path: string;
-			filename: string;
-			bytes: number;
-		};
-	},
+			"POST",
+			{ level },
+		),
+	exportSessionsBatch: (options: {
+		keys: string[];
+		level: SessionDetailLevel;
+		includeTimestamps?: boolean;
+		includeTokenStats?: boolean;
+		directory?: string;
+	}): Promise<BatchSessionExportResult> =>
+		sendJson("/api/sessions/export", "POST", options),
 	search: (query: string, limit = 8) =>
 		getJson<SearchPayload>(`/api/search${queryString({ q: query, limit })}`),
 	sessionsSearch: (range: ResolvedRange, query: string) =>

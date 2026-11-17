@@ -1,11 +1,12 @@
 import { matchesSessionQuery, parseSearchQuery } from "@shared/search";
 import type { HarnessName, SessionSummary } from "@shared/types";
 import { HARNESS_LABELS } from "@shared/types";
-import { Search, X } from "lucide-react";
+import { Download, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import type { FacetOption } from "~/components/facet-filter";
 import { PageContainer } from "~/components/page-container";
+import { BatchExportDialog } from "~/components/sessions/batch-export-dialog";
 import {
 	SessionList,
 	sessionTotalTokens,
@@ -84,6 +85,7 @@ export function SessionsPage() {
 	);
 	const [grouped, setGrouped] = useState(true);
 	const [sort, setSort] = useState<SortKey>("recent");
+	const [exportDialogOpen, setExportDialogOpen] = useState(false);
 	const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
 		() => new Set(),
 	);
@@ -401,6 +403,17 @@ export function SessionsPage() {
 									: t("sessions.expandAll")}
 							</Button>
 						) : null}
+
+						<Button
+							variant="outline"
+							size="sm"
+							className="ml-auto"
+							disabled={filtered.length === 0}
+							onClick={() => setExportDialogOpen(true)}
+						>
+							<Download className="size-3.5" />
+							{t("common.export")}
+						</Button>
 					</div>
 
 					<SessionList
@@ -417,6 +430,13 @@ export function SessionsPage() {
 					/>
 				</section>
 			</div>
+
+			<BatchExportDialog
+				open={exportDialogOpen}
+				sessionKeys={filtered.map((session) => session.key)}
+				defaultDetailLevel={settings.defaultDetailLevel}
+				onOpenChange={setExportDialogOpen}
+			/>
 		</PageContainer>
 	);
 }

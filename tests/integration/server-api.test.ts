@@ -1,5 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { handleApi } from "../../server/api";
@@ -329,12 +335,43 @@ describe("Server REST API Integration Suite", () => {
 			expect(data).toHaveProperty("bytes");
 			expect(data.bytes).toBeGreaterThan(0);
 		});
+
+		test("API-T1-15: POST /api/sessions/export batch exports matching sessions and _index.md", async () => {
+			const batchDir = path.join(suiteTmp, "batch-exports");
+			const res = await dispatchApi("/api/sessions/export", {
+				method: "POST",
+				body: {
+					keys: ["codex:codex-sess-1"],
+					level: "chat",
+					includeTimestamps: true,
+					includeTokenStats: true,
+					directory: batchDir,
+				},
+			});
+			expect(res.status).toBe(200);
+			const data = await res.json();
+			expect(data.directory).toBe(batchDir);
+			expect(data.filesWritten).toBe(1);
+			expect(data.skippedCount).toBe(0);
+			expect(existsSync(data.indexPath)).toBe(true);
+			const indexText = readFileSync(data.indexPath, "utf8");
+			expect(indexText).toContain("# Conversations");
+		});
 	});
 
 	// =========================================================================
 	// Tier 2: Boundary, Corruption & Error Handling (6 tests)
 	// =========================================================================
 	describe("Tier 2: Boundary & Error Handling", () => {
+		test("API-T2-00: POST /api/sessions/export with empty keys returns 400", async () => {
+			const res = await dispatchApi("/api/sessions/export", {
+				method: "POST",
+				body: { keys: [], level: "chat" },
+			});
+			expect(res.status).toBe(400);
+			const data = await res.json();
+			expect(data.error).toContain("At least one session key is required");
+		});
 		test("API-T2-01: Non-existent route returns 404 with error payload", async () => {
 			const res = await dispatchApi("/api/unknown_resource");
 			expect(res.status).toBe(404);

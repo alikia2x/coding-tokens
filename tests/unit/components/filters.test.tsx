@@ -40,6 +40,8 @@ globalThis.ResizeObserver = class {
 	unobserve() {}
 	disconnect() {}
 } as unknown as typeof ResizeObserver;
+globalThis.MutationObserver =
+	win.MutationObserver as unknown as typeof MutationObserver;
 globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) =>
 	setTimeout(cb, 0)) as unknown as typeof requestAnimationFrame;
 globalThis.cancelAnimationFrame = ((id: number) =>
@@ -54,6 +56,7 @@ const { QueryClient, QueryClientProvider } = await import(
 const { SessionsSidebar } = await import(
 	"~/components/sessions/sessions-sidebar"
 );
+const { SessionsPage } = await import("~/pages/sessions");
 const { ExplorePage } = await import("~/pages/explore");
 const { queryKeys } = await import("~/lib/queries");
 const { RangeProvider } = await import("~/lib/range");
@@ -337,5 +340,167 @@ describe("Dynamic Harness Filter UI Regression Suite", () => {
 		await sleep(30);
 
 		expect(harnessFilterBtn?.textContent).toContain("1");
+	});
+
+	test("SessionsPage batch export button exports only filtered sessions via BatchExportDialog", async () => {
+		const status = makeStatusPayload();
+		let postedBatchPayload: Record<string, unknown> | null = null;
+		const sessionsData = {
+			indexedAt: Date.now(),
+			warnings: [],
+			sessions: [
+				{
+					key: "claude:c1",
+					harness: "claude",
+					sessionId: "c1",
+					title: "Claude session 1",
+					cwd: "/proj/a",
+					projectName: "a",
+					models: ["claude-sonnet-4"],
+					startedAt: 1000,
+					lastActivityAt: 2000,
+					durationMs: 1000,
+					isSubagent: false,
+					isReview: false,
+					hasTranscript: true,
+					totals: {
+						sessions: 1,
+						messages: 2,
+						requests: 1,
+						inputTokens: 100,
+						outputTokens: 50,
+						cacheReadTokens: 0,
+						cacheWriteTokens: 0,
+						reasoningTokens: 0,
+						costUsd: 0.01,
+						estimatedRequests: 0,
+						unpricedRequests: 0,
+					},
+				},
+				{
+					key: "codex:x1",
+					harness: "codex",
+					sessionId: "x1",
+					title: "Codex session 1",
+					cwd: "/proj/b",
+					projectName: "b",
+					models: ["gpt-5"],
+					startedAt: 3000,
+					lastActivityAt: 4000,
+					durationMs: 1000,
+					isSubagent: false,
+					isReview: false,
+					hasTranscript: true,
+					totals: {
+						sessions: 1,
+						messages: 2,
+						requests: 1,
+						inputTokens: 200,
+						outputTokens: 100,
+						cacheReadTokens: 0,
+						cacheWriteTokens: 0,
+						reasoningTokens: 0,
+						costUsd: 0.02,
+						estimatedRequests: 0,
+						unpricedRequests: 0,
+					},
+				},
+			],
+		};
+
+		globalThis.fetch = (async (
+			input: RequestInfo | URL,
+			init?: RequestInit,
+		) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url.includes("/api/sessions/export")) {
+				postedBatchPayload = JSON.parse(String(init?.body ?? "{}")) as Record<
+					string,
+					unknown
+				>;
+				return new Response(
+					JSON.stringify({
+						directory: "/tmp/coding-tokens-exports/export-1",
+						indexPath: "/tmp/coding-tokens-exports/export-1/_index.md",
+						filesWritten: 1,
+						skippedCount: 0,
+						warnings: [],
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+			if (url.includes("/api/sessions")) {
+				return new Response(JSON.stringify(sessionsData), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			if (url.includes("/api/status")) {
+				return new Response(JSON.stringify(status), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			return new Response(JSON.stringify({}), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			});
+		}) as typeof fetch;
+
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		queryClient.setQueryData(queryKeys.status, status);
+
+		root.render(
+			React.createElement(
+				QueryClientProvider,
+				{ client: queryClient },
+				React.createElement(
+					MemoryRouter,
+					{ initialEntries: ["/sessions?harness=claude"] },
+					React.createElement(
+						SettingsProvider,
+						null,
+						React.createElement(
+							RangeProvider,
+							null,
+							React.createElement(SessionsPage),
+						),
+					),
+				),
+			),
+		);
+
+		await sleep(80);
+
+		const exportBtn = Array.from(container.querySelectorAll("button")).find(
+			(b) => b.textContent?.trim() === "Export",
+		);
+		expect(exportBtn).toBeDefined();
+		expect(exportBtn?.disabled).toBe(false);
+
+		click(exportBtn);
+		await sleep(50);
+
+		const dialogText = document.body.textContent ?? "";
+		expect(dialogText).toContain("Export filtered sessions");
+		expect(dialogText).toContain("1 matching");
+
+		const confirmBtn = Array.from(
+			document.body.querySelectorAll("button"),
+		).find((b) => b.textContent?.includes("Export 1 session"));
+		expect(confirmBtn).toBeDefined();
+		click(confirmBtn);
+		await sleep(50);
+
+		expect(postedBatchPayload).not.toBeNull();
+		expect(postedBatchPayload?.keys).toEqual(["claude:c1"]);
+		expect(document.body.textContent).toContain(
+			"/tmp/coding-tokens-exports/export-1",
+		);
 	});
 });

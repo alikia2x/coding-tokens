@@ -435,6 +435,14 @@ export interface SearchPayload {
 	harnesses: Array<{ harness: HarnessName; sessions: number; costUsd: number }>;
 }
 
+export interface BatchSessionExportResult {
+	directory: string;
+	indexPath: string;
+	filesWritten: number;
+	skippedCount: number;
+	warnings: string[];
+}
+
 export interface ApiError {
 	error: string;
 }

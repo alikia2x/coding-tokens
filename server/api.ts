@@ -18,7 +18,10 @@ import {
 } from "./data/reports";
 import { searchPayload, sessionSearchMatches } from "./data/search";
 import { sessionDetailPayload } from "./data/session-detail";
-import { exportSessionMarkdown } from "./data/session-export";
+import {
+	exportSessionMarkdown,
+	exportSessionsBatchMarkdown,
+} from "./data/session-export";
 import { store } from "./data/store";
 import type { RecordFilters } from "./data/totals";
 
@@ -175,6 +178,54 @@ export async function handleApi(request: Request, url: URL): Promise<Response> {
 			return json(
 				heatmapPayload(Number(url.searchParams.get("weeks") ?? 53) || 53),
 			);
+
+		if (
+			resource === "sessions" &&
+			method === "POST" &&
+			segments.length === 3 &&
+			segments[2] === "export"
+		) {
+			const body = (await request.json().catch(() => ({}))) as {
+				keys?: unknown;
+				level?: unknown;
+				includeTimestamps?: unknown;
+				includeTokenStats?: unknown;
+				directory?: unknown;
+			};
+			const keys = Array.isArray(body.keys)
+				? body.keys.filter(
+						(item): item is string =>
+							typeof item === "string" && item.trim().length > 0,
+					)
+				: [];
+			if (keys.length === 0) {
+				return json({ error: "At least one session key is required" }, 400);
+			}
+			const level =
+				typeof body.level === "string" && levelSet.has(body.level)
+					? (body.level as SessionDetailLevel)
+					: "chat";
+			const includeTimestamps =
+				typeof body.includeTimestamps === "boolean"
+					? body.includeTimestamps
+					: true;
+			const includeTokenStats =
+				typeof body.includeTokenStats === "boolean"
+					? body.includeTokenStats
+					: true;
+			const directory =
+				typeof body.directory === "string" && body.directory.trim()
+					? body.directory
+					: undefined;
+			const result = await exportSessionsBatchMarkdown({
+				keys,
+				detail: level,
+				includeTimestamps,
+				includeTokenStats,
+				directory,
+			});
+			return json(result);
+		}
 
 		if (
 			resource === "sessions" &&
