@@ -107,12 +107,15 @@ export function sessionSearchMatches(
 	}
 	const keys: string[] = [];
 	const snippets: Record<string, string> = {};
+	const hasTextTerms = query.terms.length > 0;
 	for (const session of sessions) {
-		const body = store.sessionText(session.key);
+		const body = hasTextTerms ? store.sessionText(session.key) : undefined;
 		if (!matchesSessionQuery(sessionSearchable(session, body), query)) continue;
 		keys.push(session.key);
-		const snippet = extractSnippet(body, query.terms);
-		if (snippet) snippets[session.key] = snippet;
+		if (hasTextTerms) {
+			const snippet = extractSnippet(body, query.terms);
+			if (snippet) snippets[session.key] = snippet;
+		}
 	}
 	return { query: raw, keys, snippets };
 }

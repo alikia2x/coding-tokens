@@ -195,18 +195,140 @@ describe("Services: Transcript Services, Snippets & Search (Feature 9)", () => {
 		expect(mdChat).toContain("The database module has been updated");
 		expect(mdChat).not.toContain("read_file");
 
-		// chat_tools: includes user, assistant messages, and tools summary markdown
+		// chat_tools: includes user, assistant messages and inline tool calls without results
 		const mdTools = renderSessionMarkdown(sampleSession, {
 			detail: "chat_tools",
 		});
 		expect(mdTools).toContain("Please refactor the database storage module");
-		expect(mdTools).toContain("[TOOLS]");
+		expect(mdTools).toContain("[TOOL read_file]");
+		expect(mdTools).not.toContain("[TOOL RESULT");
+		expect(mdTools).not.toContain("Schema validated.");
+		expect(mdTools).not.toContain("[TOOLS]");
 
 		// agent: includes tool calls and results inline
 		const mdAgent = renderSessionMarkdown(sampleSession, {
 			detail: "agent",
 		});
 		expect(mdAgent).toContain("read_file");
+	});
+
+	test("F9-T2-05: chat_compact fallback, agent_full system/other, paired result names, and token attribution", () => {
+		const mixedSession: TranscriptSession = {
+			harness: "continue",
+			sessionId: "sess-mixed-1",
+			cwd: "/workspace/app",
+			startedAt: 1700000000000,
+			title: "Continue Mixed Phases",
+			usageRecords: [
+				{
+					harness: "continue",
+					sessionId: "sess-mixed-1",
+					messageId: "tok-99",
+					turnId: "999",
+					isSubagent: false,
+					cwd: "/workspace/app",
+					model: "gpt-4o",
+					timestamp: null,
+					inputTokens: 400,
+					outputTokens: 80,
+					cacheReadTokens: 0,
+					cacheWriteTokens: 0,
+					reasoningTokens: 0,
+					costUsd: 0.01,
+					costEstimated: false,
+				},
+			],
+			items: [
+				{
+					id: "sys-1",
+					order: 0,
+					turnId: "1",
+					role: "system",
+					kind: "other",
+					phase: "unknown",
+					text: "You are a helpful coding assistant.",
+					timestamp: null,
+				},
+				{
+					id: "usr-1",
+					order: 1,
+					turnId: "1",
+					role: "user",
+					kind: "message",
+					phase: "unknown",
+					text: "Explain this function",
+					timestamp: null,
+				},
+				{
+					id: "asst-1",
+					order: 2,
+					turnId: "1",
+					role: "assistant",
+					kind: "message",
+					phase: "intermediate",
+					text: "Let me inspect the file first.",
+					timestamp: null,
+				},
+				{
+					id: "call-1",
+					order: 3,
+					turnId: "1",
+					role: "tool",
+					kind: "tool_call",
+					phase: "intermediate",
+					name: "exec",
+					input: { command: "ls" },
+					toolCallId: "c1",
+					category: "command",
+					timestamp: null,
+				},
+				{
+					id: "res-1",
+					order: 4,
+					turnId: "1",
+					role: "tool",
+					kind: "tool_result",
+					phase: "intermediate",
+					name: "tool",
+					output: { output: "file.ts", metadata: { exit_code: 0 } },
+					toolCallId: "c1",
+					status: "completed",
+					timestamp: null,
+				},
+				{
+					id: "asst-2",
+					order: 5,
+					turnId: "1",
+					role: "assistant",
+					kind: "message",
+					phase: "unknown",
+					text: "The function parses CLI flags.",
+					timestamp: null,
+				},
+			],
+		};
+
+		// chat_compact falls back to the closing unknown message instead of dropping all replies
+		const compact = renderSessionMarkdown(mixedSession, {
+			detail: "chat_compact",
+		});
+		expect(compact).toContain("[USER]: Explain this function");
+		expect(compact).toContain("[ASSISTANT]: The function parses CLI flags.");
+		expect(compact).not.toContain("Let me inspect the file first.");
+		expect(compact).toContain("[MODEL] gpt-4o");
+
+		// agent pairs result tool name and unwraps output
+		const agentMd = renderSessionMarkdown(mixedSession, { detail: "agent" });
+		expect(agentMd).toContain("[TOOL RESULT exec] completed");
+		expect(agentMd).toContain("file.ts");
+		expect(agentMd).not.toContain("[SYSTEM]");
+
+		// agent_full includes system/developer/other events
+		const fullMd = renderSessionMarkdown(mixedSession, {
+			detail: "agent_full",
+		});
+		expect(fullMd).toContain("[SYSTEM]: You are a helpful coding assistant.");
+		expect(fullMd).toContain("[TOOL RESULT exec] completed");
 	});
 
 	test("F9-T2-02: Full-text search negative keyword filtering and phrase matching", () => {

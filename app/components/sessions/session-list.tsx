@@ -1,6 +1,7 @@
 import type { SessionSummary } from "@shared/types";
 import { cn } from "cn";
 import { ChevronRight } from "lucide-react";
+import { memo } from "react";
 import { Link } from "react-router";
 import { EmptyState } from "~/components/empty-state";
 import { HarnessDot } from "~/components/harness-badge";
@@ -14,6 +15,7 @@ import {
 	formatRelativeTime,
 	formatTokens,
 } from "~/lib/format";
+import { useProgressiveLimit } from "~/lib/hooks";
 import { useT } from "~/lib/i18n";
 import { localizeLabel } from "~/lib/labels";
 
@@ -59,7 +61,7 @@ function SessionRoleBadge({ session }: { session: SessionSummary }) {
 	return null;
 }
 
-function SessionRow({
+const SessionRow = memo(function SessionRow({
 	session,
 	snippet,
 	terms,
@@ -80,7 +82,7 @@ function SessionRow({
 	return (
 		<Link
 			to={`/sessions/${session.harness}/${encodeURIComponent(session.sessionId)}${findParam}`}
-			className="group flex items-center gap-3 px-2 py-2.5 transition-colors hover:bg-hover"
+			className="group flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-hover"
 		>
 			<HarnessDot harness={session.harness} />
 			<div className="min-w-0 flex-1">
@@ -115,6 +117,37 @@ function SessionRow({
 			</div>
 		</Link>
 	);
+});
+
+function ExpandedGroupRows({
+	rows,
+	snippets,
+	terms,
+}: {
+	rows: SessionSummary[];
+	snippets: Record<string, string>;
+	terms: string[];
+}) {
+	const { limit, hasMore, sentinelRef } = useProgressiveLimit(
+		rows.length,
+		60,
+		60,
+		terms.length > 0,
+	);
+	const visible = rows.slice(0, limit);
+	return (
+		<div className="divide-y">
+			{visible.map((session) => (
+				<SessionRow
+					key={session.key}
+					session={session}
+					snippet={snippets[session.key]}
+					terms={terms}
+				/>
+			))}
+			{hasMore ? <div ref={sentinelRef} className="h-px" /> : null}
+		</div>
+	);
 }
 
 export function SessionList({
@@ -141,6 +174,8 @@ export function SessionList({
 	onClearFilters: () => void;
 }) {
 	const t = useT();
+	const ungroupedWindow = useProgressiveLimit(filtered.length, 80, 80);
+	const groupWindow = useProgressiveLimit(groups?.length ?? 0, 40, 40);
 
 	if (loading) {
 		return (
@@ -171,11 +206,12 @@ export function SessionList({
 	}
 
 	if (!groups) {
+		const visibleRows = filtered.slice(0, ungroupedWindow.limit);
 		return (
 			<>
 				<SessionListHeader />
-				<div className="mt-3 divide-y rounded-lg border bg-card px-3">
-					{filtered.map((session) => (
+				<div className="mt-3 divide-y overflow-hidden rounded-lg border bg-card">
+					{visibleRows.map((session) => (
 						<SessionRow
 							key={session.key}
 							session={session}
@@ -184,15 +220,19 @@ export function SessionList({
 						/>
 					))}
 				</div>
+				{ungroupedWindow.hasMore ? (
+					<div ref={ungroupedWindow.sentinelRef} className="h-px" />
+				) : null}
 			</>
 		);
 	}
 
+	const visibleGroups = groups.slice(0, groupWindow.limit);
 	return (
 		<>
 			<SessionListHeader />
 			<div className="mt-3">
-				{groups.map(([cwd, rows]) => {
+				{visibleGroups.map(([cwd, rows]) => {
 					const open = forceExpand || expandedGroups.has(cwd);
 					const cost = rows.reduce(
 						(sum, session) => sum + session.totals.costUsd,
@@ -238,23 +278,19 @@ export function SessionList({
 									<span>{formatCost(cost, true)}</span>
 								</span>
 							</button>
-							<div className="collapse-grid" data-open={open}>
-								<div>
-									<div className="divide-y">
-										{rows.map((session) => (
-											<SessionRow
-												key={session.key}
-												session={session}
-												snippet={snippets[session.key]}
-												terms={terms}
-											/>
-										))}
-									</div>
-								</div>
-							</div>
+							{open ? (
+								<ExpandedGroupRows
+									rows={rows}
+									snippets={snippets}
+									terms={terms}
+								/>
+							) : null}
 						</div>
 					);
 				})}
+				{groupWindow.hasMore ? (
+					<div ref={groupWindow.sentinelRef} className="h-px" />
+				) : null}
 			</div>
 		</>
 	);

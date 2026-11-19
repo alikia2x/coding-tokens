@@ -9,7 +9,12 @@ import type { TranscriptItem, TranscriptSession } from "../transcripts/shared";
 export const MAX_STEP_GAP_MS = 10 * 60 * 1000;
 export const MAX_TOOL_DURATION_MS = 30 * 60 * 1000;
 export const MAX_TTFT_MS = 5 * 60 * 1000;
-export const MIN_MODEL_DURATION_FOR_TPS_MS = 100;
+export const MIN_RELIABLE_TTFT_MS = 150;
+export const MIN_MODEL_DURATION_FOR_TPS_MS = 500;
+
+// Only harnesses whose transcript items record real streaming/output timestamps
+// (rather than pre-LLM message-row creation times) can yield meaningful TTFT.
+const RELIABLE_TTFT_HARNESSES = new Set(["codex", "claude", "dsh"]);
 
 export function turnForRecord(
 	record: UsageRecord,
@@ -138,9 +143,10 @@ function computeTurnActiveDuration(timestamps: readonly number[]): number {
 }
 
 function computeTurnTtft(
+	harness: string,
 	turnItems: readonly TranscriptItem[],
-	turnRecords: readonly UsageRecord[],
 ): number | null {
+	if (!RELIABLE_TTFT_HARNESSES.has(harness)) return null;
 	const firstUser = turnItems.find(
 		(item) =>
 			item.role === "user" &&
@@ -158,20 +164,10 @@ function computeTurnTtft(
 			item.order > firstUser.order &&
 			item.timestamp !== null &&
 			Number.isFinite(item.timestamp) &&
-			item.timestamp > userTs &&
+			item.timestamp - userTs >= MIN_RELIABLE_TTFT_MS &&
 			item.timestamp - userTs <= MAX_TTFT_MS
 		) {
 			candidateTimestamps.push(item.timestamp);
-		}
-	}
-	for (const record of turnRecords) {
-		if (
-			record.timestamp !== null &&
-			Number.isFinite(record.timestamp) &&
-			record.timestamp > userTs &&
-			record.timestamp - userTs <= MAX_TTFT_MS
-		) {
-			candidateTimestamps.push(record.timestamp);
 		}
 	}
 
@@ -260,7 +256,7 @@ export function computeSessionGenerationMetrics(
 				? Math.max(0, durationMs - (toolDurationMs ?? 0))
 				: null;
 
-		const ttftMs = computeTurnTtft(turnItems, turnRecords);
+		const ttftMs = computeTurnTtft(session.harness, turnItems);
 
 		const tokensPerSecond =
 			modelDurationMs !== null &&

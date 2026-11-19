@@ -1,5 +1,7 @@
+import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
+	copyFileSync,
 	existsSync,
 	mkdirSync,
 	readFileSync,
@@ -9,7 +11,8 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { handleApi } from "../../server/api";
-import { store } from "../../server/data/store";
+import { renderBatchSessionEntries } from "../../server/data/session-export";
+import { DataStore, store } from "../../server/data/store";
 import { startServer } from "../../server/start";
 
 describe("Server REST API Integration Suite", () => {
@@ -236,17 +239,42 @@ describe("Server REST API Integration Suite", () => {
 		test("API-T1-07: PUT /api/settings updates settings and persists changes", async () => {
 			const putRes = await dispatchApi("/api/settings", {
 				method: "PUT",
-				body: { locale: "ja", theme: "dark" },
+				body: {
+					locale: "ja",
+					theme: "dark",
+					batchExportDetailLevel: "chat_tools",
+					batchExportOrganization: "custom",
+					batchExportPathTemplate: "{harness}/{date}/{title}.md",
+					batchExportIncludeTimestamps: false,
+					batchExportIncludeTokenStats: false,
+					batchExportAsZip: true,
+				},
 			});
 			expect(putRes.status).toBe(200);
 			const updated = await putRes.json();
 			expect(updated.locale).toBe("ja");
 			expect(updated.theme).toBe("dark");
+			expect(updated.batchExportDetailLevel).toBe("chat_tools");
+			expect(updated.batchExportOrganization).toBe("custom");
+			expect(updated.batchExportPathTemplate).toBe(
+				"{harness}/{date}/{title}.md",
+			);
+			expect(updated.batchExportIncludeTimestamps).toBe(false);
+			expect(updated.batchExportIncludeTokenStats).toBe(false);
+			expect(updated.batchExportAsZip).toBe(true);
 
 			const getRes = await dispatchApi("/api/settings");
 			const fetched = await getRes.json();
 			expect(fetched.locale).toBe("ja");
 			expect(fetched.theme).toBe("dark");
+			expect(fetched.batchExportDetailLevel).toBe("chat_tools");
+			expect(fetched.batchExportOrganization).toBe("custom");
+			expect(fetched.batchExportPathTemplate).toBe(
+				"{harness}/{date}/{title}.md",
+			);
+			expect(fetched.batchExportIncludeTimestamps).toBe(false);
+			expect(fetched.batchExportIncludeTokenStats).toBe(false);
+			expect(fetched.batchExportAsZip).toBe(true);
 		});
 
 		test("API-T1-08: GET /api/status returns indexing status payload", async () => {
@@ -338,7 +366,7 @@ describe("Server REST API Integration Suite", () => {
 
 		test("API-T1-15: POST /api/sessions/export batch exports matching sessions and _index.md", async () => {
 			const batchDir = path.join(suiteTmp, "batch-exports");
-			const res = await dispatchApi("/api/sessions/export", {
+			const folderRes = await dispatchApi("/api/sessions/export", {
 				method: "POST",
 				body: {
 					keys: ["codex:codex-sess-1"],
@@ -348,14 +376,33 @@ describe("Server REST API Integration Suite", () => {
 					directory: batchDir,
 				},
 			});
+			expect(folderRes.status).toBe(200);
+			const folderData = await folderRes.json();
+			expect(folderData.filesWritten).toBe(1);
+			expect(folderData.skippedCount).toBe(0);
+			expect(existsSync(folderData.outputPath)).toBe(true);
+
+			const res = await dispatchApi("/api/sessions/export", {
+				method: "POST",
+				body: {
+					keys: ["codex:codex-sess-1"],
+					level: "chat",
+					includeTimestamps: true,
+					includeTokenStats: true,
+					directory: batchDir,
+					asZip: true,
+				},
+			});
 			expect(res.status).toBe(200);
 			const data = await res.json();
 			expect(data.directory).toBe(batchDir);
 			expect(data.filesWritten).toBe(1);
 			expect(data.skippedCount).toBe(0);
-			expect(existsSync(data.indexPath)).toBe(true);
-			const indexText = readFileSync(data.indexPath, "utf8");
-			expect(indexText).toContain("# Conversations");
+			expect(data.filename.endsWith(".zip")).toBe(true);
+			expect(existsSync(data.zipPath)).toBe(true);
+			const zipBytes = readFileSync(data.zipPath);
+			expect(zipBytes[0]).toBe(0x50); // 'P'
+			expect(zipBytes[1]).toBe(0x4b); // 'K'
 		});
 	});
 
@@ -438,6 +485,176 @@ describe("Server REST API Integration Suite", () => {
 			expect(res.status).toBe(200);
 			const data = await res.json();
 			expect(data.ready).toBe(true);
+		});
+
+		test("DataStore recovers unchanged harnesses missing from partial session_catalog", async () => {
+			const partialDbPath = path.join(suiteTmp, "partial-catalog.db");
+			copyFileSync(dbPath, partialDbPath);
+			const rawDb = new Database(partialDbPath);
+			try {
+				rawDb.exec("DELETE FROM session_catalog WHERE harness = 'codex'");
+				rawDb.exec(`
+					INSERT OR REPLACE INTO usage_records (
+						harness, session_id, message_id, turn_id, is_subagent, cwd, model,
+						timestamp, input_tokens, output_tokens, cache_read_tokens,
+						cache_write_tokens, reasoning_tokens, cost_usd, cost_estimated
+					) VALUES (
+						'dsh', 'dsh-existing', 'm-dsh-1', NULL, 0, '/workspace/sample-project',
+						'claude-3-5-sonnet', 1773568800000, 100, 50, 0, 0, 0, 0.01, 0
+					);
+					INSERT OR REPLACE INTO session_catalog (
+						harness, session_id, title, cwd, started_at, is_subagent,
+						is_review, has_transcript, source_kind, source_path
+					) VALUES (
+						'dsh', 'dsh-existing', 'Existing DSH Session', '/workspace/sample-project',
+						1773568800000, 0, 0, 0, NULL, NULL
+					);
+				`);
+			} finally {
+				rawDb.close();
+			}
+
+			const partialStore = new DataStore();
+			partialStore.configure({ dbPath: partialDbPath });
+			await partialStore.start();
+
+			const summaries = partialStore.sessionSummaries({
+				from: null,
+				until: null,
+			});
+			const harnesses = new Set(summaries.map((item) => item.harness));
+			expect(harnesses.has("codex")).toBe(true);
+			expect(partialStore.catalogEntries().has("codex:codex-sess-1")).toBe(
+				true,
+			);
+
+			const persistedDb = new Database(partialDbPath, { readonly: true });
+			try {
+				const codexRows = persistedDb
+					.query(
+						"SELECT COUNT(*) as cnt FROM session_catalog WHERE harness = 'codex'",
+					)
+					.get() as { cnt: number };
+				expect(codexRows.cnt).toBeGreaterThan(0);
+			} finally {
+				persistedDb.close();
+			}
+		});
+
+		test("Batch export aborts immediately when signal cancels isolated worker", async () => {
+			const controller = new AbortController();
+			const promise = renderBatchSessionEntries({
+				keys: ["codex:codex-sess-1"],
+				detail: "chat",
+				signal: controller.signal,
+			});
+			controller.abort();
+			await expect(promise).rejects.toThrow();
+		});
+
+		test("Pricing API: GET/PUT settings, live custom rule repricing, lossless delete, and invalid URL rejection", async () => {
+			// 1. Inspect initial pricing payload
+			const initialRes = await dispatchApi("/api/pricing");
+			expect(initialRes.status).toBe(200);
+			const initialPricing = await initialRes.json();
+			expect(initialPricing).toHaveProperty("status");
+			expect(initialPricing).toHaveProperty("settings");
+			expect(initialPricing.settings.endpoint).toBe(
+				"https://models.dev/api.json",
+			);
+
+			// 2. Reject invalid URL
+			const invalidRes = await dispatchApi("/api/pricing/settings", {
+				method: "PUT",
+				body: { endpoint: "ftp://invalid.example/prices.json" },
+			});
+			expect(invalidRes.status).toBe(400);
+
+			// 3. Valid settings update (offline mode)
+			const settingsRes = await dispatchApi("/api/pricing/settings", {
+				method: "PUT",
+				body: { autoFetch: false, cacheTtlHours: 12 },
+			});
+			expect(settingsRes.status).toBe(200);
+			const updatedSettings = await settingsRes.json();
+			expect(updatedSettings.settings.autoFetch).toBe(false);
+			expect(updatedSettings.settings.cacheTtlHours).toBe(12);
+
+			// 4. Inspect model report before custom rule
+			const modelsBeforeRes = await dispatchApi("/api/models");
+			expect(modelsBeforeRes.status).toBe(200);
+			const modelsBefore = await modelsBeforeRes.json();
+			expect(modelsBefore.rows.length).toBeGreaterThan(0);
+			const targetModel = modelsBefore.rows[0].model as string;
+			expect(modelsBefore.rows[0]).toHaveProperty("pricing");
+			const originalCost = modelsBefore.rows[0].totals.costUsd as number;
+
+			// 5. Upsert custom rule with overrideRecorded: true
+			const ruleRes = await dispatchApi("/api/pricing/rules", {
+				method: "PUT",
+				body: {
+					rule: {
+						model: targetModel,
+						mode: "rates",
+						rates: {
+							input: 1000,
+							output: 2000,
+							cacheRead: 500,
+							cacheWrite: 1000,
+							reasoning: 2000,
+						},
+						overrideRecorded: true,
+					},
+				},
+			});
+			expect(ruleRes.status).toBe(200);
+			const rulePayload = await ruleRes.json();
+			expect(rulePayload.status.summary.customModels).toBeGreaterThanOrEqual(1);
+
+			// 6. Verify /api/models reflects custom rates immediately
+			const modelsAfterRes = await dispatchApi("/api/models");
+			const modelsAfter = await modelsAfterRes.json();
+			const updatedRow = modelsAfter.rows.find(
+				(r: { model: string }) => r.model === targetModel,
+			);
+			expect(updatedRow).toBeDefined();
+			expect(updatedRow.pricing.source).toBe("custom");
+			expect(updatedRow.totals.costUsd).not.toBe(originalCost);
+			expect(updatedRow.totals.costUsd).toBeGreaterThan(0);
+
+			// 7. Delete custom rule and confirm original cost is losslessly restored
+			const delRes = await dispatchApi(
+				`/api/pricing/rules/${encodeURIComponent(targetModel)}`,
+				{ method: "DELETE" },
+			);
+			expect(delRes.status).toBe(200);
+			const modelsRestoredRes = await dispatchApi("/api/models");
+			const modelsRestored = await modelsRestoredRes.json();
+			const restoredRow = modelsRestored.rows.find(
+				(r: { model: string }) => r.model === targetModel,
+			);
+			expect(restoredRow.totals.costUsd).toBeCloseTo(originalCost, 6);
+
+			// 8. Catalog search endpoint works cleanly
+			const catalogRes = await dispatchApi("/api/pricing/catalog?q=&limit=10");
+			expect(catalogRes.status).toBe(200);
+			const catalogBody = await catalogRes.json();
+			expect(Array.isArray(catalogBody.items)).toBe(true);
+		});
+
+		test("Cache-first cold hydrate and isolated index-worker sync cleanly", async () => {
+			const workerDbPath = path.join(suiteTmp, "worker-hydrate.db");
+			copyFileSync(dbPath, workerDbPath);
+
+			const coldStore = new DataStore();
+			coldStore.configure({ dbPath: workerDbPath, useIndexWorker: true });
+			await coldStore.start();
+
+			expect(coldStore.isReady).toBe(true);
+			expect(coldStore.allRecords().length).toBeGreaterThan(0);
+			expect(
+				coldStore.sessionSummaries({ from: null, until: null }).length,
+			).toBeGreaterThan(0);
 		});
 	});
 });

@@ -576,11 +576,12 @@ export function ExplorePage() {
 										<Area
 											key={item.key}
 											type="linear"
+											stackId="explore"
 											dataKey={item.key}
 											name={item.label}
 											stroke={item.color ?? categoricalColors[0]}
 											fill={item.color ?? categoricalColors[0]}
-											fillOpacity={0.12}
+											fillOpacity={0.35}
 											strokeWidth={1.6}
 											isAnimationActive={false}
 										/>

@@ -367,6 +367,7 @@ const HARNESS_MESSAGE_RULES: Partial<Record<HarnessName, HarnessMessageRule>> =
 		dsh: {
 			injectedPatterns: [
 				/^\s*Current runtime context\. This snapshot supersedes earlier runtime-context snapshots\./iu,
+				/^\s*Time sampled while preparing turn \d+/iu,
 			],
 		},
 	};
@@ -398,6 +399,87 @@ export function cleanUserMessage(harness: HarnessName, value: string): string {
 		return "";
 	}
 	return cleaned;
+}
+
+/**
+ * Selects which transcript items belong to each detail level, shared across UI
+ * viewing and Markdown export so every harness behaves consistently.
+ */
+export function selectItemsForDetail(
+	session: TranscriptSession,
+	detail: ExportDetail,
+): TranscriptItem[] {
+	const items = session.items.filter(
+		(item) =>
+			(item.role !== "user" ||
+				!isInjectedUserMessage(session.harness, item.text ?? "")) &&
+			(item.kind !== "other" || Boolean(item.text?.trim())),
+	);
+
+	if (detail === "user_only") {
+		return items.filter(
+			(item) => item.kind === "message" && item.role === "user",
+		);
+	}
+
+	if (detail === "chat_compact") {
+		const byTurn = new Map<string, TranscriptItem[]>();
+		for (const item of items) {
+			if (item.kind !== "message" || item.role !== "assistant") continue;
+			const list = byTurn.get(item.turnId) ?? [];
+			list.push(item);
+			byTurn.set(item.turnId, list);
+		}
+		const keepAssistant = new Set<TranscriptItem>();
+		for (const assistants of byTurn.values()) {
+			const explicitFinals = assistants.filter((a) => a.phase === "final");
+			if (explicitFinals.length > 0) {
+				for (const item of explicitFinals) keepAssistant.add(item);
+				continue;
+			}
+			// Harnesses without explicit `phase: "final"` markers still owe the user
+			// the turn's closing assistant reply rather than dropping all replies.
+			const lastUnknown = [...assistants]
+				.reverse()
+				.find((a) => a.phase === "unknown");
+			const fallback = lastUnknown ?? assistants.at(-1);
+			if (fallback) keepAssistant.add(fallback);
+		}
+		return items.filter(
+			(item) =>
+				item.kind === "message" &&
+				(item.role === "user" || keepAssistant.has(item)),
+		);
+	}
+
+	if (detail === "chat") {
+		return items.filter(
+			(item) =>
+				item.kind === "message" &&
+				(item.role === "user" || item.role === "assistant"),
+		);
+	}
+
+	if (detail === "chat_tools") {
+		return items.filter(
+			(item) =>
+				(item.kind === "message" &&
+					(item.role === "user" || item.role === "assistant")) ||
+				item.kind === "tool_call",
+		);
+	}
+
+	if (detail === "agent") {
+		return items.filter(
+			(item) =>
+				(item.kind === "message" &&
+					(item.role === "user" || item.role === "assistant")) ||
+				item.kind === "tool_call" ||
+				item.kind === "tool_result",
+		);
+	}
+
+	return items;
 }
 
 export function categoryForTool(name: string): ToolCategory {

@@ -9,7 +9,6 @@ import { HarnessDot } from "~/components/harness-badge";
 import { PageContainer } from "~/components/page-container";
 import { SectionHeading } from "~/components/section-heading";
 import { SummaryStrip } from "~/components/summary-strip";
-import { Badge } from "~/components/ui/badge";
 import { Input } from "~/components/ui/input";
 import { Skeleton } from "~/components/ui/skeleton";
 import {
@@ -136,9 +135,8 @@ export function HarnessesPage() {
 				/>
 			) : (
 				<div className="mt-3 rounded-lg border bg-card">
-					<div className="grid grid-cols-[minmax(140px,1.2fr)_90px_80px_80px_90px_90px_24px] gap-2 border-b px-4 py-2 text-[10px] text-muted-foreground max-lg:hidden">
+					<div className="grid grid-cols-[minmax(160px,1.4fr)_80px_80px_90px_90px_24px] gap-2 border-b px-4 py-2 text-[10px] text-muted-foreground max-lg:hidden">
 						<span>{t("common.harness")}</span>
-						<span>{t("common.status")}</span>
 						<span className="text-right">{t("common.sessions")}</span>
 						<span className="text-right">{t("metric.requests")}</span>
 						<span className="text-right">{t("metric.tokens")}</span>
@@ -180,7 +178,7 @@ function HarnessRow({
 				type="button"
 				onClick={onToggle}
 				aria-expanded={open}
-				className="grid w-full grid-cols-[minmax(140px,1.2fr)_90px_80px_80px_90px_90px_24px] items-center gap-2 px-4 py-3 text-left transition-colors hover:bg-hover max-lg:grid-cols-[minmax(0,1fr)_auto]"
+				className="grid w-full grid-cols-[minmax(160px,1.4fr)_80px_80px_90px_90px_24px] items-center gap-2 px-4 py-3 text-left transition-colors hover:bg-hover max-lg:grid-cols-[minmax(0,1fr)_auto]"
 			>
 				<span className="flex min-w-0 flex-col">
 					<span className="flex items-center gap-2">
@@ -197,17 +195,6 @@ function HarnessRow({
 							{row.paths[0]}
 						</span>
 					) : null}
-				</span>
-				<span className="max-lg:hidden">
-					<Badge
-						variant="outline"
-						className={cn(
-							"rounded text-[9px]",
-							row.available && "border-success/30 text-success",
-						)}
-					>
-						{row.available ? t("harnesses.available") : t("harnesses.notFound")}
-					</Badge>
 				</span>
 				<span className="text-right text-[11px] tabular max-lg:hidden">
 					{formatNumber(row.totals.sessions)}
@@ -282,13 +269,13 @@ function HarnessRow({
 									<Link
 										key={model.model}
 										to={`/sessions?${rangeQuery}&harness=${row.harness}&model=${encodeURIComponent(model.model)}`}
-										className="flex items-center justify-between gap-3 py-1.5 text-[11px] hover:underline"
+										className="grid grid-cols-[minmax(0,1fr)_80px_84px] items-center gap-3 py-1.5 text-[11px] hover:underline"
 									>
 										<span className="truncate">{model.model}</span>
-										<span className="shrink-0 text-muted-foreground tabular">
+										<span className="text-right text-muted-foreground tabular">
 											{formatTokens(model.tokens)}
 										</span>
-										<span className="w-20 shrink-0 text-right tabular">
+										<span className="text-right tabular">
 											{formatCost(model.costUsd, true)}
 										</span>
 									</Link>

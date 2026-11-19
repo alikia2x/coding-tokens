@@ -178,15 +178,19 @@ export function SessionUsagePanel({
 									<div className="mt-3">
 										<div className="flex items-baseline justify-between text-[10px] text-muted-foreground">
 											<span>{t("metric.timeSplit")}</span>
-											<span className="tabular">
-												{t("metric.modelTime")}{" "}
-												{formatPercent(
-													(metrics.modelDurationMs ?? 0) / splitTotalMs,
-												)}{" "}
-												· {t("metric.toolTime")}{" "}
-												{formatPercent(
-													(metrics.toolDurationMs ?? 0) / splitTotalMs,
-												)}
+											<span className="flex items-center gap-2 tabular">
+												<span>
+													{t("metric.modelTime")}{" "}
+													{formatPercent(
+														(metrics.modelDurationMs ?? 0) / splitTotalMs,
+													)}
+												</span>
+												<span>
+													{t("metric.toolTime")}{" "}
+													{formatPercent(
+														(metrics.toolDurationMs ?? 0) / splitTotalMs,
+													)}
+												</span>
 											</span>
 										</div>
 										<div className="mt-1.5 flex h-2 overflow-hidden rounded-[2px] bg-muted">

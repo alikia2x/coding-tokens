@@ -426,9 +426,9 @@ export function TimeRangePicker() {
 								{validation ? (
 									<p className="text-destructive">{validation}</p>
 								) : (
-									<p className="truncate">
-										{timeZone}
-										{duration ? ` · ${duration}` : ""}
+									<p className="flex items-center gap-2 truncate">
+										<span>{timeZone}</span>
+										{duration ? <span>{duration}</span> : null}
 									</p>
 								)}
 							</div>

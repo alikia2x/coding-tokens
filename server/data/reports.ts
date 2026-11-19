@@ -262,6 +262,7 @@ export function modelReportPayload(filters: RecordFilters): ModelReportPayload {
 					filters.from ?? null,
 					filters.until ?? null,
 				),
+				pricing: store.modelPricingMeta(model, groupRecords),
 			};
 		},
 	);

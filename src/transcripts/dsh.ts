@@ -12,6 +12,7 @@ import {
 import {
 	addItem,
 	addToolCall,
+	cleanUserMessage,
 	contentBlocks,
 	idString,
 	newSession,
@@ -186,13 +187,8 @@ export function readDshTranscripts(
 						fallbackTurn += 1;
 						const text = textFromContent(data.content);
 						if (!text) continue;
-						const cleaned = text.trim();
-						if (
-							/^\s*Current runtime context\. This snapshot supersedes earlier runtime-context snapshots\./iu.test(
-								cleaned,
-							)
-						)
-							continue;
+						const cleaned = cleanUserMessage("dsh", text);
+						if (!cleaned) continue;
 						addItem(session, {
 							id: textOrNull(data.id) ?? `user-${session.items.length}`,
 							turnId: idString(data.turn) ?? String(fallbackTurn),

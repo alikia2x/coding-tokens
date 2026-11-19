@@ -2,7 +2,14 @@ import { matchesSessionQuery, parseSearchQuery } from "@shared/search";
 import type { HarnessName, SessionSummary } from "@shared/types";
 import { HARNESS_LABELS } from "@shared/types";
 import { Download, Search, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+	useCallback,
+	useDeferredValue,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { useSearchParams } from "react-router";
 import type { FacetOption } from "~/components/facet-filter";
 import { PageContainer } from "~/components/page-container";
@@ -29,6 +36,8 @@ import { useRangeLabel } from "~/lib/range";
 import { useSettings } from "~/lib/settings";
 
 type SortKey = "recent" | "cost" | "tokens" | "requests" | "title";
+
+const EMPTY_SNIPPETS: Record<string, string> = {};
 
 const sortLabels: Record<SortKey, TranslationKey> = {
 	recent: "sessions.sortRecent",
@@ -101,17 +110,31 @@ export function SessionsPage() {
 		return new Set(bodySearch.data.keys);
 	}, [hasFreshBodySearch, bodySearch.data]);
 	const bodySnippets =
-		hasFreshBodySearch && bodySearch.data ? bodySearch.data.snippets : {};
+		hasFreshBodySearch && bodySearch.data
+			? bodySearch.data.snippets
+			: EMPTY_SNIPPETS;
 
 	const all = sessions.data?.sessions ?? [];
-	const filtered = useMemo(() => {
-		const rows = all.filter((session) => {
-			if (harness && session.harness !== harness) return false;
-			if (projects.length && (!session.cwd || !projects.includes(session.cwd)))
+	const projectSet = useMemo(() => new Set(projects), [projects]);
+	const modelSet = useMemo(() => new Set(models), [models]);
+
+	const matchesFilters = useCallback(
+		(
+			session: SessionSummary,
+			omit?: "harness" | "project" | "model",
+		): boolean => {
+			if (omit !== "harness" && harness && session.harness !== harness)
 				return false;
 			if (
-				models.length &&
-				!session.models.some((model) => models.includes(model))
+				omit !== "project" &&
+				projectSet.size &&
+				(!session.cwd || !projectSet.has(session.cwd))
+			)
+				return false;
+			if (
+				omit !== "model" &&
+				modelSet.size &&
+				!session.models.some((model) => modelSet.has(model))
 			)
 				return false;
 			if (!includeInternal && (session.isSubagent || session.isReview))
@@ -133,38 +156,36 @@ export function SessionsPage() {
 				},
 				parsed,
 			);
-		});
-		return sortSessions(rows, sort);
-	}, [
-		all,
-		harness,
-		projects,
-		models,
-		includeInternal,
-		showEmpty,
-		committedQuery,
-		bodyMatchKeys,
-		parsed,
-		sort,
-	]);
+		},
+		[
+			harness,
+			projectSet,
+			modelSet,
+			includeInternal,
+			showEmpty,
+			committedQuery,
+			bodyMatchKeys,
+			parsed,
+		],
+	);
 
-	const baseSessions = useMemo(
-		() =>
-			all.filter(
-				(session) =>
-					(includeInternal || (!session.isSubagent && !session.isReview)) &&
-					(showEmpty || session.totals.requests > 0),
-			),
-		[all, includeInternal, showEmpty],
+	const filtered = useMemo(() => {
+		const rows = all.filter((session) => matchesFilters(session));
+		return sortSessions(rows, sort);
+	}, [all, matchesFilters, sort]);
+
+	const harnessBaseSessions = useMemo(
+		() => all.filter((session) => matchesFilters(session, "harness")),
+		[all, matchesFilters],
 	);
 
 	const counts = useMemo(() => {
 		const map = new Map<HarnessName, number>();
-		for (const session of baseSessions) {
+		for (const session of harnessBaseSessions) {
 			map.set(session.harness, (map.get(session.harness) ?? 0) + 1);
 		}
 		return map;
-	}, [baseSessions]);
+	}, [harnessBaseSessions]);
 
 	const groups = useMemo(() => {
 		if (!grouped) return null;
@@ -181,9 +202,23 @@ export function SessionsPage() {
 		);
 	}, [filtered, grouped]);
 
+	const deferredFiltered = useDeferredValue(filtered);
+	const deferredGroups = useDeferredValue(groups);
+	const exportSessionKeys = useMemo(
+		() => (exportDialogOpen ? filtered.map((session) => session.key) : []),
+		[exportDialogOpen, filtered],
+	);
+
 	const projectOptions = useMemo<FacetOption[]>(() => {
+		const labels = new Map<string, string>();
+		for (const session of all) {
+			if (session.cwd && !labels.has(session.cwd)) {
+				labels.set(session.cwd, session.projectName);
+			}
+		}
 		const map = new Map<string, FacetOption>();
-		for (const session of baseSessions) {
+		for (const session of all) {
+			if (!matchesFilters(session, "project")) continue;
 			if (!session.cwd) continue;
 			const current = map.get(session.cwd);
 			if (current) current.count += 1;
@@ -195,20 +230,41 @@ export function SessionsPage() {
 				});
 			}
 		}
+		for (const selectedCwd of projects) {
+			if (!map.has(selectedCwd)) {
+				map.set(selectedCwd, {
+					value: selectedCwd,
+					label:
+						labels.get(selectedCwd) ??
+						(selectedCwd.split("/").at(-1) || selectedCwd),
+					count: 0,
+				});
+			}
+		}
 		return [...map.values()].sort((left, right) => right.count - left.count);
-	}, [baseSessions]);
+	}, [all, matchesFilters, projects]);
 
 	const modelOptions = useMemo<FacetOption[]>(() => {
 		const map = new Map<string, FacetOption>();
-		for (const session of baseSessions) {
+		for (const session of all) {
+			if (!matchesFilters(session, "model")) continue;
 			for (const model of session.models) {
 				const current = map.get(model);
 				if (current) current.count += 1;
 				else map.set(model, { value: model, label: model, count: 1 });
 			}
 		}
+		for (const selectedModel of models) {
+			if (!map.has(selectedModel)) {
+				map.set(selectedModel, {
+					value: selectedModel,
+					label: selectedModel,
+					count: 0,
+				});
+			}
+		}
 		return [...map.values()].sort((left, right) => right.count - left.count);
-	}, [baseSessions]);
+	}, [all, matchesFilters, models]);
 
 	const hasFilters = Boolean(
 		harness ||
@@ -288,7 +344,7 @@ export function SessionsPage() {
 					showEmpty={showEmpty}
 					hasFilters={hasFilters}
 					totalFiltered={filtered.length}
-					totalBase={baseSessions.length}
+					totalBase={harnessBaseSessions.length}
 					counts={counts}
 					projectOptions={projectOptions}
 					modelOptions={modelOptions}
@@ -418,8 +474,8 @@ export function SessionsPage() {
 
 					<SessionList
 						loading={sessions.isLoading && !sessions.data}
-						filtered={filtered}
-						groups={groups}
+						filtered={deferredFiltered}
+						groups={deferredGroups}
 						expandedGroups={expandedGroups}
 						forceExpand={Boolean(committedQuery.trim())}
 						snippets={bodySnippets}
@@ -433,7 +489,7 @@ export function SessionsPage() {
 
 			<BatchExportDialog
 				open={exportDialogOpen}
-				sessionKeys={filtered.map((session) => session.key)}
+				sessionKeys={exportSessionKeys}
 				defaultDetailLevel={settings.defaultDetailLevel}
 				onOpenChange={setExportDialogOpen}
 			/>

@@ -59,9 +59,7 @@ export function SessionsSidebar({
 			return status.harnesses
 				.filter(
 					(info) =>
-						(counts.get(info.harness) ?? info.sessions) > 0 ||
-						info.records > 0 ||
-						harness === info.harness,
+						(counts.get(info.harness) ?? 0) > 0 || harness === info.harness,
 				)
 				.map((info) => ({
 					name: info.harness,

@@ -750,6 +750,19 @@ describe("Services: DefaultStorageService (Feature 7)", () => {
 			);
 			PRAGMA user_version = 1;
 		`);
+		legacyDb.exec(`
+			INSERT INTO usage_records (
+				harness, session_id, message_id, turn_id, is_subagent, cwd, model,
+				timestamp, input_tokens, output_tokens, cache_read_tokens,
+				cache_write_tokens, reasoning_tokens, cost_usd, cost_estimated
+			) VALUES (
+				'codex', 'sess-v1', 'msg-1', NULL, 0, '/proj', 'gpt-4o',
+				1000, 100, 50, 0, 0, 0, 0.25, 0
+			), (
+				'codex', 'sess-v1', 'msg-2', NULL, 0, '/proj', 'gpt-4o',
+				1001, 100, 50, 0, 0, 0, 0.12, 1
+			);
+		`);
 		legacyDb.close();
 
 		const upgraded = openStoreDatabase(dbPath);
@@ -759,7 +772,13 @@ describe("Services: DefaultStorageService (Feature 7)", () => {
 			const version = upgraded
 				.query<{ user_version: number }, []>("PRAGMA user_version")
 				.get()?.user_version;
-			expect(version).toBe(3);
+			expect(version).toBe(5);
+			const loaded = readHarnessRecords(upgraded, "codex");
+			expect(loaded).toHaveLength(2);
+			expect(loaded[0]?.rawModel).toBe("gpt-4o");
+			expect(loaded[0]?.rawCostUsd).toBe(0.25);
+			expect(loaded[1]?.rawModel).toBe("gpt-4o");
+			expect(loaded[1]?.rawCostUsd).toBeNull();
 		} finally {
 			upgraded.close();
 		}

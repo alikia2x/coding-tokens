@@ -80,6 +80,8 @@ export interface UsageRecord {
 	isReview?: boolean;
 	cwd: string | null;
 	model: string;
+	/** Original model identifier from the harness log before display normalization. */
+	rawModel?: string | null;
 	/** Provider-qualified model id kept for price matching. Not persisted. */
 	pricingModel?: string | null;
 	timestamp: number | null;
@@ -91,6 +93,8 @@ export interface UsageRecord {
 	/** A breakdown of outputTokens, not an additional token count. */
 	reasoningTokens: number;
 	costUsd: number | null;
+	/** Original harness-recorded cost (null when missing/unrecorded or originally estimated). */
+	rawCostUsd?: number | null;
 	costEstimated: boolean;
 }
 
@@ -255,6 +259,110 @@ export interface ProjectReportPayload {
 	warnings: string[];
 }
 
+export interface TokenRates {
+	input: number;
+	output: number;
+	cacheRead: number | null;
+	cacheWrite: number | null;
+	reasoning: number | null;
+}
+
+export type ModelPricingSource =
+	| "custom"
+	| "custom_alias"
+	| "models_dev"
+	| "fallback"
+	| "recorded"
+	| "unpriced";
+
+export interface CustomModelPriceRule {
+	model: string;
+	mode: "rates" | "alias";
+	rates?: TokenRates;
+	aliasTarget?: string;
+	overrideRecorded: boolean;
+	note?: string;
+	updatedAt: number;
+}
+
+export interface PricingSettings {
+	autoFetch: boolean;
+	endpoint: string;
+	cacheTtlHours: number;
+	customRules: Record<string, CustomModelPriceRule>;
+}
+
+export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
+	autoFetch: true,
+	endpoint: "https://models.dev/api.json",
+	cacheTtlHours: 24,
+	customRules: {},
+};
+
+export interface PricingFetchAttempt {
+	timestamp: number;
+	trigger: "auto" | "manual";
+	endpoint: string;
+	status: "ok" | "error";
+	httpStatus: number | null;
+	durationMs: number;
+	modelCount: number | null;
+	providerCount: number | null;
+	error: string | null;
+}
+
+export interface PricingCatalogSummary {
+	activeModels: number;
+	customModels: number;
+	catalogModels: number;
+	recordedOnlyModels: number;
+	fallbackModels: number;
+	unpricedModels: number;
+	unpricedRequests: number;
+}
+
+export interface PricingCatalogStatus {
+	state: "fresh" | "stale" | "missing" | "fetching" | "offline";
+	endpoint: string;
+	cachePath: string;
+	autoFetch: boolean;
+	cacheTtlHours: number;
+	fetchedAt: number | null;
+	expiresAt: number | null;
+	modelCount: number;
+	providerCount: number;
+	lastError: string | null;
+	fetching: boolean;
+	history: PricingFetchAttempt[];
+	summary: PricingCatalogSummary;
+}
+
+export interface PricingPayload {
+	status: PricingCatalogStatus;
+	settings: PricingSettings;
+}
+
+export interface PricingCatalogSearchItem {
+	key: string;
+	provider: string;
+	id: string;
+	name: string;
+	rates: TokenRates | null;
+}
+
+export interface ModelPricingMeta {
+	source: ModelPricingSource;
+	matchedCatalogId: string | null;
+	matchedCatalogName: string | null;
+	effectiveRates: TokenRates | null;
+	catalogRates: TokenRates | null;
+	customRule: CustomModelPriceRule | null;
+	rawModelIds: string[];
+	recordedRequests: number;
+	estimatedRequests: number;
+	unpricedRequests: number;
+}
+
 export interface ModelReportRow {
 	model: string;
 	provider: string | null;
@@ -264,6 +372,7 @@ export interface ModelReportRow {
 	costPerMillionTokens: number | null;
 	cacheReadShare: number | null;
 	sparkline: number[];
+	pricing?: ModelPricingMeta;
 }
 
 export interface ModelReportPayload {
@@ -313,9 +422,20 @@ export interface StatusPayload {
 	durationMs: number | null;
 	error: string | null;
 	desktopPlatform?: string;
+	canPickDirectory?: boolean;
 	totals: { sessions: number; records: number };
 	harnesses: HarnessInfo[];
 	warnings: string[];
+	pricingVersion?: number;
+	pricing?: {
+		state: PricingCatalogStatus["state"];
+		fetchedAt: number | null;
+		modelCount: number;
+		lastError: string | null;
+		fetching: boolean;
+		unpricedModels: number;
+		customRuleCount: number;
+	};
 }
 
 export type ToolVerb =
@@ -436,9 +556,19 @@ export interface SearchPayload {
 	harnesses: Array<{ harness: HarnessName; sessions: number; costUsd: number }>;
 }
 
+export type BatchExportOrganization =
+	| "flat"
+	| "harness"
+	| "date"
+	| "project"
+	| "custom";
+
 export interface BatchSessionExportResult {
 	directory: string;
-	indexPath: string;
+	outputPath: string;
+	zipPath?: string;
+	filename: string;
+	bytes: number;
 	filesWritten: number;
 	skippedCount: number;
 	warnings: string[];
@@ -526,6 +656,14 @@ export interface AppSettings {
 	exploreBreakdown: ExploreBreakdown;
 	exploreChart: "bar" | "line" | "area";
 	autoRefreshMinutes: number;
+	overviewModelsMetric: "cost" | "tokens";
+	overviewShareDimension: "project" | "harness";
+	batchExportDetailLevel?: SessionDetailLevel;
+	batchExportOrganization: BatchExportOrganization;
+	batchExportPathTemplate: string;
+	batchExportIncludeTimestamps: boolean;
+	batchExportIncludeTokenStats: boolean;
+	batchExportAsZip: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -541,4 +679,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
 	exploreBreakdown: "harness",
 	exploreChart: "line",
 	autoRefreshMinutes: 0,
+	overviewModelsMetric: "cost",
+	overviewShareDimension: "project",
+	batchExportOrganization: "flat",
+	batchExportPathTemplate: "{harness}/{date}/{title}-{id}.md",
+	batchExportIncludeTimestamps: true,
+	batchExportIncludeTokenStats: true,
+	batchExportAsZip: false,
 };

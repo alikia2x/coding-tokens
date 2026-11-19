@@ -22,8 +22,8 @@ import {
 	unwrapToolOutput,
 } from "../../src/tools/normalize";
 import {
-	isInjectedUserMessage,
 	readTranscriptSources,
+	selectItemsForDetail,
 	type TranscriptItem,
 	type TranscriptSession,
 } from "../../src/transcripts";
@@ -50,8 +50,6 @@ function limitsForLevel(level: SessionDetailLevel): DetailLimits {
 			};
 		case "agent":
 			return { message: 50_000, input: 8_000, output: 4_000 };
-		case "chat_tools":
-			return { message: 50_000, input: 2_000, output: 800 };
 		default:
 			return { message: 50_000, input: 0, output: 0 };
 	}
@@ -82,30 +80,6 @@ function payloadText(value: unknown): string | null {
 	} catch {
 		return String(value);
 	}
-}
-
-function includeItem(
-	harness: HarnessName,
-	item: TranscriptItem,
-	level: SessionDetailLevel,
-): boolean {
-	if (item.role === "user" && isInjectedUserMessage(harness, item.text ?? ""))
-		return false;
-	if (level === "agent_full") return true;
-	if (item.kind === "tool_call" || item.kind === "tool_result")
-		return level === "chat_tools" || level === "agent";
-	if (level === "user_only")
-		return item.kind === "message" && item.role === "user";
-	if (level === "chat_compact")
-		return (
-			item.kind === "message" &&
-			(item.role === "user" ||
-				(item.role === "assistant" && item.phase === "final"))
-		);
-	return (
-		item.kind === "message" &&
-		(item.role === "user" || item.role === "assistant")
-	);
 }
 
 function pairedResultsByCall(
@@ -391,48 +365,189 @@ export async function loadSessionTranscript(
 	};
 }
 
+export async function loadSessionTranscriptsBatch(
+	keys: readonly string[],
+	options: {
+		signal?: AbortSignal;
+		onProgress?: (loaded: number, total: number, title?: string) => void;
+	} = {},
+): Promise<Map<string, SessionTranscriptResult>> {
+	await store.ensureReady();
+	const results = new Map<string, SessionTranscriptResult>();
+	const byHarness = new Map<
+		HarnessName,
+		Array<{
+			key: string;
+			entry: NonNullable<ReturnType<typeof store.sessionEntry>>;
+			meta: NonNullable<ReturnType<typeof store.sessionEntry>>["meta"];
+		}>
+	>();
+
+	for (const key of keys) {
+		const entry = store.sessionEntry(key);
+		if (!entry) {
+			results.set(key, { ok: false, warnings: ["Session not found"] });
+			continue;
+		}
+		const meta = store.ensureSessionSource(entry);
+		const group = byHarness.get(meta.harness) ?? [];
+		group.push({ key, entry, meta });
+		byHarness.set(meta.harness, group);
+	}
+
+	let completed = results.size;
+	const total = keys.length;
+
+	for (const [harness, items] of byHarness) {
+		if (options.signal?.aborted) {
+			throw new DOMException("Export cancelled", "AbortError");
+		}
+		const provider = defaultHarnessRegistry.get(harness);
+		const targetFiles = new Set<string>();
+		const sessionIds = new Set(items.map((item) => item.meta.sessionId));
+		if (provider?.resolveSessionFilesBatch && sessionIds.size) {
+			const batched = provider.resolveSessionFilesBatch(
+				defaultPlatformPathService,
+				sessionIds,
+			);
+			for (const files of batched.values()) {
+				for (const filePath of files) targetFiles.add(filePath);
+			}
+		}
+		for (const item of items) {
+			if (
+				!provider?.resolveSessionFilesBatch &&
+				provider?.resolveSessionFiles
+			) {
+				for (const filePath of provider.resolveSessionFiles(
+					defaultPlatformPathService,
+					item.meta.sessionId,
+				)) {
+					targetFiles.add(filePath);
+				}
+			}
+			if (item.meta.source) {
+				targetFiles.add(item.meta.source.path);
+			}
+		}
+
+		const bySessionId = new Map<string, TranscriptSession>();
+		const harnessWarnings: string[] = [];
+
+		if (provider?.readTranscripts) {
+			try {
+				const batch = await provider.readTranscripts(
+					defaultPlatformPathService,
+					targetFiles.size ? targetFiles : undefined,
+				);
+				harnessWarnings.push(...batch.warnings);
+				for (const sess of batch.sessions) {
+					bySessionId.set(sess.sessionId, sess);
+				}
+			} catch {}
+		} else if (targetFiles.size) {
+			const res = readTranscriptSources([harness], {
+				[harness]: targetFiles,
+			})[0];
+			if (res) {
+				harnessWarnings.push(...res.warnings);
+				for (const sess of res.sessions) {
+					bySessionId.set(sess.sessionId, sess);
+				}
+			}
+		}
+
+		for (const item of items) {
+			if (options.signal?.aborted) {
+				throw new DOMException("Export cancelled", "AbortError");
+			}
+			let session = bySessionId.get(item.meta.sessionId);
+			if (!session && provider) {
+				try {
+					session =
+						(await provider.readTranscript(
+							defaultPlatformPathService,
+							item.meta.sessionId,
+						)) ?? undefined;
+				} catch {}
+			}
+			if (session) {
+				session.usageRecords = item.entry.records;
+				results.set(item.key, {
+					ok: true,
+					value: {
+						meta: item.meta,
+						records: item.entry.records,
+						session,
+						warnings: [],
+					},
+				});
+			} else {
+				const harnessLabel =
+					provider?.metadata.displayName ?? HARNESS_LABELS[harness] ?? harness;
+				results.set(item.key, {
+					ok: false,
+					warnings: [
+						...harnessWarnings,
+						`${harnessLabel}: transcript could not be read`,
+					],
+				});
+			}
+			completed += 1;
+			options.onProgress?.(completed, total, item.meta.title);
+		}
+		await new Promise((resolve) => setTimeout(resolve, 0));
+	}
+
+	return results;
+}
+
 export async function sessionDetailPayload(
 	key: string,
 	level: SessionDetailLevel,
 ): Promise<SessionDetailPayload> {
-	const loaded = await loadSessionTranscript(key);
-	if (!loaded.ok) return emptyPayload(key, level, loaded.warnings);
-	const { meta, records, session, warnings } = loaded.value;
-	const rawTurns = buildTurns(session, records);
-	const { turns, toolDurations, metrics } = computeSessionGenerationMetrics(
-		session,
-		records,
-		rawTurns,
-	);
-	const pairedResults = pairedResultsByCall(session.items);
-	const selected = session.items.filter((item) =>
-		includeItem(session.harness, item, level),
-	);
-	const items = selected
-		.map((item) =>
-			detailItem(
-				item,
-				level,
-				pairedResults.get(item),
-				toolDurations.get(item) ?? null,
-			),
-		)
-		.sort((left, right) => left.order - right.order);
-	return {
-		summary: {
-			...store.summarize(meta, records, { from: null, until: null }),
-			projectName: projectNameFor(meta.cwd),
-			title:
-				meta.title !== "Untitled session"
-					? meta.title
-					: (session.title ?? meta.title),
-		},
-		stats: sessionStats(session, records, turns, metrics),
-		level,
-		items,
-		turns,
-		totalItems: session.items.length,
-		truncated: items.some((item) => item.truncated),
-		warnings,
-	};
+	try {
+		const loaded = await loadSessionTranscript(key);
+		if (!loaded.ok) return emptyPayload(key, level, loaded.warnings);
+		const { meta, records, session, warnings } = loaded.value;
+		const rawTurns = buildTurns(session, records);
+		const { turns, toolDurations, metrics } = computeSessionGenerationMetrics(
+			session,
+			records,
+			rawTurns,
+		);
+		const pairedResults = pairedResultsByCall(session.items);
+		const selected = selectItemsForDetail(session, level);
+		const items = selected
+			.map((item) =>
+				detailItem(
+					item,
+					level,
+					pairedResults.get(item),
+					toolDurations.get(item) ?? null,
+				),
+			)
+			.sort((left, right) => left.order - right.order);
+		return {
+			summary: {
+				...store.summarize(meta, records, { from: null, until: null }),
+				projectName: projectNameFor(meta.cwd),
+				title:
+					meta.title !== "Untitled session"
+						? meta.title
+						: (session.title ?? meta.title),
+			},
+			stats: sessionStats(session, records, turns, metrics),
+			level,
+			items,
+			turns,
+			totalItems: session.items.length,
+			truncated: items.some((item) => item.truncated),
+			warnings,
+		};
+	} catch (error) {
+		return emptyPayload(key, level, [
+			`Failed to parse session detail: ${error instanceof Error ? error.message : String(error)}`,
+		]);
+	}
 }

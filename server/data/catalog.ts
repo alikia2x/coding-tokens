@@ -66,7 +66,14 @@ export function cleanSessionTitle(
 		text = cleanUserMessage(harness, text).trim();
 		if (!text) return "Untitled session";
 	}
-	text = text.replaceAll(/\s+/gu, " ").trim();
+	// Strip any truncated unclosed harness context block from title snippets.
+	text = text
+		.replace(
+			/<(?:t3_context|t3_code_instructions|system-reminder|environment_context|runtime_info|pull_request_linking|skills_instructions)\b[^>]*>[\s\S]*$/iu,
+			"",
+		)
+		.replaceAll(/\s+/gu, " ")
+		.trim();
 	const requestMarker = "## My request:";
 	const requestIndex = text.indexOf(requestMarker);
 	if (requestIndex >= 0)
@@ -195,10 +202,16 @@ function resolveRolloutPath(resolved: string): string {
 	return resolved;
 }
 
+export interface BuildCatalogOptions {
+	targetSessionIds?: ReadonlySet<string>;
+	targetFiles?: ReadonlySet<string>;
+}
+
 function codexCatalog(
 	entries: Map<string, SessionMeta>,
 	warnings: string[],
 	titles: Map<string, string>,
+	options?: BuildCatalogOptions,
 ): void {
 	const root = codexHome();
 	const databases = [
@@ -238,6 +251,12 @@ function codexCatalog(
 						)
 						.all();
 					for (const row of rows) {
+						if (
+							options?.targetSessionIds &&
+							!options.targetSessionIds.has(row.id)
+						) {
+							continue;
+						}
 						const sourcePath = row.rollout_path
 							? resolveRolloutPath(path.resolve(row.rollout_path))
 							: null;
@@ -291,6 +310,12 @@ function codexCatalog(
 						)
 						.all();
 					for (const row of catalogRows) {
+						if (
+							options?.targetSessionIds &&
+							!options.targetSessionIds.has(row.thread_id)
+						) {
+							continue;
+						}
 						const title = row.display_title?.trim();
 						if (!title) continue;
 						const key = `codex:${row.thread_id}`;
@@ -343,10 +368,17 @@ function dshLogs(
 function dshCatalog(
 	entries: Map<string, SessionMeta>,
 	warnings: string[],
+	options?: BuildCatalogOptions,
 ): void {
 	const seen = new Set<string>();
-	for (const root of existingDshRoots()) {
-		for (const { filePath } of dshLogs(root)) {
+	const targetFiles =
+		options?.targetFiles && options.targetFiles.size > 0
+			? [...options.targetFiles].map((filePath) => ({ filePath }))
+			: null;
+	const roots = targetFiles ? [null] : existingDshRoots();
+	for (const root of roots) {
+		const logs = targetFiles ?? (root ? dshLogs(root) : []);
+		for (const { filePath } of logs) {
 			try {
 				const bytes = readFileSync(filePath);
 				const text = filePath.endsWith(".zstd")
@@ -356,6 +388,12 @@ function dshCatalog(
 				const header = events.find((event) => event.type === "session") ?? {};
 				const sessionId =
 					textOrNull(header.id) ?? path.basename(path.dirname(filePath));
+				if (
+					options?.targetSessionIds &&
+					!options.targetSessionIds.has(sessionId)
+				) {
+					continue;
+				}
 				if (seen.has(sessionId)) continue;
 				seen.add(sessionId);
 				const origin = (textOrNull(header.origin) ?? "").toLowerCase();
@@ -432,6 +470,7 @@ function openCodeFirstUserText(
 function openCodeCatalog(
 	entries: Map<string, SessionMeta>,
 	warnings: string[],
+	options?: BuildCatalogOptions,
 ): void {
 	for (const dbPath of openCodeDbPaths()) {
 		try {
@@ -458,6 +497,12 @@ function openCodeCatalog(
 						)
 						.all();
 					for (const row of rows) {
+						if (
+							options?.targetSessionIds &&
+							!options.targetSessionIds.has(row.id)
+						) {
+							continue;
+						}
 						const title = row.title ?? openCodeFirstUserText(db, table, row.id);
 						mergeEntry(
 							entries,
@@ -487,27 +532,37 @@ function openCodeCatalog(
 function commandCodeCatalog(
 	entries: Map<string, SessionMeta>,
 	warnings: string[],
+	options?: BuildCatalogOptions,
 ): void {
-	const projectsRoot = path.join(commandCodeRoot(), "projects");
-	if (!existsSync(projectsRoot)) return;
-	let projectDirs: string[] = [];
-	try {
-		projectDirs = readdirSync(projectsRoot, { withFileTypes: true })
-			.filter((entry) => entry.isDirectory())
-			.map((entry) => path.join(projectsRoot, entry.name));
-	} catch (error) {
-		warnings.push(`Command Code: could not list projects (${String(error)})`);
-		return;
+	const files: string[] = [];
+	if (options?.targetFiles && options.targetFiles.size > 0) {
+		for (const filePath of options.targetFiles) {
+			if (existsSync(filePath)) files.push(filePath);
+		}
+	} else {
+		const projectsRoot = path.join(commandCodeRoot(), "projects");
+		if (!existsSync(projectsRoot)) return;
+		let projectDirs: string[] = [];
+		try {
+			projectDirs = readdirSync(projectsRoot, { withFileTypes: true })
+				.filter((entry) => entry.isDirectory())
+				.map((entry) => path.join(projectsRoot, entry.name));
+		} catch (error) {
+			warnings.push(`Command Code: could not list projects (${String(error)})`);
+			return;
+		}
+		for (const directory of projectDirs) {
+			files.push(
+				...walkFiles(
+					directory,
+					(_filePath, name) =>
+						name.endsWith(".jsonl") &&
+						!name.endsWith(".checkpoints.jsonl") &&
+						!name.endsWith(".prompts.jsonl"),
+				),
+			);
+		}
 	}
-	const files = projectDirs.flatMap((directory) =>
-		walkFiles(
-			directory,
-			(_filePath, name) =>
-				name.endsWith(".jsonl") &&
-				!name.endsWith(".checkpoints.jsonl") &&
-				!name.endsWith(".prompts.jsonl"),
-		),
-	);
 	for (const filePath of files) {
 		try {
 			const text = readFileSync(filePath, "utf8");
@@ -517,6 +572,12 @@ function commandCodeCatalog(
 			if (header.type !== "session") continue;
 			const sessionId =
 				textOrNull(header.id) ?? path.basename(filePath, ".jsonl");
+			if (
+				options?.targetSessionIds &&
+				!options.targetSessionIds.has(sessionId)
+			) {
+				continue;
+			}
 			let metadataTitle: string | null = null;
 			try {
 				const meta = objectOrEmpty(
@@ -578,6 +639,7 @@ function antigravityEarliestStepTimestamp(db: Database): number | null {
 function antigravityCatalog(
 	entries: Map<string, SessionMeta>,
 	warnings: string[],
+	options?: BuildCatalogOptions,
 ): void {
 	const seen = new Set<string>();
 	const t3Meta = loadT3AntigravityMeta();
@@ -596,6 +658,12 @@ function antigravityCatalog(
 			const sessionId = path.basename(filePath, ".db");
 			if (seen.has(sessionId)) continue;
 			seen.add(sessionId);
+			if (
+				options?.targetSessionIds &&
+				!options.targetSessionIds.has(sessionId)
+			) {
+				continue;
+			}
 			const summary = summaries.get(sessionId);
 			try {
 				const { db, cleanup } = openSafeReadonlyDatabase(filePath);
@@ -645,18 +713,29 @@ function safeReadDir(directory: string): string[] {
 
 export function buildSessionCatalog(
 	records: readonly UsageRecord[],
+	targetHarnesses?: ReadonlySet<HarnessName>,
+	options?: BuildCatalogOptions,
 ): SessionCatalog {
 	const entries = new Map<string, SessionMeta>();
 	const warnings: string[] = [];
 	const codexTitles = new Map<string, string>();
-	codexCatalog(entries, warnings, codexTitles);
-	dshCatalog(entries, warnings);
-	openCodeCatalog(entries, warnings);
-	commandCodeCatalog(entries, warnings);
-	antigravityCatalog(entries, warnings);
+	const want = (harness: HarnessName) =>
+		!targetHarnesses || targetHarnesses.has(harness);
+	if (want("codex")) codexCatalog(entries, warnings, codexTitles, options);
+	if (want("dsh")) dshCatalog(entries, warnings, options);
+	if (want("opencode")) openCodeCatalog(entries, warnings, options);
+	if (want("commandcode")) commandCodeCatalog(entries, warnings, options);
+	if (want("antigravity")) antigravityCatalog(entries, warnings, options);
 
 	const grouped = new Map<string, UsageRecord[]>();
 	for (const record of records) {
+		if (!want(record.harness)) continue;
+		if (
+			options?.targetSessionIds &&
+			!options.targetSessionIds.has(record.sessionId)
+		) {
+			continue;
+		}
 		const key = sessionKey(record);
 		const list = grouped.get(key) ?? [];
 		list.push(record);

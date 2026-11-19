@@ -54,12 +54,18 @@ export function AppHeader({ status }: { status: StatusPayload }) {
 							end={tab.end}
 							className={({ isActive }) =>
 								cn(
-									"relative flex h-16 items-center px-3 text-[13px] font-medium leading-5 text-muted-foreground transition-colors after:absolute after:inset-x-3 after:-bottom-px after:h-0.5 after:origin-left after:scale-x-0 after:bg-foreground after:transition-transform after:duration-150 hover:text-foreground",
+									"relative flex h-16 items-center gap-1.5 px-3 text-[13px] font-medium leading-5 text-muted-foreground transition-colors after:absolute after:inset-x-3 after:-bottom-px after:h-0.5 after:origin-left after:scale-x-0 after:bg-foreground after:transition-transform after:duration-150 hover:text-foreground",
 									isActive && "text-foreground after:scale-x-100",
 								)
 							}
 						>
-							{t(tab.label)}
+							<span>{t(tab.label)}</span>
+							{tab.to === "/models" && status.pricing?.lastError ? (
+								<span
+									className="size-1.5 rounded-full bg-warning"
+									title={status.pricing.lastError}
+								/>
+							) : null}
 						</NavLink>
 					))}
 				</nav>
@@ -89,12 +95,18 @@ export function AppHeader({ status }: { status: StatusPayload }) {
 						end={tab.end}
 						className={({ isActive }) =>
 							cn(
-								"relative flex h-10 shrink-0 items-center px-2 text-[12px] font-medium text-muted-foreground transition-colors after:absolute after:inset-x-2 after:-bottom-px after:h-0.5 after:origin-left after:scale-x-0 after:bg-foreground after:transition-transform after:duration-150",
+								"relative flex h-10 shrink-0 items-center gap-1.5 px-2 text-[12px] font-medium text-muted-foreground transition-colors after:absolute after:inset-x-2 after:-bottom-px after:h-0.5 after:origin-left after:scale-x-0 after:bg-foreground after:transition-transform after:duration-150",
 								isActive && "text-foreground after:scale-x-100",
 							)
 						}
 					>
-						{t(tab.label)}
+						<span>{t(tab.label)}</span>
+						{tab.to === "/models" && status.pricing?.lastError ? (
+							<span
+								className="size-1.5 rounded-full bg-warning"
+								title={status.pricing.lastError}
+							/>
+						) : null}
 					</NavLink>
 				))}
 			</nav>

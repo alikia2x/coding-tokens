@@ -184,19 +184,16 @@ function ToolRowLine({
 			<IconForVerb verb={op.verb} />
 			<span className="shrink-0 text-muted-foreground">{actionLabel}</span>
 			{op.target ? (
-				<>
-					<span className="shrink-0 text-muted-foreground/50">·</span>
-					<span
-						className={
-							isFile
-								? "min-w-0 truncate text-foreground/90 underline decoration-border/70 underline-offset-2"
-								: "min-w-0 truncate font-mono text-[11px] text-foreground/85"
-						}
-						title={op.fullTarget ?? op.target}
-					>
-						{op.target}
-					</span>
-				</>
+				<span
+					className={
+						isFile
+							? "min-w-0 truncate text-foreground/90 underline decoration-border/70 underline-offset-2"
+							: "min-w-0 truncate font-mono text-[11px] text-foreground/85"
+					}
+					title={op.fullTarget ?? op.target}
+				>
+					{op.target}
+				</span>
 			) : null}
 			{op.meta ? (
 				<span className="shrink-0 font-mono text-[11px] text-muted-foreground/75">
@@ -317,10 +314,12 @@ export function ToolChain({
 			<summary className="flex cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 py-1 text-[12px] text-muted-foreground outline-none transition-colors hover:bg-surface/60 hover:text-foreground focus-visible:outline-none">
 				<ChevronRight className="size-3.5 shrink-0 text-muted-foreground/70 transition-transform group-open:rotate-90" />
 				<span className="truncate font-medium">{summaryLabel}</span>
-				<span className="ml-auto shrink-0 text-[10px] tabular text-muted-foreground/75">
-					{allOps.length}
-					{totalDurationMs > 0 ? ` · ${formatLatency(totalDurationMs)}` : ""}
-					{hasErrors ? " · !" : ""}
+				<span className="ml-auto flex shrink-0 items-center gap-2 text-[10px] tabular text-muted-foreground/75">
+					<span>{allOps.length}</span>
+					{totalDurationMs > 0 ? (
+						<span>{formatLatency(totalDurationMs)}</span>
+					) : null}
+					{hasErrors ? <span className="text-destructive">!</span> : null}
 				</span>
 			</summary>
 			<div className="mt-1 ml-3 border-l border-border/50 pl-3">

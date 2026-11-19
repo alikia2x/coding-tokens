@@ -57,14 +57,16 @@ export function FacetFilter({
 			}}
 		>
 			<PopoverTrigger asChild>
-				<Button variant="outline" size="sm" className="gap-1.5 font-normal">
-					{label}
-					{values.length ? (
-						<span className="rounded bg-foreground px-1 text-[10px] leading-4 text-background tabular">
-							{values.length}
-						</span>
-					) : null}
-					<ChevronDown className="size-3.5 text-muted-foreground" />
+				<Button variant="outline" size="sm" className="gap-2 font-normal">
+					<span className="truncate">{label}</span>
+					<span className="ml-auto flex shrink-0 items-center gap-1.5">
+						{values.length ? (
+							<span className="rounded bg-foreground px-1 text-[10px] leading-4 text-background tabular">
+								{values.length}
+							</span>
+						) : null}
+						<ChevronDown className="size-3.5 text-muted-foreground" />
+					</span>
 				</Button>
 			</PopoverTrigger>
 			<PopoverContent align="start" className="w-64 p-0">

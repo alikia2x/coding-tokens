@@ -10,6 +10,10 @@ export interface StartServerOptions {
 	development?: boolean;
 	dbPath?: string;
 	desktopPlatform?: string;
+	deferStartMs?: number;
+	useIndexWorker?: boolean;
+	pickDirectory?: () => Promise<string | null>;
+	revealPath?: (targetPath: string) => void | Promise<void>;
 }
 
 const contentTypes: Record<string, string> = {
@@ -88,8 +92,10 @@ export function startServer(options: StartServerOptions = {}) {
 	store.configure({
 		dbPath: options.dbPath,
 		desktopPlatform: options.desktopPlatform,
+		useIndexWorker: options.useIndexWorker,
+		pickDirectory: options.pickDirectory,
+		revealPath: options.revealPath,
 	});
-	void store.start();
 	const server = Bun.serve({
 		port,
 		hostname,
@@ -109,5 +115,9 @@ export function startServer(options: StartServerOptions = {}) {
 			});
 		},
 	});
+	const deferMs = options.deferStartMs ?? 0;
+	setTimeout(() => {
+		void store.start();
+	}, deferMs);
 	return { server, port: server.port, hostname, staticDir };
 }

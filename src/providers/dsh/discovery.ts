@@ -1,5 +1,13 @@
-import { existsSync, statSync } from "node:fs";
+import {
+	closeSync,
+	existsSync,
+	openSync,
+	readFileSync,
+	readSync,
+	statSync,
+} from "node:fs";
 import path from "node:path";
+import { zstdDecompressSync } from "node:zlib";
 import type { PlatformPathService } from "../../platform/paths";
 import { defaultPlatformPathService } from "../../platform/paths";
 import {
@@ -59,8 +67,46 @@ export function collectDshLogs(paths: PlatformPathService): DshSessionLog[] {
 	return logs;
 }
 
+function readDshSessionHeader(filePath: string): {
+	id?: string;
+	cwd?: string | null;
+} | null {
+	try {
+		let headText = "";
+		if (filePath.endsWith(".zstd")) {
+			headText = zstdDecompressSync(readFileSync(filePath)).toString("utf8");
+		} else {
+			const fd = openSync(filePath, "r");
+			try {
+				const buf = Buffer.alloc(32768);
+				const bytesRead = readSync(fd, buf, 0, buf.length, 0);
+				headText = buf.subarray(0, bytesRead).toString("utf8");
+			} finally {
+				closeSync(fd);
+			}
+		}
+		let start = 0;
+		for (let lineIdx = 0; lineIdx < 20 && start < headText.length; lineIdx++) {
+			const nl = headText.indexOf("\n", start);
+			const rawLine =
+				nl === -1 ? headText.slice(start) : headText.slice(start, nl);
+			start = nl === -1 ? headText.length : nl + 1;
+			const trimmed = rawLine.trim();
+			if (!trimmed) continue;
+			const parsed = objectOrEmpty(JSON.parse(trimmed));
+			if (parsed.type !== "session") continue;
+			return {
+				id: textOrNull(parsed.id) ?? undefined,
+				cwd: normalizedCwd(parsed.cwd) ?? null,
+			};
+		}
+	} catch {}
+	return null;
+}
+
 export async function discoverDshSessions(
 	paths: PlatformPathService,
+	knownStamps?: ReadonlyMap<string, SessionDiscoveryItem>,
 ): Promise<SessionDiscoveryItem[]> {
 	const logs = collectDshLogs(paths);
 	const items: SessionDiscoveryItem[] = [];
@@ -68,20 +114,43 @@ export async function discoverDshSessions(
 	for (const log of logs) {
 		try {
 			const stat = statSync(log.filePath);
+			const known = knownStamps?.get(log.filePath);
+			if (
+				known &&
+				known.mtimeMs === stat.mtimeMs &&
+				known.sizeBytes === stat.size
+			) {
+				items.push({
+					sessionId: known.sessionId,
+					harness: "dsh",
+					filePath: log.filePath,
+					mtimeMs: stat.mtimeMs,
+					sizeBytes: stat.size,
+					cwd: known.cwd ?? null,
+				});
+				continue;
+			}
+
 			let sessionId = path.basename(path.dirname(log.filePath));
 			let cwd: string | null = null;
 
-			try {
-				const { readLogSync } = await import("./usage");
-				const events = readLogSync(log.filePath).map(objectOrEmpty);
-				const header = events.find((event) => event.type === "session");
-				if (header) {
-					const id = textOrNull(header.id);
-					if (id) sessionId = id;
-					cwd = normalizedCwd(header.cwd) ?? null;
+			const header = readDshSessionHeader(log.filePath);
+			if (header) {
+				if (header.id) sessionId = header.id;
+				cwd = header.cwd ?? null;
+			} else {
+				try {
+					const { readLogSync } = await import("./usage");
+					const events = readLogSync(log.filePath).map(objectOrEmpty);
+					const evHeader = events.find((event) => event.type === "session");
+					if (evHeader) {
+						const id = textOrNull(evHeader.id);
+						if (id) sessionId = id;
+						cwd = normalizedCwd(evHeader.cwd) ?? null;
+					}
+				} catch {
+					// fallback to folder name
 				}
-			} catch {
-				// fallback to folder name
 			}
 
 			items.push({

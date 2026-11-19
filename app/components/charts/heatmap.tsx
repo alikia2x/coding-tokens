@@ -1,5 +1,4 @@
 import type { HeatmapDay } from "@shared/types";
-import { Flame } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
 import {
 	type DateLocaleCode,
@@ -101,7 +100,7 @@ export function ContributionHeatmap({
 						{t("heatmap.period")}
 					</span>
 				</div>
-				<div className="flex flex-wrap items-center gap-3 text-[11px] leading-none text-muted-foreground tabular">
+				<div className="flex min-h-4 flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px] leading-4 text-muted-foreground tabular">
 					{hovered ? (
 						<>
 							<span className="text-foreground">
@@ -123,8 +122,7 @@ export function ContributionHeatmap({
 						</>
 					) : (
 						<>
-							<span className="inline-flex items-center gap-1 text-foreground">
-								<Flame className="size-3 shrink-0" />
+							<span className="text-foreground">
 								{t("heatmap.streak", { count: streak })}
 							</span>
 							<span>

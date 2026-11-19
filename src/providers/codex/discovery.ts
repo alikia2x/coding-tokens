@@ -1,5 +1,13 @@
-import { existsSync, statSync } from "node:fs";
+import {
+	closeSync,
+	existsSync,
+	openSync,
+	readFileSync,
+	readSync,
+	statSync,
+} from "node:fs";
 import path from "node:path";
+import { zstdDecompressSync } from "node:zlib";
 import {
 	defaultPlatformPathService,
 	type PlatformPathService,
@@ -49,8 +57,68 @@ export function codexSessionFiles(
 	);
 }
 
+export function codexSessionFilesBatch(
+	sessionIds: ReadonlySet<string>,
+	paths: PlatformPathService = defaultPlatformPathService,
+): Map<string, string[]> {
+	const result = new Map<string, string[]>();
+	if (!sessionIds.size) return result;
+	const needles: Array<{ id: string; lower: string }> = [];
+	for (const id of sessionIds) {
+		if (id) needles.push({ id, lower: id.toLowerCase() });
+	}
+	for (const filePath of getCodexRolloutFiles(paths)) {
+		const lowerBase = path.basename(filePath).toLowerCase();
+		for (const needle of needles) {
+			if (!lowerBase.includes(needle.lower)) continue;
+			const list = result.get(needle.id) ?? [];
+			list.push(filePath);
+			result.set(needle.id, list);
+		}
+	}
+	return result;
+}
+
+function readCodexSessionMetaHeader(filePath: string): {
+	sessionId?: string;
+	cwd?: string;
+} | null {
+	try {
+		let headText = "";
+		if (filePath.endsWith(".zst")) {
+			headText = zstdDecompressSync(readFileSync(filePath)).toString("utf8");
+		} else {
+			const fd = openSync(filePath, "r");
+			try {
+				const buf = Buffer.alloc(65536);
+				const bytesRead = readSync(fd, buf, 0, buf.length, 0);
+				headText = buf.subarray(0, bytesRead).toString("utf8");
+			} finally {
+				closeSync(fd);
+			}
+		}
+		let start = 0;
+		for (let lineIdx = 0; lineIdx < 25 && start < headText.length; lineIdx++) {
+			const nl = headText.indexOf("\n", start);
+			const rawLine =
+				nl === -1 ? headText.slice(start) : headText.slice(start, nl);
+			start = nl === -1 ? headText.length : nl + 1;
+			const trimmed = rawLine.trim();
+			if (!trimmed?.includes("session_meta")) continue;
+			const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+			if (parsed.type !== "session_meta") continue;
+			const payload = (parsed.payload ?? {}) as Record<string, unknown>;
+			const metaId = (payload.id ?? payload.session_id) as string | undefined;
+			const cwd = typeof payload.cwd === "string" ? payload.cwd : undefined;
+			return { sessionId: metaId, cwd };
+		}
+	} catch {}
+	return null;
+}
+
 export async function discoverCodexSessions(
 	paths: PlatformPathService,
+	knownStamps?: ReadonlyMap<string, SessionDiscoveryItem>,
 ): Promise<SessionDiscoveryItem[]> {
 	const files = getCodexRolloutFiles(paths);
 	const sessionMap = new Map<string, SessionDiscoveryItem>();
@@ -58,35 +126,59 @@ export async function discoverCodexSessions(
 	for (const filePath of files) {
 		try {
 			const stat = statSync(filePath);
+			const known = knownStamps?.get(filePath);
+			if (
+				known &&
+				known.mtimeMs === stat.mtimeMs &&
+				known.sizeBytes === stat.size
+			) {
+				const existing = sessionMap.get(known.sessionId);
+				if (!existing || stat.mtimeMs > existing.mtimeMs) {
+					sessionMap.set(known.sessionId, {
+						sessionId: known.sessionId,
+						harness: "codex",
+						filePath,
+						mtimeMs: stat.mtimeMs,
+						sizeBytes: stat.size,
+						cwd: known.cwd ?? null,
+					});
+				}
+				continue;
+			}
+
 			// Session ID is derived from filename rollout-<timestamp>-<sessionId>...
 			// or read from session_meta
 			const base = path.basename(filePath).replace(/\.jsonl(?:\.zst)?$/u, "");
-			// standard pattern: rollout-YYYYMMDD-HHMMSS-<guid> or similar
 			const fallbackId = base;
 
 			let sessionId = fallbackId;
 			let cwd: string | null = null;
 
-			// Quick scan of first few lines for session_meta if file is small or readable
-			try {
-				const { readRolloutSync } = await import("./usage");
-				const events = readRolloutSync(filePath);
-				const meta = events.find(
-					(e) =>
-						typeof e === "object" &&
-						e !== null &&
-						(e as Record<string, unknown>).type === "session_meta",
-				) as Record<string, unknown> | undefined;
-				if (meta) {
-					const payload = (meta.payload ?? {}) as Record<string, unknown>;
-					const metaId = (payload.id ?? payload.session_id) as
-						| string
-						| undefined;
-					if (metaId) sessionId = metaId;
-					if (typeof payload.cwd === "string") cwd = payload.cwd;
+			const headerMeta = readCodexSessionMetaHeader(filePath);
+			if (headerMeta) {
+				if (headerMeta.sessionId) sessionId = headerMeta.sessionId;
+				if (headerMeta.cwd) cwd = headerMeta.cwd;
+			} else {
+				try {
+					const { readRolloutSync } = await import("./usage");
+					const events = readRolloutSync(filePath);
+					const meta = events.find(
+						(e) =>
+							typeof e === "object" &&
+							e !== null &&
+							(e as Record<string, unknown>).type === "session_meta",
+					) as Record<string, unknown> | undefined;
+					if (meta) {
+						const payload = (meta.payload ?? {}) as Record<string, unknown>;
+						const metaId = (payload.id ?? payload.session_id) as
+							| string
+							| undefined;
+						if (metaId) sessionId = metaId;
+						if (typeof payload.cwd === "string") cwd = payload.cwd;
+					}
+				} catch {
+					// Fallback to filename
 				}
-			} catch {
-				// Fallback to filename
 			}
 
 			const existing = sessionMap.get(sessionId);

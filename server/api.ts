@@ -1,6 +1,8 @@
 import path from "node:path";
 import { isKnownHarness } from "@shared/colors";
 import type {
+	BatchExportOrganization,
+	CustomModelPriceRule,
 	HarnessName,
 	SessionDetailLevel,
 	SessionsPayload,
@@ -19,8 +21,10 @@ import {
 import { searchPayload, sessionSearchMatches } from "./data/search";
 import { sessionDetailPayload } from "./data/session-detail";
 import {
+	buildSessionsBatchZip,
 	exportSessionMarkdown,
 	exportSessionsBatchMarkdown,
+	renderSingleSessionExport,
 } from "./data/session-export";
 import { store } from "./data/store";
 import type { RecordFilters } from "./data/totals";
@@ -107,12 +111,70 @@ export async function handleApi(request: Request, url: URL): Promise<Response> {
 			return json(store.writeSettings(body));
 		}
 
-		if (resource === "status" && method === "GET")
+		if (resource === "status" && method === "GET") {
+			if (!store.hasStarted()) {
+				setTimeout(() => void store.start(), 0);
+			}
 			return json(store.status() satisfies StatusPayload);
+		}
 
 		if (resource === "refresh" && method === "POST") {
 			void store.start();
 			return json({ started: true, status: store.status() }, 202);
+		}
+
+		if (resource === "pricing" && segments.length === 2 && method === "GET") {
+			return json(store.pricingPayload());
+		}
+
+		if (
+			resource === "pricing" &&
+			segments[2] === "catalog" &&
+			method === "GET"
+		) {
+			const query = url.searchParams.get("q") ?? "";
+			const limit = Math.min(
+				100,
+				Math.max(1, Number(url.searchParams.get("limit") ?? 25) || 25),
+			);
+			return json({ items: store.searchPricingCatalog(query, limit) });
+		}
+
+		if (
+			resource === "pricing" &&
+			segments[2] === "settings" &&
+			method === "PUT"
+		) {
+			const body = (await request.json().catch(() => ({}))) as {
+				autoFetch?: unknown;
+				endpoint?: unknown;
+				cacheTtlHours?: unknown;
+			};
+			return json(
+				store.updatePricingSettings({
+					...(typeof body.autoFetch === "boolean"
+						? { autoFetch: body.autoFetch }
+						: {}),
+					...(typeof body.endpoint === "string"
+						? { endpoint: body.endpoint }
+						: {}),
+					...(body.cacheTtlHours !== undefined
+						? { cacheTtlHours: Number(body.cacheTtlHours) }
+						: {}),
+				}),
+			);
+		}
+
+		if (
+			resource === "pricing" &&
+			segments[2] === "refresh" &&
+			method === "POST"
+		) {
+			const result = await store.refreshPricingCatalog("manual");
+			return json({
+				attempt: result.attempt,
+				...result.payload,
+			});
 		}
 
 		if (resource === "search" && method === "GET") {
@@ -126,6 +188,38 @@ export async function handleApi(request: Request, url: URL): Promise<Response> {
 		}
 
 		await store.ensureReady();
+
+		if (
+			resource === "pricing" &&
+			segments[2] === "rules" &&
+			segments.length === 3 &&
+			method === "PUT"
+		) {
+			const body = (await request.json().catch(() => ({}))) as {
+				rule?: Omit<CustomModelPriceRule, "updatedAt">;
+				rules?: Record<string, unknown>;
+				replace?: boolean;
+			};
+			if (body.rule && typeof body.rule === "object") {
+				return json(store.upsertCustomPriceRule(body.rule));
+			}
+			if (body.rules && typeof body.rules === "object") {
+				return json(
+					store.importCustomPriceRules(body.rules, body.replace === true),
+				);
+			}
+			return json({ error: "rule or rules is required" }, 400);
+		}
+
+		if (
+			resource === "pricing" &&
+			segments[2] === "rules" &&
+			segments.length >= 4 &&
+			method === "DELETE"
+		) {
+			const modelKey = decodeURIComponent(segments.slice(3).join("/"));
+			return json(store.deleteCustomPriceRule(modelKey));
+		}
 
 		if (resource === "overview" && method === "GET")
 			return json(overviewPayload(filtersFrom(url)));
@@ -180,6 +274,38 @@ export async function handleApi(request: Request, url: URL): Promise<Response> {
 			);
 
 		if (
+			resource === "dialog" &&
+			segments[2] === "directory" &&
+			method === "POST"
+		) {
+			if (!store.canPickDirectory()) {
+				return json({ supported: false, path: null, cancelled: false });
+			}
+			const chosen = await store.chooseDirectory();
+			return json({
+				supported: true,
+				path: chosen,
+				cancelled: chosen === null,
+			});
+		}
+
+		if (
+			resource === "dialog" &&
+			segments[2] === "reveal" &&
+			method === "POST"
+		) {
+			const body = (await request.json().catch(() => ({}))) as {
+				path?: unknown;
+			};
+			const targetPath = typeof body.path === "string" ? body.path.trim() : "";
+			if (!targetPath) {
+				return json({ error: "path is required" }, 400);
+			}
+			await store.revealInFileManager(targetPath);
+			return json({ ok: true });
+		}
+
+		if (
 			resource === "sessions" &&
 			method === "POST" &&
 			segments.length === 3 &&
@@ -191,6 +317,11 @@ export async function handleApi(request: Request, url: URL): Promise<Response> {
 				includeTimestamps?: unknown;
 				includeTokenStats?: unknown;
 				directory?: unknown;
+				asZip?: unknown;
+				organization?: unknown;
+				pathTemplate?: unknown;
+				stream?: unknown;
+				download?: unknown;
 			};
 			const keys = Array.isArray(body.keys)
 				? body.keys.filter(
@@ -217,12 +348,119 @@ export async function handleApi(request: Request, url: URL): Promise<Response> {
 				typeof body.directory === "string" && body.directory.trim()
 					? body.directory
 					: undefined;
+			const asZip = body.asZip === true;
+			const orgValues = new Set([
+				"flat",
+				"harness",
+				"date",
+				"project",
+				"custom",
+			]);
+			const organization = (
+				typeof body.organization === "string" &&
+				orgValues.has(body.organization)
+					? body.organization
+					: "flat"
+			) as BatchExportOrganization;
+			const pathTemplate =
+				typeof body.pathTemplate === "string" ? body.pathTemplate : undefined;
+
+			if (body.stream === true) {
+				const encoder = new TextEncoder();
+				const downloadMode = body.download === true;
+				const exportAbort = new AbortController();
+				const onRequestAbort = () => exportAbort.abort();
+				request.signal.addEventListener("abort", onRequestAbort, {
+					once: true,
+				});
+				const stream = new ReadableStream({
+					async start(controller) {
+						const emit = (payload: unknown) => {
+							try {
+								controller.enqueue(
+									encoder.encode(`${JSON.stringify(payload)}\n`),
+								);
+							} catch {}
+						};
+						try {
+							if (downloadMode) {
+								const built = await buildSessionsBatchZip({
+									keys,
+									detail: level,
+									includeTimestamps,
+									includeTokenStats,
+									organization,
+									pathTemplate,
+									signal: exportAbort.signal,
+									onProgress: (progress) =>
+										emit({ type: "progress", ...progress }),
+								});
+								emit({
+									type: "done",
+									result: {
+										directory: "",
+										outputPath: "",
+										zipPath: "",
+										filename: built.filename,
+										bytes: built.zipBytes.byteLength,
+										filesWritten: built.filesWritten,
+										skippedCount: built.skippedCount,
+										warnings: built.warnings,
+									},
+									zipBase64: Buffer.from(built.zipBytes).toString("base64"),
+								});
+							} else {
+								const result = await exportSessionsBatchMarkdown({
+									keys,
+									detail: level,
+									includeTimestamps,
+									includeTokenStats,
+									directory,
+									asZip,
+									organization,
+									pathTemplate,
+									signal: exportAbort.signal,
+									onProgress: (progress) =>
+										emit({ type: "progress", ...progress }),
+								});
+								emit({ type: "done", result });
+							}
+						} catch (err) {
+							if (!(err instanceof DOMException && err.name === "AbortError")) {
+								emit({
+									type: "error",
+									error: err instanceof Error ? err.message : String(err),
+								});
+							}
+						} finally {
+							request.signal.removeEventListener("abort", onRequestAbort);
+							try {
+								controller.close();
+							} catch {}
+						}
+					},
+					cancel() {
+						exportAbort.abort();
+					},
+				});
+				return new Response(stream, {
+					headers: {
+						"Content-Type": "application/x-ndjson; charset=utf-8",
+						"Cache-Control": "no-cache",
+					},
+				});
+			}
+
 			const result = await exportSessionsBatchMarkdown({
 				keys,
 				detail: level,
 				includeTimestamps,
 				includeTokenStats,
 				directory,
+				asZip,
+				organization,
+				pathTemplate,
+				signal: request.signal,
 			});
 			return json(result);
 		}
@@ -240,6 +478,7 @@ export async function handleApi(request: Request, url: URL): Promise<Response> {
 			const body = (await request.json().catch(() => ({}))) as {
 				level?: unknown;
 				directory?: unknown;
+				download?: unknown;
 			};
 			const level =
 				typeof body.level === "string" && levelSet.has(body.level)
@@ -249,6 +488,18 @@ export async function handleApi(request: Request, url: URL): Promise<Response> {
 				typeof body.directory === "string" && body.directory.trim()
 					? body.directory
 					: undefined;
+			if (body.download === true) {
+				const rendered = await renderSingleSessionExport(
+					`${harness}:${sessionId}`,
+					level,
+				);
+				return new Response(rendered.markdown, {
+					headers: {
+						"Content-Type": "text/markdown; charset=utf-8",
+						"Content-Disposition": `attachment; filename="${rendered.filename}"`,
+					},
+				});
+			}
 			const result = await exportSessionMarkdown(
 				`${harness}:${sessionId}`,
 				level,

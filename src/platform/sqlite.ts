@@ -98,11 +98,11 @@ export function openSafeReadonlyDatabase(
 	dbPath: string,
 	options: OpenReadonlySqliteOptions = {},
 ): SafeDatabaseHandle {
-	const maxRetries = options.maxRetries ?? 5;
+	const maxRetries = options.maxRetries ?? 2;
 	const initialDelayMs = options.initialDelayMs ?? 50;
-	const maxDelayMs = options.maxDelayMs ?? 800;
+	const maxDelayMs = options.maxDelayMs ?? 300;
 	const backoffFactor = options.backoffFactor ?? 2;
-	const busyTimeoutMs = options.busyTimeoutMs ?? 5000;
+	const busyTimeoutMs = options.busyTimeoutMs ?? 400;
 	const allowSnapshotCopy = options.allowSnapshotCopy ?? true;
 
 	const hasSidecar =
@@ -252,11 +252,11 @@ export async function openSafeReadonlyDatabaseAsync(
 	dbPath: string,
 	options: OpenReadonlySqliteOptions = {},
 ): Promise<SafeDatabaseHandle> {
-	const maxRetries = options.maxRetries ?? 5;
+	const maxRetries = options.maxRetries ?? 2;
 	const initialDelayMs = options.initialDelayMs ?? 50;
-	const maxDelayMs = options.maxDelayMs ?? 800;
+	const maxDelayMs = options.maxDelayMs ?? 300;
 	const backoffFactor = options.backoffFactor ?? 2;
-	const busyTimeoutMs = options.busyTimeoutMs ?? 5000;
+	const busyTimeoutMs = options.busyTimeoutMs ?? 400;
 	const allowSnapshotCopy = options.allowSnapshotCopy ?? true;
 
 	const hasSidecar =

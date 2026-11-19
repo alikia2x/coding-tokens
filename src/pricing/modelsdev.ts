@@ -4,14 +4,16 @@ import {
 	mkdirSync,
 	readFileSync,
 	renameSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import type { TokenRates } from "../../shared/types";
 import { defaultPlatformPathService } from "../platform/paths";
 import type { HarnessName, UsageRecord } from "../types";
 import { objectOrEmpty } from "../util";
 
-const endpoint = "https://models.dev/api.json";
+export const DEFAULT_MODELS_DEV_ENDPOINT = "https://models.dev/api.json";
 
 function resolveCacheFile(): string {
 	const newCache = path.join(
@@ -37,7 +39,10 @@ function resolveCacheFile(): string {
 	return newCache;
 }
 
-const cacheFile = resolveCacheFile();
+export function getModelsDevCachePath(): string {
+	return resolveCacheFile();
+}
+
 const cacheTtl = 24 * 60 * 60 * 1000;
 const wrappers = new Set([
 	"command-code",
@@ -65,15 +70,9 @@ const providerAliases: Record<string, string[]> = {
 	"x-ai": ["xai"],
 };
 
-interface Rates {
-	input: number;
-	output: number;
-	reasoning: number | null;
-	cacheRead: number | null;
-	cacheWrite: number | null;
-}
+export type Rates = TokenRates;
 
-interface CatalogEntry {
+export interface CatalogEntry {
 	provider: string;
 	id: string;
 	canonicalId: string | null;
@@ -83,7 +82,7 @@ interface CatalogEntry {
 	rates: Rates | null;
 }
 
-interface Catalog {
+export interface Catalog {
 	providers: Set<string>;
 	byProviderModel: Map<string, CatalogEntry>;
 	byModel: Map<string, CatalogEntry[]>;
@@ -212,37 +211,84 @@ export function readCatalog(value: unknown): Catalog {
 	return { providers, byProviderModel, byModel };
 }
 
-export function loadCachedCatalog(): Catalog | null {
-	const cached = readCache();
-	return cached ? readCatalog(cached.data) : null;
+interface ParsedCatalogMemo {
+	file: string;
+	mtimeMs: number;
+	size: number;
+	fetchedAt: number;
+	catalog: Catalog;
 }
 
-function readCache(): CatalogCache | null {
+let parsedCatalogMemo: ParsedCatalogMemo | null = null;
+
+function loadValidatedCache(): { fetchedAt: number; catalog: Catalog } | null {
+	const cacheFile = resolveCacheFile();
 	try {
+		const stat = statSync(cacheFile);
+		if (
+			parsedCatalogMemo &&
+			parsedCatalogMemo.file === cacheFile &&
+			parsedCatalogMemo.mtimeMs === stat.mtimeMs &&
+			parsedCatalogMemo.size === stat.size
+		) {
+			return {
+				fetchedAt: parsedCatalogMemo.fetchedAt,
+				catalog: parsedCatalogMemo.catalog,
+			};
+		}
 		const cache = JSON.parse(readFileSync(cacheFile, "utf8")) as CatalogCache;
 		if (
 			typeof cache.fetchedAt !== "number" ||
 			!Number.isFinite(cache.fetchedAt) ||
-			!Number.isFinite(new Date(cache.fetchedAt).getTime()) ||
-			readCatalog(cache.data).byProviderModel.size === 0
+			!Number.isFinite(new Date(cache.fetchedAt).getTime())
 		) {
 			return null;
 		}
-		return cache;
+		const catalog = readCatalog(cache.data);
+		if (catalog.byProviderModel.size === 0) return null;
+		parsedCatalogMemo = {
+			file: cacheFile,
+			mtimeMs: stat.mtimeMs,
+			size: stat.size,
+			fetchedAt: cache.fetchedAt,
+			catalog,
+		};
+		return { fetchedAt: cache.fetchedAt, catalog };
 	} catch {
 		return null;
 	}
 }
 
-function writeCache(data: unknown): boolean {
+export function loadCachedCatalogWithMeta(): {
+	fetchedAt: number;
+	catalog: Catalog;
+} | null {
+	return loadValidatedCache();
+}
+
+export function loadCachedCatalog(): Catalog | null {
+	return loadValidatedCache()?.catalog ?? null;
+}
+
+export function catalogStats(catalog: Catalog | null): {
+	modelCount: number;
+	providerCount: number;
+} {
+	if (!catalog) return { modelCount: 0, providerCount: 0 };
+	return {
+		modelCount: catalog.byProviderModel.size,
+		providerCount: catalog.providers.size,
+	};
+}
+
+function writeCache(data: unknown, fetchedAt = Date.now()): boolean {
+	const cacheFile = resolveCacheFile();
 	try {
 		mkdirSync(path.dirname(cacheFile), { recursive: true });
 		const temporaryFile = `${cacheFile}.${process.pid}.tmp`;
-		writeFileSync(
-			temporaryFile,
-			JSON.stringify({ fetchedAt: Date.now(), data }),
-		);
+		writeFileSync(temporaryFile, JSON.stringify({ fetchedAt, data }));
 		renameSync(temporaryFile, cacheFile);
+		parsedCatalogMemo = null;
 		return true;
 	} catch {
 		return false;
@@ -470,7 +516,7 @@ export function resolveModel(
 	return null;
 }
 
-function estimate(record: UsageRecord, rates: Rates): number {
+export function estimateTokensCost(record: UsageRecord, rates: Rates): number {
 	const input = record.inputTokens ?? 0;
 	const reasoning = record.reasoningTokens ?? 0;
 	const cacheRead = record.cacheReadTokens ?? 0;
@@ -487,7 +533,7 @@ function estimate(record: UsageRecord, rates: Rates): number {
 	);
 }
 
-function hasPositiveRates(rates: Rates): boolean {
+export function hasPositiveRates(rates: Rates): boolean {
 	return (
 		rates.input > 0 ||
 		rates.output > 0 ||
@@ -497,6 +543,104 @@ function hasPositiveRates(rates: Rates): boolean {
 	);
 }
 
+export interface FetchCatalogResult {
+	catalog: Catalog | null;
+	fetchedAt: number | null;
+	httpStatus: number | null;
+	durationMs: number;
+	modelCount: number;
+	providerCount: number;
+	error: string | null;
+	cacheWriteError: string | null;
+}
+
+export async function fetchAndCacheCatalog(
+	options: {
+		endpoint?: string;
+		timeoutMs?: number;
+		fetchFn?: typeof fetch;
+	} = {},
+): Promise<FetchCatalogResult> {
+	const targetEndpoint =
+		options.endpoint?.trim() || DEFAULT_MODELS_DEV_ENDPOINT;
+	const timeoutMs = options.timeoutMs ?? 8000;
+	const fetcher = options.fetchFn ?? globalThis.fetch;
+	const startedAt = Date.now();
+	let httpStatus: number | null = null;
+	let response: Response;
+	try {
+		response = await fetcher(targetEndpoint, {
+			signal: AbortSignal.timeout(timeoutMs),
+		});
+		httpStatus = response.status;
+	} catch (error) {
+		const message =
+			error instanceof Error && error.message
+				? error.message
+				: String(error || "Network error");
+		return {
+			catalog: null,
+			fetchedAt: null,
+			httpStatus: null,
+			durationMs: Date.now() - startedAt,
+			modelCount: 0,
+			providerCount: 0,
+			error: message,
+			cacheWriteError: null,
+		};
+	}
+
+	if (!response.ok) {
+		return {
+			catalog: null,
+			fetchedAt: null,
+			httpStatus: response.status,
+			durationMs: Date.now() - startedAt,
+			modelCount: 0,
+			providerCount: 0,
+			error: `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`,
+			cacheWriteError: null,
+		};
+	}
+
+	try {
+		const data: unknown = await response.json();
+		const freshCatalog = readCatalog(data);
+		if (!freshCatalog.byProviderModel.size) {
+			throw new Error("Catalog returned 0 models");
+		}
+		const fetchedAt = Date.now();
+		const wrote = writeCache(data, fetchedAt);
+		return {
+			catalog: freshCatalog,
+			fetchedAt,
+			httpStatus,
+			durationMs: Date.now() - startedAt,
+			modelCount: freshCatalog.byProviderModel.size,
+			providerCount: freshCatalog.providers.size,
+			error: null,
+			cacheWriteError: wrote ? null : "models.dev catalog could not be cached",
+		};
+	} catch (error) {
+		const message =
+			error instanceof Error && error.message
+				? error.message
+				: "Invalid catalog JSON";
+		return {
+			catalog: null,
+			fetchedAt: null,
+			httpStatus,
+			durationMs: Date.now() - startedAt,
+			modelCount: 0,
+			providerCount: 0,
+			error: message,
+			cacheWriteError: null,
+		};
+	}
+}
+
+let inFlightRefresh: Promise<FetchCatalogResult> | null = null;
+
 export async function enrichWithModelsDev(
 	records: UsageRecord[],
 ): Promise<string | null> {
@@ -504,50 +648,52 @@ export async function enrichWithModelsDev(
 	const needsPricing = records.some(
 		(record) => record.costUsd === null || record.costUsd === 0,
 	);
-	const cached = readCache();
+	const cached = loadValidatedCache();
 	const age = cached ? Date.now() - cached.fetchedAt : Number.POSITIVE_INFINITY;
 	const cacheIsFresh = age >= 0 && age < cacheTtl;
-	let catalog = cached ? readCatalog(cached.data) : null;
+	let catalog = cached?.catalog ?? null;
+	const cachedStamp: CatalogCache | null = cached
+		? { fetchedAt: cached.fetchedAt, data: null }
+		: null;
 	let warning: string | null = null;
 
 	if (!cacheIsFresh) {
-		let response: Response;
-		try {
-			response = await fetch(endpoint, { signal: AbortSignal.timeout(5000) });
-		} catch {
-			if (!catalog) {
-				return needsPricing
-					? "models.dev pricing could not be reached"
-					: "models.dev catalog could not be reached; model ids remain unchanged";
-			}
-			return applyCatalog(records, catalog, cacheWarning(cached));
+		if (!inFlightRefresh) {
+			inFlightRefresh = fetchAndCacheCatalog({
+				endpoint: DEFAULT_MODELS_DEV_ENDPOINT,
+				timeoutMs: 5000,
+			}).finally(() => {
+				inFlightRefresh = null;
+			});
 		}
-		if (!response.ok) {
+		const fetched = await inFlightRefresh;
+		if (fetched.catalog) {
+			catalog = fetched.catalog;
+			if (fetched.cacheWriteError) warning = fetched.cacheWriteError;
+		} else if (fetched.httpStatus !== null) {
+			const msg = `models.dev returned HTTP ${fetched.httpStatus}`;
 			if (!catalog) {
-				return needsPricing
-					? `models.dev returned HTTP ${response.status}`
-					: `models.dev returned HTTP ${response.status}; model ids remain unchanged`;
+				return needsPricing ? msg : `${msg}; model ids remain unchanged`;
 			}
-			return applyCatalog(
-				records,
-				catalog,
-				cacheWarning(cached, `models.dev returned HTTP ${response.status}`),
-			);
-		}
-
-		try {
-			const data: unknown = await response.json();
-			const freshCatalog = readCatalog(data);
-			if (!freshCatalog.byProviderModel.size) throw new Error("empty catalog");
-			if (!writeCache(data)) warning = "models.dev catalog could not be cached";
-			catalog = freshCatalog;
-		} catch {
+			return applyCatalog(records, catalog, cacheWarning(cachedStamp, msg));
+		} else if (
+			fetched.error &&
+			(fetched.error.includes("0 models") ||
+				fetched.error.toLowerCase().includes("json"))
+		) {
 			if (!catalog) {
 				return needsPricing
 					? "models.dev returned invalid pricing data"
 					: "models.dev returned invalid catalog data; model ids remain unchanged";
 			}
-			return applyCatalog(records, catalog, cacheWarning(cached));
+			return applyCatalog(records, catalog, cacheWarning(cachedStamp));
+		} else {
+			if (!catalog) {
+				return needsPricing
+					? "models.dev pricing could not be reached"
+					: "models.dev catalog could not be reached; model ids remain unchanged";
+			}
+			return applyCatalog(records, catalog, cacheWarning(cachedStamp));
 		}
 	}
 	if (!catalog) return "models.dev returned no model data";
@@ -562,7 +708,7 @@ function cacheWarning(
 		? new Date(cached.fetchedAt).toISOString().slice(0, 10)
 		: "";
 	return date
-		? `${refreshError}; using cached prices from ${date}`
+		? `${refreshError}, using cached prices from ${date}`
 		: refreshError;
 }
 
@@ -597,7 +743,7 @@ export function applyCatalog(
 				model.rates !== null &&
 				hasPositiveRates(model.rates));
 		if (shouldEstimate && model.rates) {
-			record.costUsd = estimate(record, model.rates);
+			record.costUsd = estimateTokensCost(record, model.rates);
 			record.costEstimated = true;
 		}
 	}

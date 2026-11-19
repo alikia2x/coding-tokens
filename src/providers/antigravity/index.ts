@@ -44,8 +44,9 @@ export class AntigravityProvider implements HarnessProvider {
 
 	async discoverSessions(
 		paths: PlatformPathService,
+		knownStamps?: ReadonlyMap<string, SessionDiscoveryItem>,
 	): Promise<SessionDiscoveryItem[]> {
-		return discoverAntigravitySessions(paths);
+		return discoverAntigravitySessions(paths, knownStamps);
 	}
 
 	async readUsage(

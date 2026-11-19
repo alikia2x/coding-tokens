@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-19
+
+### Added
+
+- Cache-first cold hydration and isolated `index-worker` background indexing so the desktop window and web UI load immediately without blocking on harness scans or SQLite locks.
+- Transparent, configurable model pricing (`PricingCatalogManager`, SQLite migration v5 preserving `raw_model` and `raw_cost_usd`, custom 5-rate rules including `$0` free tiers, catalog alias mapping, JSON rule import/export, custom catalog URL, cache TTL, and offline mode).
+- Multi-token non-contiguous catalog search (e.g. matching `Gemini 4 Neon` from `Gemini Neon`) and hover-to-edit pricing directly from the Models cost column.
+
+### Changed
+
+- Simplified the Models page and Model Pricing modal by removing redundant source pills, overview stat cards, raw cache paths, and fetch history logs.
+- Improved session transcript formatting, tool call normalization, and batch export cancellation via isolated export worker.
+
+### Fixed
+
+- Preserve catalog canonical display names when applying custom pricing rules so rules keyed by display names remain matched across re-indexing.
+- Lowered readonly SQLite retry/lock defaults and deduplicated concurrent `models.dev` catalog fetches to prevent startup stalls.
+
 ## [0.3.1] - 2026-11-17
 
 ### Changed

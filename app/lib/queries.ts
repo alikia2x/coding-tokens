@@ -1,5 +1,6 @@
 import type {
 	AppSettings,
+	CustomModelPriceRule,
 	ExploreBucket,
 	ExploreDimension,
 	ExploreMetric,
@@ -19,6 +20,8 @@ import type { ResolvedRange } from "./time-range";
 export const queryKeys = {
 	status: ["status"] as const,
 	settings: ["settings"] as const,
+	pricing: ["pricing"] as const,
+	pricingCatalog: (query: string) => ["pricingCatalog", query] as const,
 	overview: (from: number | null, until: number | null) =>
 		["overview", from, until] as const,
 	sessions: (from: number | null, until: number | null) =>
@@ -240,5 +243,97 @@ export function useUpdateAppSettings() {
 				queryClient.setQueryData(queryKeys.settings, context.previous);
 		},
 		onSuccess: (next) => queryClient.setQueryData(queryKeys.settings, next),
+	});
+}
+
+function invalidatePricingDependents(
+	queryClient: ReturnType<typeof useQueryClient>,
+): Promise<void> {
+	return queryClient.invalidateQueries({
+		predicate: (query) => query.queryKey[0] !== "settings",
+	});
+}
+
+export function usePricing() {
+	return useQuery({
+		queryKey: queryKeys.pricing,
+		queryFn: api.pricing,
+		staleTime: 30_000,
+		refetchInterval: (query) =>
+			query.state.data?.status.fetching ? 1000 : false,
+	});
+}
+
+export function useSearchPricingCatalog(query: string, enabled: boolean) {
+	return useQuery({
+		queryKey: queryKeys.pricingCatalog(query),
+		queryFn: () => api.searchPricingCatalog(query, 30),
+		enabled,
+		placeholderData: keepPreviousData,
+		staleTime: 60_000,
+	});
+}
+
+export function useRefreshPricing() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: api.refreshPricing,
+		onSuccess: async (data) => {
+			queryClient.setQueryData(queryKeys.pricing, {
+				status: data.status,
+				settings: data.settings,
+			});
+			await invalidatePricingDependents(queryClient);
+		},
+	});
+}
+
+export function useUpdatePricingSettings() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: api.updatePricingSettings,
+		onSuccess: async (data) => {
+			queryClient.setQueryData(queryKeys.pricing, data);
+			await invalidatePricingDependents(queryClient);
+		},
+	});
+}
+
+export function useUpsertPricingRule() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: api.upsertPricingRule,
+		onSuccess: async (data) => {
+			queryClient.setQueryData(queryKeys.pricing, data);
+			await invalidatePricingDependents(queryClient);
+		},
+	});
+}
+
+export function useImportPricingRules() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: ({
+			rules,
+			replace,
+		}: {
+			rules: Record<string, CustomModelPriceRule>;
+			replace?: boolean;
+		}) => api.importPricingRules(rules, replace),
+		onSuccess: async (data) => {
+			queryClient.setQueryData(queryKeys.pricing, data);
+			await invalidatePricingDependents(queryClient);
+		},
+	});
+}
+
+export function useDeletePricingRule() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: api.deletePricingRule,
+		onSuccess: async (data) => {
+			queryClient.setQueryData(queryKeys.pricing, data);
+			await invalidatePricingDependents(queryClient);
+		},
 	});
 }

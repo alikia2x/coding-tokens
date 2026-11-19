@@ -1,11 +1,15 @@
 import { matchesTextQuery, parseSearchQuery } from "@shared/search";
 import { HARNESS_LABELS, type ModelReportRow } from "@shared/types";
-import { Search } from "lucide-react";
+import { cn } from "cn";
+import { Pencil, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { Sparkline } from "~/components/charts/sparkline";
 import { EmptyState } from "~/components/empty-state";
 import { PageContainer } from "~/components/page-container";
+import { ModelPricingDialog } from "~/components/pricing/model-pricing-dialog";
+import { PricingCatalogDialog } from "~/components/pricing/pricing-catalog-dialog";
+import { PricingStatusPill } from "~/components/pricing/pricing-status-pill";
 import { SectionHeading } from "~/components/section-heading";
 import { SortableHead, type SortState } from "~/components/sortable-head";
 import { SummaryStrip } from "~/components/summary-strip";
@@ -77,6 +81,9 @@ export function ModelsPage() {
 	const range = useResolvedRange();
 	const models = useModels(range);
 	const [query, setQuery] = useState("");
+	const [unpricedOnly, setUnpricedOnly] = useState(false);
+	const [editingRow, setEditingRow] = useState<ModelReportRow | null>(null);
+	const [catalogDialogOpen, setCatalogDialogOpen] = useState(false);
 	const [sort, setSort] = useState<SortState>({
 		key: "cost",
 		direction: "desc",
@@ -85,8 +92,27 @@ export function ModelsPage() {
 	const rangeQuery = rangeQueryString(range);
 	const parsed = useMemo(() => parseSearchQuery(query), [query]);
 
+	const allRows = models.data?.rows ?? [];
+	const unpricedModelCount = useMemo(
+		() =>
+			allRows.filter(
+				(row) =>
+					row.pricing?.source === "unpriced" ||
+					(row.totals.requests > 0 &&
+						row.totals.unpricedRequests >= row.totals.requests),
+			).length,
+		[allRows],
+	);
+
 	const rows = useMemo(() => {
-		const filtered = (models.data?.rows ?? []).filter((row) => {
+		const filtered = allRows.filter((row) => {
+			if (
+				unpricedOnly &&
+				row.pricing?.source !== "unpriced" &&
+				!(row.totals.requests > 0 && row.totals.unpricedRequests > 0)
+			) {
+				return false;
+			}
 			const localized = localizeLabel(t, row.model);
 			const harnessLabels = row.harnesses.map(
 				(harness) => HARNESS_LABELS[harness] ?? harness,
@@ -97,11 +123,12 @@ export function ModelsPage() {
 					row.model,
 					localized,
 					row.provider ?? "",
+					...(row.pricing?.rawModelIds ?? []),
 					...row.harnesses,
 					...harnessLabels,
 				],
 				{
-					model: [row.model, localized],
+					model: [row.model, localized, ...(row.pricing?.rawModelIds ?? [])],
 					harness: [...row.harnesses, ...harnessLabels],
 				},
 			);
@@ -110,7 +137,7 @@ export function ModelsPage() {
 		return [...filtered].sort(
 			(left, right) => compareModels(left, right, sort.key) * direction,
 		);
-	}, [models.data, parsed, sort, t]);
+	}, [allRows, unpricedOnly, parsed, sort, t]);
 
 	const summary = useMemo(
 		() =>
@@ -142,10 +169,35 @@ export function ModelsPage() {
 		<PageContainer>
 			<SectionHeading
 				title={t("common.models")}
-				description={t("count.activeModels", {
-					count: rows.length,
-					formatted: formatNumber(rows.length),
-				})}
+				description={
+					<span className="inline-flex flex-wrap items-center gap-2">
+						<span>
+							{t("count.activeModels", {
+								count: rows.length,
+								formatted: formatNumber(rows.length),
+							})}
+						</span>
+						{unpricedModelCount > 0 ? (
+							<button
+								type="button"
+								onClick={() => setUnpricedOnly((current) => !current)}
+								className={cn(
+									"inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
+									unpricedOnly
+										? "border-warning/50 bg-warning/15 text-warning"
+										: "border-warning/30 bg-warning/10 text-warning hover:bg-warning/15",
+								)}
+							>
+								{t("models.unpricedCount", {
+									formatted: formatNumber(unpricedModelCount),
+								})}
+							</button>
+						) : null}
+					</span>
+				}
+				actions={
+					<PricingStatusPill onClick={() => setCatalogDialogOpen(true)} />
+				}
 			/>
 			<SummaryStrip
 				items={[
@@ -247,64 +299,119 @@ export function ModelsPage() {
 							</TableRow>
 						</TableHeader>
 						<TableBody>
-							{rows.map((row) => (
-								<TableRow key={row.model} className="text-[12px]">
-									<TableCell className="px-2 py-2">
-										<Link
-											to={`/sessions?${rangeQuery}&model=${encodeURIComponent(row.model)}`}
-											className="block max-w-80 truncate font-medium hover:underline"
-										>
-											{localizeLabel(t, row.model)}
-										</Link>
-										{row.provider ? (
-											<span className="text-[10px] text-muted-foreground">
-												{row.provider}
-											</span>
-										) : null}
-									</TableCell>
-									<TableCell className="py-2 text-[10px] text-muted-foreground">
-										{row.harnesses
-											.map((harness) => HARNESS_LABELS[harness])
-											.join(", ")}
-									</TableCell>
-									<TableCell className="py-2 text-right tabular">
-										{formatNumber(row.totals.requests)}
-									</TableCell>
-									<TableCell className="py-2 text-right tabular">
-										{formatTokens(tokenTotal(row))}
-									</TableCell>
-									<TableCell className="py-2 text-right tabular">
-										{formatPercent(row.cacheReadShare)}
-									</TableCell>
-									<TableCell className="py-2 text-right tabular">
-										{row.totals.requests > 0 &&
-										row.totals.unpricedRequests >= row.totals.requests
-											? "—"
-											: formatCost(
-													row.totals.costUsd,
-													row.totals.estimatedRequests > 0,
-												)}
-									</TableCell>
-									<TableCell className="py-2 text-right tabular">
-										{row.costPerMillionTokens === null
-											? "—"
-											: formatCost(row.costPerMillionTokens, true)}
-									</TableCell>
-									<TableCell className="py-2 text-right text-[11px] text-muted-foreground">
-										{formatRelativeTime(row.lastActivityAt)}
-									</TableCell>
-									<TableCell className="py-2 pr-2 text-right">
-										<Sparkline
-											values={row.sparkline}
-											className="ml-auto h-5 w-24"
-										/>
-									</TableCell>
-								</TableRow>
-							))}
+							{rows.map((row) => {
+								const source = row.pricing?.source;
+								const exceptionLabel =
+									source === "unpriced" ||
+									source === "custom" ||
+									source === "custom_alias"
+										? t(`pricing.source.${source}`)
+										: null;
+								const isUnpriced =
+									(row.totals.requests > 0 &&
+										row.totals.unpricedRequests >= row.totals.requests) ||
+									source === "unpriced";
+								return (
+									<TableRow key={row.model} className="group text-[12px]">
+										<TableCell className="px-2 py-2">
+											<Link
+												to={`/sessions?${rangeQuery}&model=${encodeURIComponent(row.model)}`}
+												className="block max-w-80 truncate font-medium hover:underline"
+											>
+												{localizeLabel(t, row.model)}
+											</Link>
+											{row.provider || exceptionLabel ? (
+												<span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+													{row.provider ? <span>{row.provider}</span> : null}
+													{exceptionLabel ? (
+														<span
+															className={cn(
+																"rounded px-1 py-px text-[9.5px] leading-tight",
+																source === "unpriced"
+																	? "bg-warning/10 font-medium text-warning"
+																	: "bg-muted text-muted-foreground",
+															)}
+														>
+															{exceptionLabel}
+														</span>
+													) : null}
+												</span>
+											) : null}
+										</TableCell>
+										<TableCell className="py-2 text-[10px] text-muted-foreground">
+											{row.harnesses
+												.map((harness) => HARNESS_LABELS[harness])
+												.join(", ")}
+										</TableCell>
+										<TableCell className="py-2 text-right tabular">
+											{formatNumber(row.totals.requests)}
+										</TableCell>
+										<TableCell className="py-2 text-right tabular">
+											{formatTokens(tokenTotal(row))}
+										</TableCell>
+										<TableCell className="py-2 text-right tabular">
+											{formatPercent(row.cacheReadShare)}
+										</TableCell>
+										<TableCell className="py-2 text-right tabular">
+											{isUnpriced ? (
+												<button
+													type="button"
+													onClick={() => setEditingRow(row)}
+													className="inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium text-warning transition-colors hover:bg-warning/10"
+												>
+													{t("models.setPrice")}
+												</button>
+											) : (
+												<button
+													type="button"
+													onClick={() => setEditingRow(row)}
+													title={t("models.editPrice")}
+													className="-mx-1.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors hover:bg-hover"
+												>
+													<Pencil className="size-2.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+													<span>
+														{formatCost(
+															row.totals.costUsd,
+															row.totals.estimatedRequests > 0,
+														)}
+													</span>
+												</button>
+											)}
+										</TableCell>
+										<TableCell className="py-2 text-right tabular">
+											{row.costPerMillionTokens === null
+												? "—"
+												: formatCost(row.costPerMillionTokens, true)}
+										</TableCell>
+										<TableCell className="py-2 text-right text-[11px] text-muted-foreground">
+											{formatRelativeTime(row.lastActivityAt)}
+										</TableCell>
+										<TableCell className="py-2 pr-2 text-right">
+											<Sparkline
+												values={row.sparkline}
+												className="ml-auto h-5 w-24"
+											/>
+										</TableCell>
+									</TableRow>
+								);
+							})}
 						</TableBody>
 					</Table>
 				</div>
 			)}
+
+			<ModelPricingDialog
+				open={Boolean(editingRow)}
+				onOpenChange={(next) => {
+					if (!next) setEditingRow(null);
+				}}
+				row={editingRow}
+			/>
+			<PricingCatalogDialog
+				open={catalogDialogOpen}
+				onOpenChange={setCatalogDialogOpen}
+				activeRows={allRows}
+			/>
 		</PageContainer>
 	);
 }

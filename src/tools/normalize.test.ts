@@ -443,4 +443,118 @@ describe("tool normalization across harnesses", () => {
 			normalizeToolOperations({ name: "enter_plan_mode", input: {} })[0],
 		).toMatchObject({ verb: "plan", target: "enter_plan_mode" });
 	});
+
+	test("normalizes flexible Codex tool patterns: inline apply_patch, destructuring, template loops, multi-line exec_command, multi_tool_use.parallel, and opaque spawn_agent", () => {
+		// 1. Inline code-mode `tools.apply_patch("...\\n...")` unescapes newlines cleanly
+		expect(
+			normalizeToolOperations({
+				name: "exec",
+				input:
+					'text(await tools.apply_patch("*** Begin Patch\\n*** Update File: /Users/alice/app/server.ts\\n@@\\n-a\\n+b\\n*** End Patch"));',
+			}),
+		).toEqual([
+			{
+				verb: "edit",
+				rawName: "apply_patch",
+				target: "~/app/server.ts",
+				fullTarget: "/Users/alice/app/server.ts",
+				meta: undefined,
+				errorBadge: undefined,
+			},
+		]);
+
+		// 2. Destructured tools + template literal inside for..of loop
+		const cmdTemplate = "`cat $" + "{f}`";
+		expect(
+			normalizeToolOperations({
+				name: "exec",
+				input: `const { exec_command } = tools; const files = ["a.ts", "b.ts"]; for (const f of files) { await exec_command({ cmd: ${cmdTemplate} }); }`,
+			}).map((op) => [op.verb, op.rawName, op.target]),
+		).toEqual([
+			["command", "exec_command", "cat a.ts"],
+			["command", "exec_command", "cat b.ts"],
+		]);
+
+		// 3. Multi-line exec_command preserves every statement while collapsing heredocs
+		expect(
+			normalizeToolOperations({
+				name: "exec_command",
+				input: {
+					cmd: [
+						"sed -n '1,80p' src/a.ts",
+						"cat package.json",
+						"python3 - <<'PY'\nprint('ok')\nPY",
+					].join("\n"),
+				},
+			}).map((op) => op.target),
+		).toEqual([
+			"sed -n '1,80p' src/a.ts",
+			"cat package.json",
+			"python3 - <<'PY'",
+		]);
+
+		// 4. local_shell_call / bash -lc wrapper unwrapping
+		expect(
+			normalizeToolOperations({
+				name: "local_shell_call",
+				input: { command: ["bash", "-lc", "rg -n 'TODO' src"] },
+			})[0],
+		).toMatchObject({ verb: "command", target: "rg -n 'TODO' src" });
+
+		// 5. multi_tool_use.parallel recursive expansion
+		expect(
+			normalizeToolOperations({
+				name: "multi_tool_use.parallel",
+				input: {
+					tool_uses: [
+						{
+							recipient_name: "functions.read_file",
+							parameters: { file_path: "/Users/alice/app/main.ts" },
+						},
+						{
+							recipient_name: "functions.exec_command",
+							parameters: { cmd: "bun test" },
+						},
+					],
+				},
+			}).map((op) => [op.verb, op.rawName, op.target]),
+		).toEqual([
+			["read", "read_file", "~/app/main.ts"],
+			["command", "exec_command", "bun test"],
+		]);
+
+		// 6. spawn_agent / send_message prefer task_name/target over encrypted Fernet ciphertext
+		expect(
+			normalizeToolOperations({
+				name: "spawn_agent",
+				input: {
+					task_name: "design_reviewer",
+					message: `gAAAAAB${"x".repeat(48)}`,
+				},
+			})[0],
+		).toMatchObject({ verb: "subagent", target: "design_reviewer" });
+
+		// 7. Codex exec JS whose string literals contain JS method shorthand / destructuring must not hang or misparse
+		const opsFromStringHeavyJs = normalizeToolOperations({
+			name: "exec",
+			input: `await tools.exec_command({ cmd: "python3 - <<'PY'\\nconst overview = { async queueCounts() { return [{ waiting: 1, active: 2 }]; } }\\nconst { fake } = tools\\nPY" });`,
+		});
+		expect(opsFromStringHeavyJs).toHaveLength(1);
+		expect(opsFromStringHeavyJs[0]).toMatchObject({
+			verb: "command",
+			rawName: "exec_command",
+		});
+
+		// 8. Malformed JS shorthand/delimiters inside embedded JS terminate safely
+		expect(() =>
+			normalizeToolOperations({
+				name: "exec",
+				input:
+					"const bad = { async m() { return [{ a, b }]; } ]; const d = " +
+					"{ a: ".repeat(40) +
+					"1" +
+					" }".repeat(40),
+			}),
+		).not.toThrow();
+	});
 });

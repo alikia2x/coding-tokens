@@ -7,12 +7,17 @@ import {
 	writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { deflateRawSync } from "node:zlib";
 import { safeBasename } from "./platform/normalizer";
 import {
+	normalizeToolOperations,
+	pairToolItems,
+	unwrapToolOutput,
+} from "./tools/normalize";
+import {
 	type ExportDetail,
-	isInjectedUserMessage,
+	selectItemsForDetail,
 	shaSegment,
-	type ToolCategory,
 	type TranscriptItem,
 	type TranscriptSession,
 } from "./transcripts";
@@ -49,50 +54,6 @@ function roleTag(item: TranscriptItem): string {
 	if (item.role === "system") return "SYSTEM";
 	if (item.role === "developer") return "DEVELOPER";
 	return item.role === "tool" ? "TOOL" : "OTHER";
-}
-
-function assistantOrUser(item: TranscriptItem): boolean {
-	return (
-		item.kind === "message" &&
-		(item.role === "user" || item.role === "assistant")
-	);
-}
-
-function selectedItems(
-	session: TranscriptSession,
-	detail: ExportDetail,
-): TranscriptItem[] {
-	const items = session.items.filter(
-		(item) =>
-			item.role !== "user" ||
-			!isInjectedUserMessage(session.harness, item.text ?? ""),
-	);
-	if (detail === "user_only")
-		return items.filter(
-			(item) => item.kind === "message" && item.role === "user",
-		);
-	if (detail === "chat_compact")
-		return items.filter(
-			(item) =>
-				item.kind === "message" &&
-				(item.role === "user" ||
-					(item.role === "assistant" && item.phase === "final")),
-		);
-	if (detail === "chat" || detail === "chat_tools")
-		return items.filter(assistantOrUser);
-	if (detail === "agent")
-		return items.filter(
-			(item) =>
-				assistantOrUser(item) ||
-				item.kind === "tool_call" ||
-				item.kind === "tool_result",
-		);
-	return items.filter(
-		(item) =>
-			item.role !== "system" &&
-			item.role !== "developer" &&
-			(item.kind !== "other" || item.role !== "tool"),
-	);
 }
 
 interface TokenTotals {
@@ -159,21 +120,21 @@ function conversationTokenLine(records: UsageRecord[]): string | null {
 }
 
 function turnForUsage(
-	session: TranscriptSession,
 	record: UsageRecord,
+	users: TranscriptItem[],
 	assistantItems: TranscriptItem[],
+	knownTurns: ReadonlySet<string>,
 ): string | undefined {
-	if (record.turnId) return record.turnId;
+	if (record.turnId && knownTurns.has(record.turnId)) return record.turnId;
 	const timestamp = record.timestamp;
-	const users = session.items.filter(
-		(item) => item.role === "user" && item.kind === "message",
-	);
 	if (timestamp !== null) {
 		let latest: TranscriptItem | undefined;
 		for (const user of users) {
 			if (user.timestamp !== null && user.timestamp <= timestamp) latest = user;
 		}
 		if (latest) return latest.turnId;
+		const nearestAssistant = closestByTimestamp(assistantItems, timestamp);
+		if (nearestAssistant) return nearestAssistant.turnId;
 	}
 	return assistantItems.at(-1)?.turnId;
 }
@@ -202,13 +163,29 @@ function usageByAssistantMessage(
 	detail: ExportDetail,
 	visibleItems: TranscriptItem[],
 ): Map<string, UsageRecord[]> {
+	const result = new Map<string, UsageRecord[]>();
+	if (detail === "user_only") return result;
+
 	const visibleAssistant = visibleItems.filter(
 		(item) => item.kind === "message" && item.role === "assistant",
 	);
+	if (!visibleAssistant.length) return result;
+
 	const allAssistant = session.items.filter(
 		(item) => item.kind === "message" && item.role === "assistant",
 	);
-	const result = new Map<string, UsageRecord[]>();
+	const users = session.items.filter(
+		(item) => item.role === "user" && item.kind === "message",
+	);
+	const knownTurns = new Set(session.items.map((item) => item.turnId));
+	const callsByTurn = new Map<string, TranscriptItem[]>();
+	for (const item of session.items) {
+		if (item.kind !== "tool_call") continue;
+		const list = callsByTurn.get(item.turnId) ?? [];
+		list.push(item);
+		callsByTurn.set(item.turnId, list);
+	}
+
 	const append = (item: TranscriptItem | undefined, record: UsageRecord) => {
 		if (!item) return;
 		const records = result.get(item.id) ?? [];
@@ -219,21 +196,26 @@ function usageByAssistantMessage(
 	for (const record of session.usageRecords ?? []) {
 		if (record.isSubagent || record.messageId.endsWith(":cumulative-total"))
 			continue;
-		const turnId = turnForUsage(session, record, allAssistant);
+		const turnId = turnForUsage(record, users, allAssistant, knownTurns);
 		const sameTurn = visibleAssistant.filter(
 			(item) => !turnId || item.turnId === turnId,
 		);
-		if (!sameTurn.length) continue;
+		const candidates = sameTurn.length ? sameTurn : visibleAssistant;
 
 		if (detail === "chat_compact") {
-			const final = [...sameTurn]
+			const final = [...candidates]
 				.reverse()
 				.find((item) => item.phase === "final");
-			append(final ?? sameTurn.at(-1), record);
+			append(
+				final ??
+					closestByTimestamp(candidates, record.timestamp) ??
+					candidates.at(-1),
+				record,
+			);
 			continue;
 		}
 
-		const exact = sameTurn.find(
+		const exact = candidates.find(
 			(item) =>
 				item.id === record.messageId || item.usageId === record.messageId,
 		);
@@ -242,9 +224,7 @@ function usageByAssistantMessage(
 			continue;
 		}
 
-		const sameTurnCalls = session.items.filter(
-			(item) => item.kind === "tool_call" && item.turnId === turnId,
-		);
+		const sameTurnCalls = turnId ? (callsByTurn.get(turnId) ?? []) : [];
 		const nearestCall = closestByTimestamp(sameTurnCalls, record.timestamp);
 		if (
 			nearestCall &&
@@ -252,14 +232,21 @@ function usageByAssistantMessage(
 			nearestCall.timestamp !== null &&
 			Math.abs(nearestCall.timestamp - record.timestamp) <= 5_000
 		) {
-			const afterCall = sameTurn.find((item) => item.order > nearestCall.order);
+			const afterCall = candidates.find(
+				(item) => item.order > nearestCall.order,
+			);
 			append(
-				afterCall ?? closestByTimestamp(sameTurn, record.timestamp),
+				afterCall ??
+					closestByTimestamp(candidates, record.timestamp) ??
+					candidates.at(-1),
 				record,
 			);
 			continue;
 		}
-		append(closestByTimestamp(sameTurn, record.timestamp), record);
+		append(
+			closestByTimestamp(candidates, record.timestamp) ?? candidates.at(-1),
+			record,
+		);
 	}
 	return result;
 }
@@ -344,58 +331,6 @@ function collectPaths(value: unknown): string[] {
 	return [...paths];
 }
 
-interface ToolCounts {
-	commands: number;
-	readCalls: number;
-	writeCalls: number;
-	otherCalls: number;
-	readPaths: Set<string>;
-	writePaths: Set<string>;
-}
-
-function summarizeTools(items: TranscriptItem[]): ToolCounts {
-	const summary: ToolCounts = {
-		commands: 0,
-		readCalls: 0,
-		writeCalls: 0,
-		otherCalls: 0,
-		readPaths: new Set(),
-		writePaths: new Set(),
-	};
-	for (const item of items) {
-		if (item.kind !== "tool_call") continue;
-		const category: ToolCategory = item.category ?? "other";
-		if (category === "command") summary.commands += 1;
-		else if (category === "read") {
-			summary.readCalls += 1;
-			for (const value of collectPaths(item.input))
-				summary.readPaths.add(value);
-		} else if (category === "write") {
-			summary.writeCalls += 1;
-			for (const value of collectPaths(item.input))
-				summary.writePaths.add(value);
-		} else summary.otherCalls += 1;
-	}
-	return summary;
-}
-
-function toolSummaryMarkdown(items: TranscriptItem[]): string {
-	const summary = summarizeTools(items);
-	const lines: string[] = [];
-	if (summary.commands) lines.push(`ran ${summary.commands} commands`);
-	if (summary.readPaths.size)
-		lines.push(`read ${summary.readPaths.size} files`);
-	else if (summary.readCalls)
-		lines.push(`used read/search tools ${summary.readCalls} times`);
-	if (summary.writePaths.size)
-		lines.push(`wrote ${summary.writePaths.size} files`);
-	else if (summary.writeCalls)
-		lines.push(`used write/edit tools ${summary.writeCalls} times`);
-	if (summary.otherCalls)
-		lines.push(`called ${summary.otherCalls} other tools`);
-	return lines.length ? `[TOOLS] ${lines.join(", ")}` : "";
-}
-
 function agentCallMarkdown(
 	item: TranscriptItem,
 	detail: ExportDetail,
@@ -419,17 +354,54 @@ function agentCallMarkdown(
 	return label;
 }
 
+function resolvedResultName(
+	item: TranscriptItem,
+	pairedCall?: TranscriptItem,
+): string | undefined {
+	if (item.name && item.name !== "tool") return item.name;
+	return pairedCall?.name ?? item.name;
+}
+
+function compactToolMarkdown(
+	item: TranscriptItem,
+	includeTimestamps: boolean,
+): string {
+	const operations = normalizeToolOperations(item);
+	const timestamp = includeTimestamps ? formatTimestamp(item.timestamp) : null;
+	const tsSuffix = timestamp ? ` (${timestamp})` : "";
+	if (!operations.length) {
+		return agentCallMarkdown(item, "agent", includeTimestamps);
+	}
+	return operations
+		.map((op) => {
+			const parts = [`[TOOL ${op.rawName}]${tsSuffix}`];
+			if (op.target) parts.push(`\`${op.target}\``);
+			if (op.meta) parts.push(`(${op.meta})`);
+			return parts.join(" ");
+		})
+		.join("\n");
+}
+
 function toolResultMarkdown(
 	item: TranscriptItem,
 	detail: ExportDetail,
 	includeTimestamps: boolean,
+	pairedCall?: TranscriptItem,
 ): string {
 	const timestamp = includeTimestamps ? formatTimestamp(item.timestamp) : null;
-	const label = `[TOOL RESULT${item.name ? ` ${item.name}` : ""}]${timestamp ? ` (${timestamp})` : ""}${item.status ? ` ${item.status}` : ""}`;
-	if (detail === "agent_full")
-		return `${label}\n${codeFence(safeValue(item.output ?? item.text))}`;
-	const short = item.text || safeValue(item.output);
-	return `${label}${short ? `\n${codeFence(truncate(short, 600))}` : ""}`;
+	const name = resolvedResultName(item, pairedCall);
+	const label = `[TOOL RESULT${name ? ` ${name}` : ""}]${timestamp ? ` (${timestamp})` : ""}${item.status ? ` ${item.status}` : ""}`;
+	const unwrapped = unwrapToolOutput(item.output, item.text);
+	const body =
+		unwrapped !== null
+			? unwrapped
+			: item.output !== undefined
+				? safeValue(item.output)
+				: (item.text ?? "");
+	if (detail === "agent_full") {
+		return body ? `${label}\n${codeFence(body)}` : label;
+	}
+	return `${label}${body ? `\n${codeFence(truncate(body, 600))}` : ""}`;
 }
 
 function renderItem(
@@ -437,13 +409,17 @@ function renderItem(
 	detail: ExportDetail,
 	includeTimestamps: boolean,
 	usage: UsageRecord[],
-): string {
+	pairedCall?: TranscriptItem,
+): string | null {
 	const timestamp = includeTimestamps ? formatTimestamp(item.timestamp) : null;
+	if (detail === "chat_tools" && item.kind === "tool_call") {
+		return compactToolMarkdown(item, includeTimestamps);
+	}
 	if (item.kind === "tool_call")
 		return agentCallMarkdown(item, detail, includeTimestamps);
 	if (item.kind === "tool_result")
-		return toolResultMarkdown(item, detail, includeTimestamps);
-	const body = `[${roleTag(item)}]${timestamp ? ` (${timestamp})` : ""}: ${item.text ?? ""}`;
+		return toolResultMarkdown(item, detail, includeTimestamps, pairedCall);
+	const body = `[${roleTag(item)}]${timestamp ? ` (${timestamp})` : ""}: ${(item.text ?? "").trimEnd()}`;
 	if (item.kind === "message" && item.role === "assistant" && usage.length)
 		return `${body}\n\n${modelTokenLines(usage).join("\n")}`;
 	return body;
@@ -511,8 +487,16 @@ function renderSession(
 	includeTimestamps: boolean,
 	includeTokenStats: boolean,
 ): string | null {
-	const items = selectedItems(session, detail);
+	const items = selectItemsForDetail(session, detail);
 	if (!items.length) return null;
+	const pairedCallByResult = new Map<TranscriptItem, TranscriptItem>();
+	for (const pair of pairToolItems(session.items)) {
+		if (pair.call.kind !== "tool_call") continue;
+		for (const res of pair.results) {
+			pairedCallByResult.set(res, pair.call);
+		}
+	}
+
 	const title = displayTitle(session);
 	const lines = [GENERATED_MARKER, `# ${title}`];
 	const usageRecords = session.usageRecords ?? [];
@@ -523,23 +507,19 @@ function renderSession(
 	const usageByMessage = includeTokenStats
 		? usageByAssistantMessage(session, detail, items)
 		: new Map<string, UsageRecord[]>();
-	lines.push(
-		"",
-		items
-			.map((item) =>
-				renderItem(
-					item,
-					detail,
-					includeTimestamps,
-					usageByMessage.get(item.id) ?? [],
-				),
-			)
-			.join("\n\n"),
-	);
-	if (detail === "chat_tools") {
-		const summary = toolSummaryMarkdown(session.items);
-		if (summary) lines.push("", summary);
-	}
+	const renderedItems = items
+		.map((item) =>
+			renderItem(
+				item,
+				detail,
+				includeTimestamps,
+				usageByMessage.get(item.id) ?? [],
+				pairedCallByResult.get(item),
+			),
+		)
+		.filter((part): part is string => part !== null);
+	if (!renderedItems.length) return null;
+	lines.push("", renderedItems.join("\n\n"));
 	return `${lines.join("\n").trimEnd()}\n`;
 }
 
@@ -644,4 +624,109 @@ export function exportSessionsToMarkdown(
 		? 0
 		: removeStaleGeneratedFiles(outputDirectory, expectedFiles, warnings);
 	return { filesWritten, filesRemoved, indexPath, warnings };
+}
+
+const CRC32_TABLE = (() => {
+	const table = new Uint32Array(256);
+	for (let i = 0; i < 256; i += 1) {
+		let c = i;
+		for (let bit = 0; bit < 8; bit += 1) {
+			c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+		}
+		table[i] = c >>> 0;
+	}
+	return table;
+})();
+
+function crc32(data: Uint8Array): number {
+	let crc = 0xffffffff;
+	for (let i = 0; i < data.length; i += 1) {
+		crc = (CRC32_TABLE[(crc ^ (data[i] ?? 0)) & 0xff] ?? 0) ^ (crc >>> 8);
+	}
+	return (crc ^ 0xffffffff) >>> 0;
+}
+
+/**
+ * Packages flat or relative entries into a standard PKZIP archive (deflate).
+ */
+export function createZipArchive(
+	entries: ReadonlyArray<{ name: string; content: string | Uint8Array }>,
+): Uint8Array {
+	const encoder = new TextEncoder();
+	const now = new Date();
+	const dosTime =
+		((now.getHours() & 0x1f) << 11) |
+		((now.getMinutes() & 0x3f) << 5) |
+		((now.getSeconds() >> 1) & 0x1f);
+	const dosDate =
+		(((Math.max(1980, now.getFullYear()) - 1980) & 0x7f) << 9) |
+		(((now.getMonth() + 1) & 0x0f) << 5) |
+		(now.getDate() & 0x1f);
+
+	const localParts: Buffer[] = [];
+	const centralParts: Buffer[] = [];
+	let offset = 0;
+
+	for (const entry of entries) {
+		const nameBytes = Buffer.from(encoder.encode(entry.name));
+		const rawBytes =
+			typeof entry.content === "string"
+				? Buffer.from(encoder.encode(entry.content))
+				: Buffer.from(entry.content);
+		const compressed = Buffer.from(deflateRawSync(rawBytes));
+		const useDeflate = compressed.length < rawBytes.length;
+		const payload = useDeflate ? compressed : rawBytes;
+		const method = useDeflate ? 8 : 0;
+		const crc = crc32(rawBytes);
+
+		const localHeader = Buffer.alloc(30);
+		localHeader.writeUInt32LE(0x04034b50, 0);
+		localHeader.writeUInt16LE(20, 4);
+		localHeader.writeUInt16LE(0x0800, 6); // UTF-8 filename flag
+		localHeader.writeUInt16LE(method, 8);
+		localHeader.writeUInt16LE(dosTime, 10);
+		localHeader.writeUInt16LE(dosDate, 12);
+		localHeader.writeUInt32LE(crc, 14);
+		localHeader.writeUInt32LE(payload.length, 18);
+		localHeader.writeUInt32LE(rawBytes.length, 22);
+		localHeader.writeUInt16LE(nameBytes.length, 26);
+		localHeader.writeUInt16LE(0, 28);
+
+		localParts.push(localHeader, nameBytes, payload);
+
+		const centralHeader = Buffer.alloc(46);
+		centralHeader.writeUInt32LE(0x02014b50, 0);
+		centralHeader.writeUInt16LE(20, 4);
+		centralHeader.writeUInt16LE(20, 6);
+		centralHeader.writeUInt16LE(0x0800, 8);
+		centralHeader.writeUInt16LE(method, 10);
+		centralHeader.writeUInt16LE(dosTime, 12);
+		centralHeader.writeUInt16LE(dosDate, 14);
+		centralHeader.writeUInt32LE(crc, 16);
+		centralHeader.writeUInt32LE(payload.length, 20);
+		centralHeader.writeUInt32LE(rawBytes.length, 24);
+		centralHeader.writeUInt16LE(nameBytes.length, 28);
+		centralHeader.writeUInt16LE(0, 30);
+		centralHeader.writeUInt16LE(0, 32);
+		centralHeader.writeUInt16LE(0, 34);
+		centralHeader.writeUInt16LE(0, 36);
+		centralHeader.writeUInt32LE(0, 38);
+		centralHeader.writeUInt32LE(offset, 42);
+
+		centralParts.push(centralHeader, nameBytes);
+		offset += localHeader.length + nameBytes.length + payload.length;
+	}
+
+	const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+	const eocd = Buffer.alloc(22);
+	eocd.writeUInt32LE(0x06054b50, 0);
+	eocd.writeUInt16LE(0, 4);
+	eocd.writeUInt16LE(0, 6);
+	eocd.writeUInt16LE(entries.length, 8);
+	eocd.writeUInt16LE(entries.length, 10);
+	eocd.writeUInt32LE(centralSize, 12);
+	eocd.writeUInt32LE(offset, 16);
+	eocd.writeUInt16LE(0, 20);
+
+	return Buffer.concat([...localParts, ...centralParts, eocd]);
 }

@@ -1,7 +1,9 @@
 import { type AppLocale, SESSION_DETAIL_LEVELS } from "@shared/types";
 import { RotateCw } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router";
 import { PageContainer } from "~/components/page-container";
+import { PricingCatalogDialog } from "~/components/pricing/pricing-catalog-dialog";
 import { SectionHeading } from "~/components/section-heading";
 import { Button } from "~/components/ui/button";
 import {
@@ -13,14 +15,14 @@ import {
 } from "~/components/ui/select";
 import { Switch } from "~/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "~/components/ui/toggle-group";
-import { formatDateTime, formatNumber } from "~/lib/format";
+import { formatDateTime, formatNumber, formatRelativeTime } from "~/lib/format";
 import {
 	SUPPORTED_LOCALES,
 	setAppLocale,
 	type TranslationKey,
 	useT,
 } from "~/lib/i18n";
-import { useRefreshData, useStatus } from "~/lib/queries";
+import { usePricing, useRefreshData, useStatus } from "~/lib/queries";
 import { useSettings } from "~/lib/settings";
 import { useTheme } from "~/lib/theme";
 import { RANGE_PRESETS } from "~/lib/time-range";
@@ -29,7 +31,10 @@ export function SettingsPage() {
 	const { settings, update, saving } = useSettings();
 	const { setMode } = useTheme();
 	const status = useStatus();
+	const pricing = usePricing();
+	const pricingStatus = pricing.data?.status;
 	const refresh = useRefreshData();
+	const [pricingOpen, setPricingOpen] = useState(false);
 	const t = useT();
 
 	return (
@@ -240,6 +245,34 @@ export function SettingsPage() {
 							{t("status.refresh")}
 						</Button>
 					</Row>
+					<Row label={t("pricing.title")}>
+						<div className="flex items-center gap-3">
+							{pricingStatus ? (
+								<span className="text-[12px] text-muted-foreground tabular">
+									{pricingStatus.lastError ? (
+										<span className="text-destructive">
+											{t("pricing.pillSyncFailed")}
+										</span>
+									) : pricingStatus.state === "offline" ? (
+										t("pricing.status.offline")
+									) : pricingStatus.fetchedAt ? (
+										t("pricing.updatedAgo", {
+											time: formatRelativeTime(pricingStatus.fetchedAt),
+										})
+									) : (
+										t("pricing.status.missing")
+									)}
+								</span>
+							) : null}
+							<Button
+								variant="outline"
+								size="sm"
+								onClick={() => setPricingOpen(true)}
+							>
+								{t("pricing.configure")}
+							</Button>
+						</div>
+					</Row>
 					<Row label={t("harnesses.dataSources")}>
 						<Link
 							to="/harnesses"
@@ -250,6 +283,8 @@ export function SettingsPage() {
 					</Row>
 				</Section>
 			</div>
+
+			<PricingCatalogDialog open={pricingOpen} onOpenChange={setPricingOpen} />
 		</PageContainer>
 	);
 }

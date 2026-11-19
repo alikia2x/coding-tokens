@@ -413,6 +413,19 @@ describe("Dynamic Harness Filter UI Regression Suite", () => {
 			init?: RequestInit,
 		) => {
 			const url = typeof input === "string" ? input : input.toString();
+			if (url.includes("/api/dialog/directory")) {
+				return new Response(
+					JSON.stringify({
+						supported: true,
+						path: "/tmp/coding-tokens-exports",
+						cancelled: false,
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
 			if (url.includes("/api/sessions/export")) {
 				postedBatchPayload = JSON.parse(String(init?.body ?? "{}")) as Record<
 					string,
@@ -420,8 +433,10 @@ describe("Dynamic Harness Filter UI Regression Suite", () => {
 				>;
 				return new Response(
 					JSON.stringify({
-						directory: "/tmp/coding-tokens-exports/export-1",
-						indexPath: "/tmp/coding-tokens-exports/export-1/_index.md",
+						directory: "/tmp/coding-tokens-exports",
+						outputPath: "/tmp/coding-tokens-exports/export-1",
+						filename: "export-1",
+						bytes: 128,
 						filesWritten: 1,
 						skippedCount: 0,
 						warnings: [],
@@ -502,5 +517,146 @@ describe("Dynamic Harness Filter UI Regression Suite", () => {
 		expect(document.body.textContent).toContain(
 			"/tmp/coding-tokens-exports/export-1",
 		);
+	});
+
+	test("SessionsPage cross-filters harness counts and facet option counts against other active filters", async () => {
+		const status = makeStatusPayload();
+		const baseTotals = {
+			sessions: 1,
+			messages: 2,
+			requests: 1,
+			inputTokens: 100,
+			outputTokens: 50,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			reasoningTokens: 0,
+			costUsd: 0.01,
+			estimatedRequests: 0,
+			unpricedRequests: 0,
+		};
+		const sessionsData = {
+			indexedAt: Date.now(),
+			warnings: [],
+			sessions: [
+				{
+					key: "claude:c1",
+					harness: "claude",
+					sessionId: "c1",
+					title: "Alpha work",
+					cwd: "/proj/alpha",
+					projectName: "alpha",
+					models: ["claude-sonnet-4"],
+					startedAt: 1000,
+					lastActivityAt: 2000,
+					durationMs: 1000,
+					isSubagent: false,
+					isReview: false,
+					hasTranscript: true,
+					totals: baseTotals,
+				},
+				{
+					key: "codex:x1",
+					harness: "codex",
+					sessionId: "x1",
+					title: "Alpha codex work",
+					cwd: "/proj/alpha",
+					projectName: "alpha",
+					models: ["gpt-5"],
+					startedAt: 3000,
+					lastActivityAt: 4000,
+					durationMs: 1000,
+					isSubagent: false,
+					isReview: false,
+					hasTranscript: true,
+					totals: baseTotals,
+				},
+				{
+					key: "codex:x2",
+					harness: "codex",
+					sessionId: "x2",
+					title: "Beta codex work",
+					cwd: "/proj/beta",
+					projectName: "beta",
+					models: ["gpt-5"],
+					startedAt: 5000,
+					lastActivityAt: 6000,
+					durationMs: 1000,
+					isSubagent: false,
+					isReview: false,
+					hasTranscript: true,
+					totals: baseTotals,
+				},
+			],
+		};
+
+		globalThis.fetch = (async (input: RequestInfo | URL) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url.includes("/api/sessions")) {
+				return new Response(JSON.stringify(sessionsData), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			return new Response(JSON.stringify(status), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			});
+		}) as typeof fetch;
+
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		queryClient.setQueryData(queryKeys.status, status);
+
+		// Filtering by model=gpt-5 should restrict harness sidebar to Codex 2 & All 2 (Claude hidden),
+		// and Project facet should reflect only Alpha (1) and Beta (1)
+		root.render(
+			React.createElement(
+				QueryClientProvider,
+				{ client: queryClient },
+				React.createElement(
+					MemoryRouter,
+					{ initialEntries: ["/sessions?model=gpt-5"] },
+					React.createElement(
+						SettingsProvider,
+						null,
+						React.createElement(
+							RangeProvider,
+							null,
+							React.createElement(SessionsPage),
+						),
+					),
+				),
+			),
+		);
+
+		await sleep(80);
+
+		const sidebarButtons = Array.from(
+			container.querySelectorAll("aside button"),
+		);
+		const allHarnessesBtn = sidebarButtons.find((b) =>
+			b.textContent?.includes("All"),
+		);
+		const codexBtn = sidebarButtons.find((b) =>
+			b.textContent?.includes("Codex"),
+		);
+		const claudeBtn = sidebarButtons.find((b) =>
+			b.textContent?.includes("Claude"),
+		);
+		expect(allHarnessesBtn?.textContent).toContain("2");
+		expect(codexBtn?.textContent).toContain("2");
+		expect(claudeBtn).toBeUndefined();
+
+		const projectFilterBtn = sidebarButtons.find((b) =>
+			b.textContent?.startsWith("Project"),
+		);
+		expect(projectFilterBtn).toBeDefined();
+		click(projectFilterBtn);
+		await sleep(50);
+
+		const popButtons = Array.from(document.body.querySelectorAll("button"));
+		const alphaOpt = popButtons.find((b) => b.textContent?.includes("alpha"));
+		expect(alphaOpt?.textContent).toContain("1");
 	});
 });

@@ -5,6 +5,8 @@ const { port, hostname, staticDir } = startServer({
 	hostname: process.env.HOST ?? "127.0.0.1",
 	staticDir: process.env.STATIC_DIR,
 	dbPath: process.env.DB_PATH,
+	deferStartMs: 100,
+	useIndexWorker: true,
 });
 console.log(`Coding Tokens listening on http://${hostname}:${port}`);
 console.log(`Static files: ${staticDir}`);

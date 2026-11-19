@@ -7,6 +7,7 @@ import {
 	cleanUserMessage,
 	type ExportDetail,
 	isInjectedUserMessage,
+	selectItemsForDetail,
 	shaSegment,
 	type ToolCategory,
 	type TranscriptFilters,
@@ -34,6 +35,7 @@ export {
 	cleanUserMessage,
 	codexSessionFiles,
 	isInjectedUserMessage,
+	selectItemsForDetail,
 	shaSegment,
 };
 

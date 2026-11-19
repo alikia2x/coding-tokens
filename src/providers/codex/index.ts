@@ -15,6 +15,7 @@ import type {
 import { computeFilesFingerprint } from "../utils";
 import {
 	codexSessionFiles,
+	codexSessionFilesBatch,
 	discoverCodexSessions,
 	getCodexRolloutFiles,
 	getCodexRoots,
@@ -46,8 +47,9 @@ export class CodexProvider implements HarnessProvider {
 
 	async discoverSessions(
 		paths: PlatformPathService,
+		knownStamps?: ReadonlyMap<string, SessionDiscoveryItem>,
 	): Promise<SessionDiscoveryItem[]> {
-		return discoverCodexSessions(paths);
+		return discoverCodexSessions(paths, knownStamps);
 	}
 
 	async readUsage(
@@ -86,5 +88,12 @@ export class CodexProvider implements HarnessProvider {
 
 	resolveSessionFiles(paths: PlatformPathService, sessionId: string): string[] {
 		return codexSessionFiles(sessionId, paths);
+	}
+
+	resolveSessionFilesBatch(
+		paths: PlatformPathService,
+		sessionIds: ReadonlySet<string>,
+	): Map<string, string[]> {
+		return codexSessionFilesBatch(sessionIds, paths);
 	}
 }

@@ -31,6 +31,7 @@ import { useT } from "~/lib/i18n";
 import { localizeLabel } from "~/lib/labels";
 import { useHeatmap, useOverview } from "~/lib/queries";
 import { useRangeLabel } from "~/lib/range";
+import { useSettings } from "~/lib/settings";
 import { rangeQueryString } from "~/lib/time-range";
 
 function totalTokens(totals: {
@@ -51,6 +52,7 @@ export function OverviewPage() {
 	const range = useResolvedRange();
 	const overview = useOverview(range);
 	const heatmap = useHeatmap();
+	const { settings, update: updateSettings } = useSettings();
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [metric, setMetric] = useState<UsageMetric>(
 		searchParams.get("metric") === "tokens" ? "tokens" : "cost",
@@ -92,17 +94,20 @@ export function OverviewPage() {
 					<h1 className="text-[24px] font-semibold tracking-[-0.03em]">
 						{t("nav.overview")}
 					</h1>
-					<p className="mt-0.5 text-[12px] text-muted-foreground">
-						{rangeLabel} ·{" "}
-						{t("count.requests", {
-							count: data.totals.requests,
-							formatted: formatNumber(data.totals.requests),
-						})}{" "}
-						·{" "}
-						{t("count.sessions", {
-							count: data.totals.sessions,
-							formatted: formatNumber(data.totals.sessions),
-						})}
+					<p className="mt-0.5 flex flex-wrap items-center gap-x-3 text-[12px] text-muted-foreground">
+						<span>{rangeLabel}</span>
+						<span>
+							{t("count.requests", {
+								count: data.totals.requests,
+								formatted: formatNumber(data.totals.requests),
+							})}
+						</span>
+						<span>
+							{t("count.sessions", {
+								count: data.totals.sessions,
+								formatted: formatNumber(data.totals.sessions),
+							})}
+						</span>
 					</p>
 				</div>
 				<span className="text-[11px] text-muted-foreground tabular">
@@ -217,10 +222,33 @@ export function OverviewPage() {
 				</div>
 				<div className="divide-y rounded-lg border bg-card">
 					<div className="p-4">
-						<HarnessShare rows={data.harnesses} />
+						<HarnessShare
+							rows={data.harnesses}
+							projectRows={data.projects}
+							dimension={settings.overviewShareDimension}
+							onToggleDimension={() =>
+								updateSettings({
+									overviewShareDimension:
+										settings.overviewShareDimension === "project"
+											? "harness"
+											: "project",
+								})
+							}
+						/>
 					</div>
 					<div className="p-4">
-						<TopModels rows={data.models.slice(0, 5)} />
+						<TopModels
+							rows={data.models}
+							metric={settings.overviewModelsMetric}
+							onToggleMetric={() =>
+								updateSettings({
+									overviewModelsMetric:
+										settings.overviewModelsMetric === "cost"
+											? "tokens"
+											: "cost",
+								})
+							}
+						/>
 					</div>
 				</div>
 			</div>

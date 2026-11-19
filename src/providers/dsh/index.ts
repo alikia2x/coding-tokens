@@ -33,8 +33,9 @@ export class DshProvider implements HarnessProvider {
 
 	async discoverSessions(
 		paths: PlatformPathService,
+		knownStamps?: ReadonlyMap<string, SessionDiscoveryItem>,
 	): Promise<SessionDiscoveryItem[]> {
-		return discoverDshSessions(paths);
+		return discoverDshSessions(paths, knownStamps);
 	}
 
 	async readUsage(

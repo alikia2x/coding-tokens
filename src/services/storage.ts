@@ -260,6 +260,59 @@ const MIGRATIONS: Migration[] = [
 			`);
 		},
 	},
+	{
+		version: 4,
+		name: "session_catalog_and_file_stamps",
+		up: (db) => {
+			db.exec(`
+				CREATE TABLE IF NOT EXISTS session_catalog (
+					harness TEXT NOT NULL,
+					session_id TEXT NOT NULL,
+					title TEXT NOT NULL,
+					cwd TEXT,
+					started_at INTEGER,
+					is_subagent INTEGER NOT NULL DEFAULT 0,
+					is_review INTEGER NOT NULL DEFAULT 0,
+					has_transcript INTEGER NOT NULL DEFAULT 0,
+					source_kind TEXT,
+					source_path TEXT,
+					PRIMARY KEY (harness, session_id)
+				);
+				CREATE TABLE IF NOT EXISTS session_file_stamps (
+					harness TEXT NOT NULL,
+					session_id TEXT NOT NULL,
+					file_path TEXT NOT NULL,
+					mtime_ms REAL NOT NULL,
+					size_bytes INTEGER NOT NULL,
+					PRIMARY KEY (harness, session_id, file_path)
+				);
+			`);
+		},
+	},
+	{
+		version: 5,
+		name: "preserve_raw_pricing_fields",
+		up: (db) => {
+			const cols = new Set(
+				db
+					.query<{ name: string }, []>("PRAGMA table_info(usage_records)")
+					.all()
+					.map((row) => row.name),
+			);
+			if (!cols.has("raw_model")) {
+				db.exec("ALTER TABLE usage_records ADD COLUMN raw_model TEXT;");
+			}
+			if (!cols.has("raw_cost_usd")) {
+				db.exec("ALTER TABLE usage_records ADD COLUMN raw_cost_usd REAL;");
+			}
+			db.exec(`
+				UPDATE usage_records
+				SET raw_model = model,
+					raw_cost_usd = CASE WHEN cost_estimated = 0 THEN cost_usd ELSE NULL END
+				WHERE raw_model IS NULL;
+			`);
+		},
+	},
 ];
 
 export function runMigrations(db: Database): void {
@@ -371,8 +424,8 @@ export class DefaultStorageService implements StorageService {
 
 		let sql = `
 			SELECT harness, session_id, message_id, turn_id, is_subagent, cwd, model,
-				timestamp, input_tokens, output_tokens, cache_read_tokens,
-				cache_write_tokens, reasoning_tokens, cost_usd, cost_estimated
+				raw_model, timestamp, input_tokens, output_tokens, cache_read_tokens,
+				cache_write_tokens, reasoning_tokens, cost_usd, raw_cost_usd, cost_estimated
 			FROM usage_records
 		`;
 
@@ -399,6 +452,7 @@ export class DefaultStorageService implements StorageService {
 					is_subagent: number;
 					cwd: string | null;
 					model: string;
+					raw_model: string | null;
 					timestamp: number | null;
 					input_tokens: number;
 					output_tokens: number;
@@ -406,6 +460,7 @@ export class DefaultStorageService implements StorageService {
 					cache_write_tokens: number;
 					reasoning_tokens: number;
 					cost_usd: number | null;
+					raw_cost_usd: number | null;
 					cost_estimated: number;
 				},
 				(string | number)[]
@@ -420,6 +475,7 @@ export class DefaultStorageService implements StorageService {
 			isSubagent: row.is_subagent === 1 || undefined,
 			cwd: row.cwd,
 			model: row.model,
+			rawModel: row.raw_model ?? row.model,
 			timestamp: row.timestamp,
 			inputTokens: row.input_tokens,
 			outputTokens: row.output_tokens,
@@ -427,6 +483,7 @@ export class DefaultStorageService implements StorageService {
 			cacheWriteTokens: row.cache_write_tokens,
 			reasoningTokens: row.reasoning_tokens,
 			costUsd: row.cost_usd,
+			rawCostUsd: row.raw_cost_usd,
 			costEstimated: row.cost_estimated === 1,
 		}));
 	}
@@ -436,13 +493,20 @@ export class DefaultStorageService implements StorageService {
 		const insert = db.prepare(
 			`INSERT OR REPLACE INTO usage_records (
 				harness, session_id, message_id, turn_id, is_subagent, cwd, model,
-				timestamp, input_tokens, output_tokens, cache_read_tokens,
-				cache_write_tokens, reasoning_tokens, cost_usd, cost_estimated
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				raw_model, timestamp, input_tokens, output_tokens, cache_read_tokens,
+				cache_write_tokens, reasoning_tokens, cost_usd, raw_cost_usd, cost_estimated
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		);
 
 		db.transaction(() => {
 			for (const r of records) {
+				const rawModel = r.rawModel ?? r.pricingModel ?? r.model;
+				const rawCostUsd =
+					r.rawCostUsd !== undefined
+						? r.rawCostUsd
+						: r.costEstimated
+							? null
+							: r.costUsd;
 				insert.run(
 					r.harness,
 					r.sessionId,
@@ -451,6 +515,7 @@ export class DefaultStorageService implements StorageService {
 					r.isSubagent ? 1 : 0,
 					r.cwd,
 					r.model,
+					rawModel,
 					r.timestamp,
 					r.inputTokens,
 					r.outputTokens,
@@ -458,6 +523,7 @@ export class DefaultStorageService implements StorageService {
 					r.cacheWriteTokens,
 					r.reasoningTokens,
 					r.costUsd,
+					rawCostUsd,
 					r.costEstimated ? 1 : 0,
 				);
 			}
@@ -731,9 +797,9 @@ export class DefaultStorageService implements StorageService {
 		const insertRecord = db.prepare(
 			`INSERT OR REPLACE INTO usage_records (
 				harness, session_id, message_id, turn_id, is_subagent, cwd, model,
-				timestamp, input_tokens, output_tokens, cache_read_tokens,
-				cache_write_tokens, reasoning_tokens, cost_usd, cost_estimated
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				raw_model, timestamp, input_tokens, output_tokens, cache_read_tokens,
+				cache_write_tokens, reasoning_tokens, cost_usd, raw_cost_usd, cost_estimated
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		);
 		const removeRecords = db.prepare(
 			"DELETE FROM usage_records WHERE harness = ?",
@@ -771,6 +837,13 @@ export class DefaultStorageService implements StorageService {
 			// Records
 			removeRecords.run(batch.harness);
 			for (const r of batch.records) {
+				const rawModel = r.rawModel ?? r.pricingModel ?? r.model;
+				const rawCostUsd =
+					r.rawCostUsd !== undefined
+						? r.rawCostUsd
+						: r.costEstimated
+							? null
+							: r.costUsd;
 				insertRecord.run(
 					r.harness,
 					r.sessionId,
@@ -779,6 +852,7 @@ export class DefaultStorageService implements StorageService {
 					r.isSubagent ? 1 : 0,
 					r.cwd,
 					r.model,
+					rawModel,
 					r.timestamp,
 					r.inputTokens,
 					r.outputTokens,
@@ -786,6 +860,7 @@ export class DefaultStorageService implements StorageService {
 					r.cacheWriteTokens,
 					r.reasoningTokens,
 					r.costUsd,
+					rawCostUsd,
 					r.costEstimated ? 1 : 0,
 				);
 			}

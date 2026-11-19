@@ -473,6 +473,44 @@ function skipJsString(
 	return { value: out, end: source.length };
 }
 
+function skipStringOrComment(source: string, index: number): number | null {
+	const ch = source[index];
+	if (ch === "'" || ch === '"' || ch === "`") {
+		return Math.max(skipJsString(source, index).end, index + 1);
+	}
+	if (ch === "/" && source[index + 1] === "/") {
+		const nl = source.indexOf("\n", index + 2);
+		return nl === -1 ? source.length : nl + 1;
+	}
+	if (ch === "/" && source[index + 1] === "*") {
+		const end = source.indexOf("*/", index + 2);
+		return end === -1 ? source.length : end + 2;
+	}
+	return null;
+}
+
+/** Replace string literals and comments with spaces while preserving byte offsets. */
+function maskJsStringsAndComments(source: string): string {
+	let out = "";
+	let lastPlain = 0;
+	let i = 0;
+	while (i < source.length) {
+		const skipped = skipStringOrComment(source, i);
+		if (skipped !== null) {
+			if (i > lastPlain) out += source.slice(lastPlain, i);
+			const len = Math.max(skipped - i, 1);
+			out += " ".repeat(len);
+			i += len;
+			lastPlain = i;
+			continue;
+		}
+		i += 1;
+	}
+	if (lastPlain === 0) return source;
+	if (lastPlain < source.length) out += source.slice(lastPlain);
+	return out;
+}
+
 function skipWsAndComments(source: string, index: number): number {
 	let i = index;
 	while (i < source.length) {
@@ -481,15 +519,12 @@ function skipWsAndComments(source: string, index: number): number {
 			i += 1;
 			continue;
 		}
-		if (ch === "/" && source[i + 1] === "/") {
-			const nl = source.indexOf("\n", i + 2);
-			i = nl === -1 ? source.length : nl + 1;
-			continue;
-		}
-		if (ch === "/" && source[i + 1] === "*") {
-			const end = source.indexOf("*/", i + 2);
-			i = end === -1 ? source.length : end + 2;
-			continue;
+		if (ch === "/" && (source[i + 1] === "/" || source[i + 1] === "*")) {
+			const skipped = skipStringOrComment(source, i);
+			if (skipped !== null) {
+				i = Math.max(skipped, i + 1);
+				continue;
+			}
 		}
 		break;
 	}
@@ -505,21 +540,12 @@ function findMatchingDelimiter(
 	let depth = 1;
 	let i = openIndex + 1;
 	while (i < source.length) {
+		const skipped = skipStringOrComment(source, i);
+		if (skipped !== null) {
+			i = Math.max(skipped, i + 1);
+			continue;
+		}
 		const ch = source[i];
-		if (ch === "'" || ch === '"' || ch === "`") {
-			i = skipJsString(source, i).end;
-			continue;
-		}
-		if (ch === "/" && source[i + 1] === "/") {
-			const nl = source.indexOf("\n", i + 2);
-			i = nl === -1 ? source.length : nl + 1;
-			continue;
-		}
-		if (ch === "/" && source[i + 1] === "*") {
-			const end = source.indexOf("*/", i + 2);
-			i = end === -1 ? source.length : end + 2;
-			continue;
-		}
 		if (ch === openChar) depth += 1;
 		else if (ch === closeChar) {
 			depth -= 1;
@@ -536,21 +562,12 @@ function scanUnknownJsExpr(source: string, index: number): number {
 	let bracketDepth = 0;
 	let braceDepth = 0;
 	while (i < source.length) {
+		const skipped = skipStringOrComment(source, i);
+		if (skipped !== null) {
+			i = Math.max(skipped, i + 1);
+			continue;
+		}
 		const ch = source[i];
-		if (ch === "'" || ch === '"' || ch === "`") {
-			i = skipJsString(source, i).end;
-			continue;
-		}
-		if (ch === "/" && source[i + 1] === "/") {
-			const nl = source.indexOf("\n", i + 2);
-			i = nl === -1 ? source.length : nl + 1;
-			continue;
-		}
-		if (ch === "/" && source[i + 1] === "*") {
-			const end = source.indexOf("*/", i + 2);
-			i = end === -1 ? source.length : end + 2;
-			continue;
-		}
 		if (parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
 			if (ch === "," || ch === "}" || ch === "]" || ch === ")") return i;
 		}
@@ -569,13 +586,33 @@ function parseJsValue(
 	source: string,
 	index: number,
 	bindings?: ReadonlyMap<string, unknown>,
+	depth = 0,
 ): { value: unknown; next: number } {
 	let i = skipWsAndComments(source, index);
 	const ch = source[i];
 	if (ch === undefined) return { value: undefined, next: i };
+	if (depth > 24) {
+		return {
+			value: undefined,
+			next: Math.max(scanUnknownJsExpr(source, i), i + 1),
+		};
+	}
 
 	if (ch === "'" || ch === '"' || ch === "`") {
 		const str = skipJsString(source, i);
+		if (ch === "`" && bindings?.size && str.value.includes("${")) {
+			const interpolated = str.value.replaceAll(
+				/\$\{([a-zA-Z_$][a-zA-Z0-9_$]*)\}/gu,
+				(full, name: string) => {
+					const bound = bindings.get(name);
+					if (typeof bound === "string" || typeof bound === "number") {
+						return String(bound);
+					}
+					return full;
+				},
+			);
+			return { value: interpolated, next: str.end };
+		}
 		return { value: str.value, next: str.end };
 	}
 
@@ -584,13 +621,15 @@ function parseJsValue(
 		i += 1;
 		while (i < source.length) {
 			i = skipWsAndComments(source, i);
+			const iterStart = i;
+			if (source[i] === undefined) break;
 			if (source[i] === "}") return { value: record, next: i + 1 };
 			if (source[i] === ",") {
 				i += 1;
 				continue;
 			}
 			if (source.startsWith("...", i)) {
-				i = scanUnknownJsExpr(source, i + 3);
+				i = Math.max(scanUnknownJsExpr(source, i + 3), i + 3);
 				continue;
 			}
 			let key: string | null = null;
@@ -598,7 +637,7 @@ function parseJsValue(
 			if (keyCh === "'" || keyCh === '"' || keyCh === "`") {
 				const parsedKey = skipJsString(source, i);
 				key = parsedKey.value;
-				i = parsedKey.end;
+				i = Math.max(parsedKey.end, iterStart + 1);
 			} else if (keyCh && /[a-zA-Z0-9_$]/u.test(keyCh)) {
 				const keyStart = i;
 				while (i < source.length && /[a-zA-Z0-9_$]/u.test(source[i] ?? "")) {
@@ -606,17 +645,21 @@ function parseJsValue(
 				}
 				key = source.slice(keyStart, i);
 			} else {
-				i = scanUnknownJsExpr(source, i);
+				i = Math.max(scanUnknownJsExpr(source, i), iterStart + 1);
 				continue;
 			}
 			i = skipWsAndComments(source, i);
 			if (source[i] === ":") {
-				const parsedVal = parseJsValue(source, i + 1, bindings);
+				const parsedVal = parseJsValue(source, i + 1, bindings, depth + 1);
 				record[key] = parsedVal.value;
-				i = parsedVal.next;
+				i = Math.max(parsedVal.next, iterStart + 1);
 			} else {
 				record[key] = bindings?.get(key);
+				if (source[i] !== undefined && source[i] !== "," && source[i] !== "}") {
+					i = Math.max(scanUnknownJsExpr(source, i), iterStart + 1);
+				}
 			}
+			if (i <= iterStart) i = iterStart + 1;
 		}
 		return { value: record, next: i };
 	}
@@ -626,14 +669,16 @@ function parseJsValue(
 		i += 1;
 		while (i < source.length) {
 			i = skipWsAndComments(source, i);
+			const iterStart = i;
+			if (source[i] === undefined) break;
 			if (source[i] === "]") return { value: arr, next: i + 1 };
 			if (source[i] === ",") {
 				i += 1;
 				continue;
 			}
-			const item = parseJsValue(source, i, bindings);
+			const item = parseJsValue(source, i, bindings, depth + 1);
 			arr.push(item.value);
-			i = Math.max(item.next, i + 1);
+			i = Math.max(item.next, iterStart + 1);
 		}
 		return { value: arr, next: i };
 	}
@@ -666,14 +711,17 @@ function parseJsValue(
 		}
 	}
 
-	const end = scanUnknownJsExpr(source, i);
+	const end = Math.max(scanUnknownJsExpr(source, i), i + 1);
 	return { value: undefined, next: end };
 }
 
-function collectJsConstBindings(script: string): Map<string, unknown> {
+function collectJsConstBindings(
+	script: string,
+	maskedScript: string,
+): Map<string, unknown> {
 	const map = new Map<string, unknown>();
 	const declPattern = /(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=/gu;
-	for (const match of script.matchAll(declPattern)) {
+	for (const match of maskedScript.matchAll(declPattern)) {
 		const name = match[1];
 		if (!name) continue;
 		const start = (match.index ?? 0) + match[0].length;
@@ -683,53 +731,140 @@ function collectJsConstBindings(script: string): Map<string, unknown> {
 	return map;
 }
 
+function pushLoopPairCmds(value: unknown, cmds: string[]): void {
+	if (!Array.isArray(value)) return;
+	if (
+		value.length === 2 &&
+		typeof value[0] === "string" &&
+		typeof value[1] === "string" &&
+		value[1].trim()
+	) {
+		cmds.push(value[1].trim());
+		return;
+	}
+	for (const item of value) {
+		if (Array.isArray(item)) pushLoopPairCmds(item, cmds);
+	}
+}
+
 function loopCommandCandidates(script: string): string[] {
 	const cmds: string[] = [];
-	const pairPattern =
-		/\[\s*(?:["'`][^"'`\\]*["'`])\s*,\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1\s*\]/gu;
-	for (const match of script.matchAll(pairPattern)) {
-		const raw = match[0];
-		const secondStart = raw.indexOf(",", 1) + 1;
-		const { value } = parseJsValue(raw, secondStart);
-		if (typeof value === "string" && value.trim()) cmds.push(value.trim());
+	let i = 0;
+	while (i < script.length) {
+		const skipped = skipStringOrComment(script, i);
+		if (skipped !== null) {
+			i = Math.max(skipped, i + 1);
+			continue;
+		}
+		if (script[i] === "[") {
+			const parsed = parseJsValue(script, i);
+			pushLoopPairCmds(parsed.value, cmds);
+			i = Math.max(parsed.next, i + 1);
+			continue;
+		}
+		i += 1;
 	}
 	return cmds;
 }
 
+function collectJsToolAliases(maskedScript: string): Map<string, string> {
+	const aliases = new Map<string, string>();
+	const destructureRe = /(?:const|let|var)\s*\{([^}]+)\}\s*=\s*tools\b/gu;
+	for (const match of maskedScript.matchAll(destructureRe)) {
+		const body = match[1] ?? "";
+		for (const part of body.split(",")) {
+			const cleaned = part.trim();
+			if (!cleaned) continue;
+			const colon = cleaned.indexOf(":");
+			if (colon >= 0) {
+				const rawName = cleaned.slice(0, colon).trim();
+				const localName = cleaned
+					.slice(colon + 1)
+					.replace(/=.*$/u, "")
+					.trim();
+				if (rawName && localName) aliases.set(localName, rawName);
+			} else {
+				const rawName = cleaned.replace(/=.*$/u, "").trim();
+				if (rawName) aliases.set(rawName, rawName);
+			}
+		}
+	}
+	return aliases;
+}
+
+const KNOWN_CODEX_DIRECT_TOOLS = new Set([
+	"exec_command",
+	"shell_command",
+	"write_stdin",
+	"apply_patch",
+	"web__run",
+	"update_plan",
+	"read_file",
+	"grep_files",
+	"list_dir",
+	"view_image",
+]);
+
 function extractToolCallsFromJs(
 	script: string,
+	aliases: ReadonlyMap<string, string>,
 ): Array<{ name: string; argsText: string }> {
 	const calls: Array<{ name: string; argsText: string }> = [];
+	const pushCall = (name: string, openParen: number): number => {
+		const closeParen = findMatchingDelimiter(script, openParen, "(", ")");
+		const argsText =
+			closeParen !== -1
+				? script.slice(openParen + 1, closeParen).trim()
+				: script.slice(openParen + 1, openParen + 300).trim();
+		calls.push({ name, argsText });
+		return closeParen !== -1 ? closeParen + 1 : openParen + 1;
+	};
+
 	let i = 0;
 	while (i < script.length) {
+		const skipped = skipStringOrComment(script, i);
+		if (skipped !== null) {
+			i = Math.max(skipped, i + 1);
+			continue;
+		}
 		const ch = script[i];
-		if (ch === "'" || ch === '"' || ch === "`") {
-			i = skipJsString(script, i).end;
-			continue;
-		}
-		if (ch === "/" && script[i + 1] === "/") {
-			const nl = script.indexOf("\n", i + 2);
-			i = nl === -1 ? script.length : nl + 1;
-			continue;
-		}
-		if (ch === "/" && script[i + 1] === "*") {
-			const end = script.indexOf("*/", i + 2);
-			i = end === -1 ? script.length : end + 2;
-			continue;
-		}
 		if (script.startsWith("tools.", i)) {
 			const rest = script.slice(i + 6);
 			const match = rest.match(/^([a-zA-Z0-9_]+)\s*\(/u);
 			if (match?.[1]) {
 				const openParen = i + 6 + match[0].length - 1;
-				const closeParen = findMatchingDelimiter(script, openParen, "(", ")");
-				const argsText =
-					closeParen !== -1
-						? script.slice(openParen + 1, closeParen).trim()
-						: script.slice(openParen + 1, openParen + 300).trim();
-				calls.push({ name: match[1], argsText });
-				i = closeParen !== -1 ? closeParen + 1 : openParen + 1;
+				i = pushCall(match[1], openParen);
 				continue;
+			}
+		}
+		if (script.startsWith("tools[", i)) {
+			const parsedKey = parseJsValue(script, i + 6);
+			const afterClose = skipWsAndComments(script, parsedKey.next);
+			if (typeof parsedKey.value === "string" && script[afterClose] === "]") {
+				const afterBracket = skipWsAndComments(script, afterClose + 1);
+				if (script[afterBracket] === "(") {
+					i = pushCall(parsedKey.value, afterBracket);
+					continue;
+				}
+			}
+		}
+		const prevChar = i > 0 ? script[i - 1] : "";
+		if (
+			ch &&
+			/[a-zA-Z_$]/u.test(ch) &&
+			(!prevChar || !/[a-zA-Z0-9_$.]/u.test(prevChar))
+		) {
+			const identMatch = script.slice(i).match(/^([a-zA-Z0-9_]+)\s*\(/u);
+			const local = identMatch?.[1];
+			if (local) {
+				const mapped =
+					aliases.get(local) ??
+					(KNOWN_CODEX_DIRECT_TOOLS.has(local) ? local : null);
+				if (mapped) {
+					const openParen = i + identMatch[0].length - 1;
+					i = pushCall(mapped, openParen);
+					continue;
+				}
 			}
 		}
 		i += 1;
@@ -737,17 +872,91 @@ function extractToolCallsFromJs(
 	return calls;
 }
 
+function unrollArrayLoopOps(
+	script: string,
+	maskedScript: string,
+	callName: string,
+	argsText: string,
+	bindings: ReadonlyMap<string, unknown>,
+	errorBadge?: string,
+	depth = 0,
+): ToolOperation[] {
+	// Support `for (const v of arr)` or `arr.map((v) => tools.fn(...))` outside strings/comments
+	const loopMatch =
+		maskedScript.match(
+			/for\s*\(\s*(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s+of\s+([a-zA-Z_$][a-zA-Z0-9_$]*|\[[^\]]+\])/u,
+		) ??
+		maskedScript.match(
+			/([a-zA-Z_$][a-zA-Z0-9_$]*|\[[^\]]+\])\s*\.\s*map\s*\(\s*(?:async\s*)?\(?\s*([a-zA-Z_$][a-zA-Z0-9_$]*)/u,
+		);
+	if (!loopMatch) return [];
+	const varName = loopMatch[0].startsWith("for") ? loopMatch[1] : loopMatch[2];
+	const arrayExprOffset =
+		(loopMatch.index ?? 0) +
+		(loopMatch[0].startsWith("for")
+			? loopMatch[0].lastIndexOf(loopMatch[2] ?? "")
+			: 0);
+	const arrayExpr = loopMatch[0].startsWith("for")
+		? loopMatch[2]
+		: loopMatch[1];
+	if (!varName || !arrayExpr) return [];
+
+	const itemsValue = arrayExpr.startsWith("[")
+		? parseJsValue(script, arrayExprOffset, bindings).value
+		: bindings.get(arrayExpr);
+	if (!Array.isArray(itemsValue) || !itemsValue.length) return [];
+	const varPattern = new RegExp(`\\b${varName}\\b`, "u");
+	if (!varPattern.test(argsText)) return [];
+
+	const ops: ToolOperation[] = [];
+	for (const entry of itemsValue.slice(0, 20)) {
+		if (typeof entry !== "string" && typeof entry !== "number") continue;
+		const iterBindings = new Map(bindings);
+		iterBindings.set(varName, entry);
+		const parsed = parseJsValue(argsText, 0, iterBindings).value;
+		const normalized = normalizeToolOperations(
+			{
+				name: callName,
+				input:
+					typeof parsed === "string" ||
+					(parsed && typeof parsed === "object" && !Array.isArray(parsed))
+						? parsed
+						: argsText,
+			},
+			undefined,
+			depth + 1,
+		).map((op) => (errorBadge ? { ...op, errorBadge } : op));
+		ops.push(...normalized);
+	}
+	return ops;
+}
+
 function embeddedJsOperations(
 	script: string,
 	errorBadge?: string,
 	depth = 0,
 ): ToolOperation[] {
-	const bindings = collectJsConstBindings(script);
-	const calls = extractToolCallsFromJs(script);
+	const maskedScript = maskJsStringsAndComments(script);
+	const bindings = collectJsConstBindings(script, maskedScript);
+	const aliases = collectJsToolAliases(maskedScript);
+	const calls = extractToolCallsFromJs(script, aliases);
 	if (calls.length > 0) {
 		const ops: ToolOperation[] = [];
 		for (const call of calls) {
 			if (ops.length >= 30) break;
+			const unrolled = unrollArrayLoopOps(
+				script,
+				maskedScript,
+				call.name,
+				call.argsText,
+				bindings,
+				errorBadge,
+				depth,
+			);
+			if (unrolled.length > 0) {
+				ops.push(...unrolled);
+				continue;
+			}
 			const parsed = parseJsValue(call.argsText, 0, bindings).value;
 			const argObj =
 				parsed && typeof parsed === "object" && !Array.isArray(parsed)
@@ -773,8 +982,10 @@ function embeddedJsOperations(
 					continue;
 				}
 			}
+			const resolvedInput =
+				typeof parsed === "string" ? parsed : (argObj ?? call.argsText);
 			const normalized = normalizeToolOperations(
-				{ name: call.name, input: argObj ?? call.argsText },
+				{ name: call.name, input: resolvedInput },
 				undefined,
 				depth + 1,
 			).map((op) => (errorBadge ? { ...op, errorBadge } : op));
@@ -954,6 +1165,24 @@ function summarizeTodos(
 	};
 }
 
+function unwrapShellWrapper(args: readonly string[]): string | null {
+	if (args.length < 2) return null;
+	const exe = pathBase(args[0] ?? "");
+	if (
+		(exe === "bash" || exe === "sh" || exe === "zsh") &&
+		(args[1] === "-c" || args[1] === "-lc") &&
+		args[2]
+	) {
+		return args.slice(2).join(" ").trim() || null;
+	}
+	return null;
+}
+
+function pathBase(value: string): string {
+	const idx = value.lastIndexOf("/");
+	return idx >= 0 ? value.slice(idx + 1) : value;
+}
+
 function commandString(
 	obj: Record<string, unknown> | null,
 	rawText: string | null,
@@ -972,14 +1201,70 @@ function commandString(
 			: "";
 		return args ? `${direct} ${args}` : direct;
 	}
-	if (Array.isArray(obj?.command)) {
-		const joined = obj.command
-			.filter((part): part is string => typeof part === "string")
-			.join(" ")
-			.trim();
+	const cmdArr = Array.isArray(obj?.command)
+		? obj.command
+		: Array.isArray(obj?.cmd)
+			? obj.cmd
+			: null;
+	if (cmdArr) {
+		const parts = cmdArr.filter(
+			(part): part is string => typeof part === "string",
+		);
+		const unwrapped = unwrapShellWrapper(parts);
+		if (unwrapped) return unwrapped;
+		const joined = parts.join(" ").trim();
 		if (joined) return joined;
 	}
 	return null;
+}
+
+function splitShellStatements(script: string): string[] {
+	const lines = script.split(/\r?\n/u);
+	const statements: string[] = [];
+	let current: string[] = [];
+	let heredocEnd: string | null = null;
+	let quote: "'" | '"' | null = null;
+
+	const flush = () => {
+		const joined = current.join("\n").trim();
+		current = [];
+		if (joined && !joined.startsWith("#")) statements.push(joined);
+	};
+
+	for (const line of lines) {
+		if (heredocEnd !== null) {
+			if (line.trim() === heredocEnd) {
+				heredocEnd = null;
+				flush();
+			}
+			continue;
+		}
+		current.push(line);
+		for (let i = 0; i < line.length; i += 1) {
+			const ch = line[i];
+			if (quote) {
+				if (ch === "\\" && quote === '"') {
+					i += 1;
+					continue;
+				}
+				if (ch === quote) quote = null;
+			} else if (ch === "'" || ch === '"') {
+				quote = ch;
+			}
+		}
+		if (quote !== null) continue;
+
+		const heredoc = line.match(/<<[-~]?\s*(['"]?)([A-Za-z0-9_]+)\1\s*$/u);
+		if (heredoc?.[2]) {
+			heredocEnd = heredoc[2];
+			continue;
+		}
+		if (/\\\s*$/u.test(line)) continue;
+		flush();
+		if (statements.length >= 15) break;
+	}
+	flush();
+	return statements;
 }
 
 function formatDurationMs(ms: number): string {
@@ -1089,6 +1374,26 @@ export function normalizeToolOperations(
 		return [normalizeWebSearch(rawName, obj, rawText, errorBadge)];
 	}
 
+	if (
+		depth < 2 &&
+		(rawName === "multi_tool_use.parallel" || rawName === "parallel") &&
+		Array.isArray(obj?.tool_uses)
+	) {
+		const ops: ToolOperation[] = [];
+		for (const use of obj.tool_uses.slice(0, 30)) {
+			const rec = objectOrEmpty(use);
+			const recipient = textOrNull(rec.recipient_name) ?? "tool";
+			const cleanName = recipient.replace(/^(?:functions|tools)\./u, "");
+			const normalized = normalizeToolOperations(
+				{ name: cleanName, input: rec.parameters },
+				undefined,
+				depth + 1,
+			).map((op) => (errorBadge ? { ...op, errorBadge } : op));
+			ops.push(...normalized);
+		}
+		if (ops.length > 0) return ops.slice(0, 30);
+	}
+
 	const rawVerb = verbForTool(rawName, call.category);
 	const verb =
 		rawName === "str_replace_editor" && obj?.command === "view"
@@ -1167,6 +1472,28 @@ export function normalizeToolOperations(
 	}
 
 	if (verb === "command") {
+		const cmd = commandString(obj, rawText);
+		if (cmd) {
+			const statements = splitShellStatements(cmd);
+			if (statements.length > 1) {
+				const summary = strField(obj, rawText, [
+					"toolSummary",
+					"completion_summary",
+					"description",
+					"title",
+					"Action",
+				]);
+				const meta = summary && summary.length <= 48 ? summary : undefined;
+				return statements.map((stmt, index) => ({
+					verb,
+					rawName,
+					target: singleLinePreview(stmt, 140),
+					fullTarget: stmt,
+					meta: index === 0 ? meta : undefined,
+					errorBadge,
+				}));
+			}
+		}
 		const resolved = resolveCommandTarget(rawName, obj, rawText);
 		return [
 			{
@@ -1216,25 +1543,36 @@ export function normalizeToolOperations(
 		const subagents = Array.isArray(obj?.Subagents)
 			? objectOrEmpty(obj.Subagents[0])
 			: null;
-		const desc =
+		const candidate =
 			(subagents
 				? (textOrNull(subagents.Role) ?? textOrNull(subagents.TypeName))
 				: null) ??
 			strField(obj, rawText, [
+				"task_name",
+				"target",
 				"toolSummary",
 				"description",
 				"Role",
+				"role",
 				"subagent_type",
 				"agent_type",
 				"TypeName",
 				"Recipient",
-				"message",
-				"Message",
-				"Prompt",
-				"prompt",
-				"Action",
 				"agent_id",
+				"id",
 			]);
+		const fallbackMsg = strField(obj, rawText, [
+			"message",
+			"Message",
+			"Prompt",
+			"prompt",
+			"Action",
+		]);
+		const usableMsg =
+			fallbackMsg && !/^gAAAAA[A-Za-z0-9_-]{20,}$/u.test(fallbackMsg)
+				? fallbackMsg
+				: null;
+		const desc = candidate ?? usableMsg;
 		return [
 			{
 				verb,

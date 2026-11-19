@@ -44,8 +44,13 @@ export interface HarnessProvider {
 
 	/**
 	 * Scans harness storage directories and returns metadata items for all detected sessions.
+	 * When `knownStamps` (keyed by `filePath`) is provided, providers may reuse unchanged
+	 * file stamps whose `mtimeMs` and `sizeBytes` match without re-opening the file.
 	 */
-	discoverSessions(paths: PlatformPathService): Promise<SessionDiscoveryItem[]>;
+	discoverSessions(
+		paths: PlatformPathService,
+		knownStamps?: ReadonlyMap<string, SessionDiscoveryItem>,
+	): Promise<SessionDiscoveryItem[]>;
 
 	/**
 	 * Parses token and cost usage records.
@@ -89,4 +94,13 @@ export interface HarnessProvider {
 	 * Useful for harnesses that split one conversation across multiple files.
 	 */
 	resolveSessionFiles?(paths: PlatformPathService, sessionId: string): string[];
+
+	/**
+	 * Optional batch resolver mapping multiple session IDs to their transcript files
+	 * in a single directory walk.
+	 */
+	resolveSessionFilesBatch?(
+		paths: PlatformPathService,
+		sessionIds: ReadonlySet<string>,
+	): Map<string, string[]>;
 }

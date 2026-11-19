@@ -50,7 +50,7 @@
 	--font-display:
 		"Google Sans Flex", "PingFang SC", "Noto Sans SC", ui-sans-serif, system-ui,
 		sans-serif;
-	--font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
+	--font-mono: "Google Sans Code", ui-monospace, "SFMono-Regular", monospace;
 	color-scheme: light;
 }
 

@@ -44,20 +44,23 @@ export function App() {
 	}, [settingsLoaded, settings.autoRefreshMinutes, mutateRefresh]);
 	usePrefetchTabs(range, Boolean(status.data?.ready));
 	const indexedAt = status.data?.indexedAt ?? null;
-	const previousIndexedAt = useRef<number | null>(null);
+	const pricingVersion = status.data?.pricingVersion ?? 0;
+	const dataVersion = indexedAt ? `${indexedAt}:${pricingVersion}` : null;
+	const previousDataVersion = useRef<string | null>(null);
 
 	useEffect(() => {
 		if (
-			indexedAt &&
-			previousIndexedAt.current &&
-			indexedAt !== previousIndexedAt.current
+			dataVersion &&
+			previousDataVersion.current &&
+			dataVersion !== previousDataVersion.current
 		) {
 			void queryClient.invalidateQueries({
-				predicate: (query) => query.queryKey[0] !== "status",
+				predicate: (query) =>
+					query.queryKey[0] !== "status" && query.queryKey[0] !== "settings",
 			});
 		}
-		previousIndexedAt.current = indexedAt;
-	}, [indexedAt, queryClient]);
+		previousDataVersion.current = dataVersion;
+	}, [dataVersion, queryClient]);
 
 	if (!status.data)
 		return (

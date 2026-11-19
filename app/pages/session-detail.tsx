@@ -3,10 +3,9 @@ import type {
 	SessionDetailLevel,
 	TurnSummary,
 } from "@shared/types";
-import { ChevronLeft, Download, Search } from "lucide-react";
-import { useRef, useState } from "react";
+import { ChevronLeft, Download, FolderOpen, Search } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
-import { CopyButton } from "~/components/copy-button";
 import { DetailLevelControl } from "~/components/detail-level-control";
 import { EmptyState } from "~/components/empty-state";
 import { HarnessBadge } from "~/components/harness-badge";
@@ -25,6 +24,7 @@ import {
 import { Skeleton } from "~/components/ui/skeleton";
 import { api } from "~/lib/api";
 import { formatDateTime } from "~/lib/format";
+import { useProgressiveLimit } from "~/lib/hooks";
 import { useT } from "~/lib/i18n";
 import { localizeLabel } from "~/lib/labels";
 import { useSessionDetail } from "~/lib/queries";
@@ -93,10 +93,19 @@ function ExportResultDialog({
 							{exportedPath}
 						</p>
 						<div className="mt-4 flex items-center justify-end gap-2">
-							<CopyButton
-								value={exportedPath ?? ""}
-								label={t("common.copyPath")}
-							/>
+							{exportedPath &&
+							(exportedPath.includes("/") || exportedPath.includes("\\")) ? (
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={() =>
+										void api.revealPath(exportedPath).catch(() => {})
+									}
+								>
+									<FolderOpen />
+									{t("common.revealInFolder")}
+								</Button>
+							) : null}
 							<Button size="sm" onClick={onClose}>
 								{t("common.done")}
 							</Button>
@@ -131,13 +140,54 @@ export function SessionDetailPage() {
 		searchParams,
 		setSearchParams,
 	});
+	const { itemsByTurn, orderedTurns } = useMemo(() => {
+		const map = new Map<string, DetailItem[]>();
+		const data = detail.data;
+		if (!data) return { itemsByTurn: map, orderedTurns: [] as TurnSummary[] };
+		for (const item of data.items) {
+			const list = map.get(item.turnId) ?? [];
+			list.push(item);
+			map.set(item.turnId, list);
+		}
+		return {
+			itemsByTurn: map,
+			orderedTurns: data.turns.filter((turn) => map.has(turn.id)),
+		};
+	}, [detail.data]);
+	const turnWindow = useProgressiveLimit(
+		orderedTurns.length,
+		40,
+		40,
+		find.open || searchParams.has("find"),
+	);
 
 	async function exportMarkdown(): Promise<void> {
 		setExporting(true);
 		setExportError(null);
 		try {
-			const result = await api.exportSession(harness, sessionId, level);
-			setExportedPath(result.path);
+			const picked = await api.chooseExportDirectory().catch(() => ({
+				supported: false,
+				path: null,
+				cancelled: false,
+			}));
+			if (picked.supported) {
+				if (picked.cancelled || !picked.path) return;
+				const result = await api.exportSession(
+					harness,
+					sessionId,
+					level,
+					picked.path,
+				);
+				setExportedPath(result.path);
+				void api.revealPath(result.path).catch(() => {});
+			} else {
+				const filename = await api.downloadSessionMarkdown(
+					harness,
+					sessionId,
+					level,
+				);
+				setExportedPath(filename);
+			}
 		} catch (error) {
 			setExportError(error instanceof Error ? error.message : String(error));
 		} finally {
@@ -175,13 +225,6 @@ export function SessionDetailPage() {
 	if (!data) return null;
 
 	const summary = data.summary;
-	const itemsByTurn = new Map<string, DetailItem[]>();
-	for (const item of data.items) {
-		const list = itemsByTurn.get(item.turnId) ?? [];
-		list.push(item);
-		itemsByTurn.set(item.turnId, list);
-	}
-	const orderedTurns = data.turns.filter((turn) => itemsByTurn.has(turn.id));
 	const untracked = itemsByTurn.get("untracked");
 
 	const untrackedTurn: TurnSummary = {
@@ -283,7 +326,7 @@ export function SessionDetailPage() {
 					/>
 				) : (
 					<div className="mt-2" ref={conversationRef}>
-						{orderedTurns.map((turn) => (
+						{orderedTurns.slice(0, turnWindow.limit).map((turn) => (
 							<SessionTurn
 								key={turn.id}
 								turn={turn}
@@ -291,12 +334,15 @@ export function SessionDetailPage() {
 								level={level}
 							/>
 						))}
-						{untracked ? (
+						{untracked && !turnWindow.hasMore ? (
 							<SessionTurn
 								turn={untrackedTurn}
 								items={untracked}
 								level={level}
 							/>
+						) : null}
+						{turnWindow.hasMore ? (
+							<div ref={turnWindow.sentinelRef} className="h-px" />
 						) : null}
 					</div>
 				)}

@@ -329,6 +329,7 @@ export function loadSummaries(
 
 export async function discoverAntigravitySessions(
 	paths: PlatformPathService,
+	knownStamps?: ReadonlyMap<string, SessionDiscoveryItem>,
 ): Promise<SessionDiscoveryItem[]> {
 	const files = getAntigravityDbFiles(paths);
 	const items: SessionDiscoveryItem[] = [];
@@ -336,6 +337,22 @@ export async function discoverAntigravitySessions(
 	for (const filePath of files) {
 		try {
 			const stat = statSync(filePath);
+			const known = knownStamps?.get(filePath);
+			if (
+				known &&
+				known.mtimeMs === stat.mtimeMs &&
+				known.sizeBytes === stat.size
+			) {
+				items.push({
+					sessionId: known.sessionId,
+					harness: "antigravity",
+					filePath,
+					mtimeMs: stat.mtimeMs,
+					sizeBytes: stat.size,
+					cwd: known.cwd ?? null,
+				});
+				continue;
+			}
 			const sessionId = path.basename(filePath, ".db");
 			let cwd: string | null = readAntigravitySidecarCwd(filePath);
 
