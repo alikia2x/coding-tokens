@@ -1,13 +1,13 @@
 import { matchesTextQuery, parseSearchQuery } from "@shared/search";
 import { HARNESS_LABELS, type ProjectReportRow } from "@shared/types";
 import { Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Link } from "react-router";
 import { Sparkline } from "~/components/charts/sparkline";
 import { EmptyState } from "~/components/empty-state";
 import { PageContainer } from "~/components/page-container";
 import { SectionHeading } from "~/components/section-heading";
-import { SortableHead, type SortState } from "~/components/sortable-head";
+import { SortableHead } from "~/components/sortable-head";
 import { SummaryStrip } from "~/components/summary-strip";
 import { Input } from "~/components/ui/input";
 import { Skeleton } from "~/components/ui/skeleton";
@@ -30,6 +30,7 @@ import { useResolvedRange } from "~/lib/hooks";
 import { useT } from "~/lib/i18n";
 import { localizeLabel } from "~/lib/labels";
 import { useProjects } from "~/lib/queries";
+import { type ProjectSortKey, useAppStore } from "~/lib/store";
 import { sessionsPath, UNKNOWN_PROJECT_KEY } from "~/lib/time-range";
 
 function compareNullable(
@@ -74,11 +75,10 @@ function compareProjects(
 export function ProjectsPage() {
 	const range = useResolvedRange();
 	const projects = useProjects(range);
-	const [query, setQuery] = useState("");
-	const [sort, setSort] = useState<SortState>({
-		key: "cost",
-		direction: "desc",
-	});
+	const query = useAppStore((state) => state.projectsPage.query);
+	const sort = useAppStore((state) => state.projectsPage.sort);
+	const setQuery = useAppStore((state) => state.setProjectsQuery);
+	const setSort = useAppStore((state) => state.setProjectsSort);
 	const t = useT();
 	const parsed = useMemo(() => parseSearchQuery(query), [query]);
 
@@ -125,10 +125,14 @@ export function ProjectsPage() {
 	);
 
 	function onSort(key: string): void {
-		setSort((current) =>
-			current.key === key
-				? { key, direction: current.direction === "desc" ? "asc" : "desc" }
-				: { key, direction: key === "name" ? "asc" : "desc" },
+		const nextKey = key as ProjectSortKey;
+		setSort(
+			sort.key === nextKey
+				? {
+						key: nextKey,
+						direction: sort.direction === "desc" ? "asc" : "desc",
+					}
+				: { key: nextKey, direction: nextKey === "name" ? "asc" : "desc" },
 		);
 	}
 

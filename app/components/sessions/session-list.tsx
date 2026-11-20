@@ -19,6 +19,7 @@ import {
 import { useProgressiveLimit } from "~/lib/hooks";
 import { useT } from "~/lib/i18n";
 import { localizeLabel } from "~/lib/labels";
+import { useAppStore } from "~/lib/store";
 import { UNKNOWN_PROJECT_KEY } from "~/lib/time-range";
 
 function SessionListHeader() {
@@ -92,19 +93,32 @@ const SessionRow = memo(function SessionRow({
 });
 
 function ExpandedGroupRows({
+	cwd,
 	rows,
 	snippets,
 	terms,
 }: {
+	cwd: string;
 	rows: SessionSummary[];
 	snippets: Record<string, string>;
 	terms: string[];
 }) {
+	const storedLimit = useAppStore(
+		(state) => state.sessions.expandedGroupLimits[cwd] ?? 60,
+	);
+	const setExpandedGroupRowLimit = useAppStore(
+		(state) => state.setExpandedGroupRowLimit,
+	);
 	const { limit, hasMore, sentinelRef } = useProgressiveLimit(
 		rows.length,
 		60,
 		60,
 		terms.length > 0,
+		undefined,
+		{
+			limit: storedLimit,
+			onLimitChange: (next) => setExpandedGroupRowLimit(cwd, next),
+		},
 	);
 	const visible = rows.slice(0, limit);
 	return (
@@ -148,8 +162,30 @@ export function SessionList({
 	onClearFilters: () => void;
 }) {
 	const t = useT();
-	const ungroupedWindow = useProgressiveLimit(filtered.length, 80, 80);
-	const groupWindow = useProgressiveLimit(groups?.length ?? 0, 40, 40);
+	const ungroupedLimit = useAppStore((state) => state.sessions.ungroupedLimit);
+	const groupLimit = useAppStore((state) => state.sessions.groupLimit);
+	const setSessionUngroupedLimit = useAppStore(
+		(state) => state.setSessionUngroupedLimit,
+	);
+	const setSessionGroupLimit = useAppStore(
+		(state) => state.setSessionGroupLimit,
+	);
+	const ungroupedWindow = useProgressiveLimit(
+		filtered.length,
+		80,
+		80,
+		false,
+		undefined,
+		{ limit: ungroupedLimit, onLimitChange: setSessionUngroupedLimit },
+	);
+	const groupWindow = useProgressiveLimit(
+		groups?.length ?? 0,
+		30,
+		30,
+		false,
+		undefined,
+		{ limit: groupLimit, onLimitChange: setSessionGroupLimit },
+	);
 
 	if (loading) {
 		return (
@@ -262,6 +298,7 @@ export function SessionList({
 							</button>
 							{open ? (
 								<ExpandedGroupRows
+									cwd={cwd}
 									rows={rows}
 									snippets={snippets}
 									terms={terms}

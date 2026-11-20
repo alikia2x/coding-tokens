@@ -2,7 +2,7 @@ import { matchesTextQuery, parseSearchQuery } from "@shared/search";
 import type { HarnessReportRow } from "@shared/types";
 import { cn } from "cn";
 import { AlertTriangle, ChevronRight, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Link } from "react-router";
 import { EmptyState } from "~/components/empty-state";
 import { HarnessDot } from "~/components/harness-badge";
@@ -21,13 +21,17 @@ import {
 import { useResolvedRange } from "~/lib/hooks";
 import { useT } from "~/lib/i18n";
 import { useHarnesses } from "~/lib/queries";
+import { useAppStore } from "~/lib/store";
 import { type ResolvedRange, sessionsPath } from "~/lib/time-range";
 
 export function HarnessesPage() {
 	const range = useResolvedRange();
 	const harnesses = useHarnesses(range);
-	const [query, setQuery] = useState("");
-	const [open, setOpen] = useState<Set<string>>(() => new Set());
+	const query = useAppStore((state) => state.harnessesPage.query);
+	const openList = useAppStore((state) => state.harnessesPage.open);
+	const setQuery = useAppStore((state) => state.setHarnessesQuery);
+	const toggleHarnessOpen = useAppStore((state) => state.toggleHarnessOpen);
+	const open = useMemo(() => new Set(openList), [openList]);
 	const t = useT();
 	const parsed = useMemo(() => parseSearchQuery(query), [query]);
 	const rows = useMemo(
@@ -54,12 +58,7 @@ export function HarnessesPage() {
 	const totals = harnesses.data?.totals;
 
 	function toggle(harness: string): void {
-		setOpen((current) => {
-			const next = new Set(current);
-			if (next.has(harness)) next.delete(harness);
-			else next.add(harness);
-			return next;
-		});
+		toggleHarnessOpen(harness);
 	}
 
 	if (harnesses.isLoading && !harnesses.data) {

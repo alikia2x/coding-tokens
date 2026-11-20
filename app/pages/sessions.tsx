@@ -6,11 +6,12 @@ import {
 	useCallback,
 	useDeferredValue,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
 } from "react";
-import { useSearchParams } from "react-router";
+import { useNavigationType, useSearchParams } from "react-router";
 import type { FacetOption } from "~/components/facet-filter";
 import { PageContainer } from "~/components/page-container";
 import { BatchExportDialog } from "~/components/sessions/batch-export-dialog";
@@ -33,9 +34,23 @@ import { localizeLabel } from "~/lib/labels";
 import { useSessions, useSessionsSearch, useStatus } from "~/lib/queries";
 import { useRangeLabel } from "~/lib/range";
 import { useSettings } from "~/lib/settings";
+import { type SessionSortKey, useAppStore } from "~/lib/store";
 import { UNKNOWN_PROJECT_KEY } from "~/lib/time-range";
 
-type SortKey = "recent" | "cost" | "tokens" | "requests" | "title";
+type SortKey = SessionSortKey;
+
+const SESSION_FILTER_KEYS = [
+	"harness",
+	"project",
+	"model",
+	"q",
+	"internal",
+	"empty",
+] as const;
+
+function hasUrlSessionFilters(params: URLSearchParams): boolean {
+	return SESSION_FILTER_KEYS.some((key) => params.has(key));
+}
 
 const EMPTY_SNIPPETS: Record<string, string> = {};
 
@@ -76,35 +91,120 @@ export function SessionsPage() {
 	const sessions = useSessions(range);
 	const status = useStatus();
 	const [searchParams, setSearchParams] = useSearchParams();
-	const harness = searchParams.get("harness") as HarnessName | null;
-	const projects = searchParams.getAll("project");
-	const models = searchParams.getAll("model");
+	const navigationType = useNavigationType();
 	const { settings, update: updateSettings } = useSettings();
 	const t = useT();
 	const rangeLabel = useRangeLabel();
-	const includeInternal = searchParams.has("internal")
-		? searchParams.get("internal") === "1"
-		: settings.includeInternal;
-	const showEmpty = searchParams.get("empty") === "1";
 
-	const urlQuery = searchParams.get("q") ?? "";
-	const committedQuery = urlQuery.trim();
-	const [draftQuery, setDraftQuery] = useState(urlQuery);
+	const storeSessions = useAppStore((state) => state.sessions);
+	const applySessionsUrlFilters = useAppStore(
+		(state) => state.applySessionsUrlFilters,
+	);
+	const setSessionsPatch = useAppStore((state) => state.setSessionsPatch);
+	const clearSessionsFilters = useAppStore(
+		(state) => state.clearSessionsFilters,
+	);
+	const setSessionsExpanded = useAppStore((state) => state.setSessionsExpanded);
+	const toggleSessionGroup = useAppStore((state) => state.toggleSessionGroup);
+
+	const ownSyncRef = useRef<string | null>(null);
+	const mountedRef = useRef(false);
+
+	const buildSessionParams = useCallback(
+		(
+			base: URLSearchParams,
+			slice: {
+				harness: HarnessName | null;
+				projects: string[];
+				models: string[];
+				query: string;
+				includeInternal: boolean | null;
+				showEmpty: boolean;
+			},
+		): URLSearchParams => {
+			const next = new URLSearchParams();
+			for (const key of ["range", "from", "to"]) {
+				const value = base.get(key);
+				if (value) next.set(key, value);
+			}
+			if (slice.harness) next.set("harness", slice.harness);
+			for (const project of slice.projects) next.append("project", project);
+			for (const model of slice.models) next.append("model", model);
+			if (slice.query) next.set("q", slice.query);
+			if (slice.includeInternal === true) next.set("internal", "1");
+			else if (slice.includeInternal === false) next.set("internal", "0");
+			if (slice.showEmpty) next.set("empty", "1");
+			return next;
+		},
+		[],
+	);
+
+	useLayoutEffect(() => {
+		const rawSearch = searchParams.toString();
+		if (ownSyncRef.current === rawSearch) {
+			ownSyncRef.current = null;
+			mountedRef.current = true;
+			return;
+		}
+		if (
+			hasUrlSessionFilters(searchParams) &&
+			(!mountedRef.current || navigationType !== "POP")
+		) {
+			mountedRef.current = true;
+			applySessionsUrlFilters({
+				harness: (searchParams.get("harness") as HarnessName | null) ?? null,
+				projects: searchParams.getAll("project"),
+				models: searchParams.getAll("model"),
+				query: (searchParams.get("q") ?? "").trim(),
+				includeInternal: searchParams.has("internal")
+					? searchParams.get("internal") === "1"
+					: null,
+				showEmpty: searchParams.get("empty") === "1",
+			});
+			return;
+		}
+		mountedRef.current = true;
+		const current = useAppStore.getState().sessions;
+		const mirrored = buildSessionParams(searchParams, current);
+		const mirroredStr = mirrored.toString();
+		if (mirroredStr !== rawSearch) {
+			ownSyncRef.current = mirroredStr;
+			setSearchParams(mirrored, { replace: true });
+		}
+	}, [
+		searchParams,
+		navigationType,
+		applySessionsUrlFilters,
+		buildSessionParams,
+		setSearchParams,
+	]);
+
+	const harness = storeSessions.harness;
+	const projects = storeSessions.projects;
+	const models = storeSessions.models;
+	const includeInternal =
+		storeSessions.includeInternal !== null
+			? storeSessions.includeInternal
+			: settings.includeInternal;
+	const showEmpty = storeSessions.showEmpty;
+	const committedQuery = storeSessions.query;
+	const [draftQuery, setDraftQuery] = useState(committedQuery);
 
 	useEffect(() => {
-		setDraftQuery(urlQuery);
-	}, [urlQuery]);
+		setDraftQuery(committedQuery);
+	}, [committedQuery]);
 
 	const bodySearch = useSessionsSearch(
 		range,
 		committedQuery,
 		Boolean(committedQuery),
 	);
-	const [grouped, setGrouped] = useState(true);
-	const [sort, setSort] = useState<SortKey>("recent");
+	const grouped = storeSessions.grouped;
+	const sort = storeSessions.sort;
 	const [exportDialogOpen, setExportDialogOpen] = useState(false);
-	const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
-		() => new Set(),
+	const expandedGroups = useMemo(
+		() => new Set(storeSessions.expandedGroups),
+		[storeSessions.expandedGroups],
 	);
 
 	const parsed = useMemo(
@@ -298,60 +398,70 @@ export function SessionsPage() {
 	);
 
 	const filterSignature = `${range.from ?? ""}\n${range.until ?? ""}\n${harness ?? ""}\n${projects.join(",")}\n${models.join(",")}\n${includeInternal}\n${showEmpty}\n${committedQuery}`;
-	const expandedSignatureRef = useRef<string | null>(null);
 	useEffect(() => {
 		if (!grouped || !groups?.length) return;
-		if (expandedSignatureRef.current === filterSignature) return;
-		expandedSignatureRef.current = filterSignature;
-		setExpandedGroups(new Set([groups[0]?.[0] ?? ""]));
-	}, [filterSignature, grouped, groups]);
+		if (storeSessions.expandedSignature === filterSignature) return;
+		const firstGroup = groups[0]?.[0];
+		setSessionsExpanded(firstGroup ? [firstGroup] : [], filterSignature);
+	}, [
+		filterSignature,
+		storeSessions.expandedSignature,
+		grouped,
+		groups,
+		setSessionsExpanded,
+	]);
 
 	const allGroupKeys = groups?.map(([key]) => key) ?? [];
 	const allExpanded =
 		allGroupKeys.length > 0 &&
 		allGroupKeys.every((key) => expandedGroups.has(key));
 
-	function setParam(key: string, value: string | null): void {
-		const next = new URLSearchParams(searchParams);
-		if (value) next.set(key, value);
-		else next.delete(key);
-		setSearchParams(next, { replace: true });
-	}
-
-	function setListParam(key: string, values: string[]): void {
-		const next = new URLSearchParams(searchParams);
-		next.delete(key);
-		for (const value of values) next.append(key, value);
-		setSearchParams(next, { replace: true });
+	function updateSessionFilters(
+		patch: Partial<{
+			harness: HarnessName | null;
+			projects: string[];
+			models: string[];
+			query: string;
+			includeInternal: boolean | null;
+			showEmpty: boolean;
+		}>,
+	): void {
+		setSessionsPatch({
+			...patch,
+			groupLimit: 30,
+			ungroupedLimit: 80,
+			expandedGroupLimits: {},
+		});
+		const nextSlice = { ...useAppStore.getState().sessions, ...patch };
+		const nextParams = buildSessionParams(searchParams, nextSlice);
+		ownSyncRef.current = nextParams.toString();
+		setSearchParams(nextParams, { replace: true });
 	}
 
 	function commitSearch(value: string): void {
 		const trimmed = value.trim();
-		setParam("q", trimmed || null);
+		updateSessionFilters({ query: trimmed });
 	}
 
 	function clearSearch(): void {
 		setDraftQuery("");
-		setParam("q", null);
+		updateSessionFilters({ query: "" });
 	}
 
 	function clearFilters(): void {
 		setDraftQuery("");
+		clearSessionsFilters();
 		const next = new URLSearchParams();
 		for (const key of ["range", "from", "to"]) {
 			const value = searchParams.get(key);
 			if (value) next.set(key, value);
 		}
+		ownSyncRef.current = next.toString();
 		setSearchParams(next, { replace: true });
 	}
 
 	function toggleGroup(key: string): void {
-		setExpandedGroups((current) => {
-			const next = new Set(current);
-			if (next.has(key)) next.delete(key);
-			else next.add(key);
-			return next;
-		});
+		toggleSessionGroup(key);
 	}
 
 	return (
@@ -371,15 +481,15 @@ export function SessionsPage() {
 					modelOptions={modelOptions}
 					status={status.data}
 					rangeLabel={rangeLabel}
-					onSelectHarness={(next) => setParam("harness", next)}
-					onSetProjects={(values) => setListParam("project", values)}
-					onSetModels={(values) => setListParam("model", values)}
+					onSelectHarness={(next) => updateSessionFilters({ harness: next })}
+					onSetProjects={(values) => updateSessionFilters({ projects: values })}
+					onSetModels={(values) => updateSessionFilters({ models: values })}
 					onToggleInternal={() => {
 						const next = !includeInternal;
-						setParam("internal", next ? "1" : null);
+						updateSessionFilters({ includeInternal: next });
 						updateSettings({ includeInternal: next });
 					}}
-					onToggleEmpty={() => setParam("empty", showEmpty ? null : "1")}
+					onToggleEmpty={() => updateSessionFilters({ showEmpty: !showEmpty })}
 					onClearFilters={clearFilters}
 				/>
 
@@ -442,7 +552,9 @@ export function SessionsPage() {
 
 						<Select
 							value={sort}
-							onValueChange={(value) => setSort(value as SortKey)}
+							onValueChange={(value) =>
+								setSessionsPatch({ sort: value as SortKey })
+							}
 						>
 							<SelectTrigger size="sm" className="w-[124px] text-[12px]">
 								<SelectValue />
@@ -459,7 +571,9 @@ export function SessionsPage() {
 						<div className="flex h-8 items-center gap-2 rounded-md border px-2.5 text-[12px] text-muted-foreground">
 							<Switch
 								checked={grouped}
-								onCheckedChange={setGrouped}
+								onCheckedChange={(checked) =>
+									setSessionsPatch({ grouped: checked })
+								}
 								aria-label={t("sessions.groupByProject")}
 							/>
 							{t("sessions.group")}
@@ -470,9 +584,7 @@ export function SessionsPage() {
 								variant="ghost"
 								size="sm"
 								onClick={() =>
-									setExpandedGroups(
-										allExpanded ? new Set() : new Set(allGroupKeys),
-									)
+									setSessionsExpanded(allExpanded ? [] : allGroupKeys)
 								}
 							>
 								{allExpanded

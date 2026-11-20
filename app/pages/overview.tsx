@@ -1,14 +1,10 @@
 import { ArrowUpRight } from "lucide-react";
-import { useState } from "react";
+import { useEffect } from "react";
 import { Link, useSearchParams } from "react-router";
 import { HarnessShare } from "~/components/charts/harness-share";
 import { ContributionHeatmap } from "~/components/charts/heatmap";
 import { TopModels } from "~/components/charts/top-models";
-import {
-	type UsageBucketUnit,
-	UsageChart,
-	type UsageMetric,
-} from "~/components/charts/usage-chart";
+import { UsageChart, type UsageMetric } from "~/components/charts/usage-chart";
 import { HarnessDot } from "~/components/harness-badge";
 import { KpiCard } from "~/components/kpi-card";
 import { PageContainer } from "~/components/page-container";
@@ -37,6 +33,7 @@ import { localizeLabel } from "~/lib/labels";
 import { useHeatmap, useOverview } from "~/lib/queries";
 import { useRangeLabel } from "~/lib/range";
 import { useSettings } from "~/lib/settings";
+import { useAppStore } from "~/lib/store";
 import {
 	rangeQueryString,
 	sessionsPath,
@@ -64,18 +61,37 @@ export function OverviewPage() {
 	const { settings, update: updateSettings } = useSettings();
 	const [searchParams, setSearchParams] = useSearchParams();
 	const rangeSignature = `${range.key}:${range.from ?? ""}:${range.until ?? ""}`;
-	const [bucketSelection, setBucketSelection] = useState<{
-		signature: string;
-		unit: UsageBucketUnit;
-	} | null>(null);
+	const metric = useAppStore((state) => state.overview.metric);
+	const bucketSelection = useAppStore(
+		(state) => state.overview.bucketSelection,
+	);
+	const setOverviewMetric = useAppStore((state) => state.setOverviewMetric);
+	const setOverviewBucketSelection = useAppStore(
+		(state) => state.setOverviewBucketSelection,
+	);
+
+	useEffect(() => {
+		const urlMetric = searchParams.get("metric");
+		if (urlMetric === "tokens" || urlMetric === "cost") {
+			if (urlMetric !== useAppStore.getState().overview.metric) {
+				setOverviewMetric(urlMetric);
+			}
+		} else {
+			const storedMetric = useAppStore.getState().overview.metric;
+			if (storedMetric === "tokens") {
+				const params = new URLSearchParams(searchParams);
+				params.set("metric", storedMetric);
+				setSearchParams(params, { replace: true });
+			}
+		}
+	}, [searchParams, setOverviewMetric, setSearchParams]);
+
 	const bucketOverride =
 		bucketSelection?.signature === rangeSignature
 			? bucketSelection.unit
 			: undefined;
 	const overview = useOverview(range, bucketOverride);
 	const heatmap = useHeatmap();
-	const metric: UsageMetric =
-		searchParams.get("metric") === "tokens" ? "tokens" : "cost";
 	const t = useT();
 	const rangeLabel = useRangeLabel();
 	const rangeQuery = rangeQueryString(range);
@@ -224,14 +240,18 @@ export function OverviewPage() {
 					<UsageChart
 						buckets={data.buckets}
 						metric={metric}
-						onMetricChange={(next) => {
+						onMetricChange={(next: UsageMetric) => {
+							setOverviewMetric(next);
 							const params = new URLSearchParams(searchParams);
 							params.set("metric", next);
 							setSearchParams(params, { replace: true });
 						}}
 						unit={data.bucketUnit}
 						onUnitChange={(next) => {
-							setBucketSelection({ signature: rangeSignature, unit: next });
+							setOverviewBucketSelection({
+								signature: rangeSignature,
+								unit: next,
+							});
 						}}
 					/>
 				</div>

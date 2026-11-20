@@ -11,7 +11,7 @@ import { ModelPricingDialog } from "~/components/pricing/model-pricing-dialog";
 import { PricingCatalogDialog } from "~/components/pricing/pricing-catalog-dialog";
 import { PricingStatusPill } from "~/components/pricing/pricing-status-pill";
 import { SectionHeading } from "~/components/section-heading";
-import { SortableHead, type SortState } from "~/components/sortable-head";
+import { SortableHead } from "~/components/sortable-head";
 import { SummaryStrip } from "~/components/summary-strip";
 import { Input } from "~/components/ui/input";
 import { Skeleton } from "~/components/ui/skeleton";
@@ -35,6 +35,7 @@ import { useResolvedRange } from "~/lib/hooks";
 import { useT } from "~/lib/i18n";
 import { localizeLabel } from "~/lib/labels";
 import { useModels } from "~/lib/queries";
+import { type ModelSortKey, useAppStore } from "~/lib/store";
 import { sessionsPath } from "~/lib/time-range";
 
 function isRowUnpriced(row: ModelReportRow): boolean {
@@ -99,14 +100,14 @@ function compareModels(
 export function ModelsPage() {
 	const range = useResolvedRange();
 	const models = useModels(range);
-	const [query, setQuery] = useState("");
-	const [unpricedOnly, setUnpricedOnly] = useState(false);
+	const query = useAppStore((state) => state.modelsPage.query);
+	const unpricedOnly = useAppStore((state) => state.modelsPage.unpricedOnly);
+	const sort = useAppStore((state) => state.modelsPage.sort);
+	const setQuery = useAppStore((state) => state.setModelsQuery);
+	const setUnpricedOnly = useAppStore((state) => state.setModelsUnpricedOnly);
+	const setSort = useAppStore((state) => state.setModelsSort);
 	const [editingRow, setEditingRow] = useState<ModelReportRow | null>(null);
 	const [catalogDialogOpen, setCatalogDialogOpen] = useState(false);
-	const [sort, setSort] = useState<SortState>({
-		key: "cost",
-		direction: "desc",
-	});
 	const t = useT();
 	const parsed = useMemo(() => parseSearchQuery(query), [query]);
 
@@ -163,10 +164,14 @@ export function ModelsPage() {
 		summary.tokens > 0 ? summary.cacheRead / summary.tokens : 0;
 
 	function onSort(key: string): void {
-		setSort((current) =>
-			current.key === key
-				? { key, direction: current.direction === "desc" ? "asc" : "desc" }
-				: { key, direction: key === "model" ? "asc" : "desc" },
+		const nextKey = key as ModelSortKey;
+		setSort(
+			sort.key === nextKey
+				? {
+						key: nextKey,
+						direction: sort.direction === "desc" ? "asc" : "desc",
+					}
+				: { key: nextKey, direction: nextKey === "model" ? "asc" : "desc" },
 		);
 	}
 
@@ -187,7 +192,7 @@ export function ModelsPage() {
 						{unpricedModelCount > 0 ? (
 							<button
 								type="button"
-								onClick={() => setUnpricedOnly((current) => !current)}
+								onClick={() => setUnpricedOnly(!unpricedOnly)}
 								className={cn(
 									"inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
 									unpricedOnly

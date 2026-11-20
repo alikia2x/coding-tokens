@@ -29,6 +29,7 @@ import { useT } from "~/lib/i18n";
 import { localizeLabel } from "~/lib/labels";
 import { useSessionDetail } from "~/lib/queries";
 import { useSettings } from "~/lib/settings";
+import { useAppStore } from "~/lib/store";
 import { sessionsPath } from "~/lib/time-range";
 import { useSessionFind } from "~/lib/use-session-find";
 
@@ -144,12 +145,21 @@ export function SessionDetailPage() {
 			displayTurns: ordered,
 		};
 	}, [detail.data]);
+	const detailKey = `${harness}:${sessionId}`;
+	const storedTurnLimit = useAppStore(
+		(state) => state.sessionDetail.turnLimits[detailKey] ?? 40,
+	);
+	const setSessionTurnLimit = useAppStore((state) => state.setSessionTurnLimit);
 	const turnWindow = useProgressiveLimit(
 		displayTurns.length,
 		40,
 		40,
 		find.open || searchParams.has("find"),
-		`${harness}:${sessionId}`,
+		undefined,
+		{
+			limit: storedTurnLimit,
+			onLimitChange: (next) => setSessionTurnLimit(detailKey, next),
+		},
 	);
 
 	async function exportMarkdown(): Promise<void> {

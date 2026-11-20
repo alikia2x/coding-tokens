@@ -109,18 +109,24 @@ applyHappyDomGlobals();
 const React = await import("react");
 const ReactDOM = await import("react-dom/client");
 type Root = import("react-dom/client").Root;
-const { MemoryRouter } = await import("react-router");
+const { MemoryRouter, Route, Routes, useNavigate } = await import(
+	"react-router"
+);
 const { QueryClient, QueryClientProvider } = await import(
 	"@tanstack/react-query"
 );
 const { SessionsSidebar } = await import(
 	"~/components/sessions/sessions-sidebar"
 );
-const { SessionsPage } = await import("~/pages/sessions");
 const { ExplorePage } = await import("~/pages/explore");
+const { ModelsPage } = await import("~/pages/models");
+const { OverviewPage } = await import("~/pages/overview");
+const { ProjectsPage } = await import("~/pages/projects");
+const { SessionsPage } = await import("~/pages/sessions");
 const { queryKeys } = await import("~/lib/queries");
 const { RangeProvider } = await import("~/lib/range");
 const { SettingsProvider } = await import("~/lib/settings");
+const { useAppStore } = await import("~/lib/store");
 
 function sleep(ms: number) {
 	return new Promise((resolve) => setTimeout(resolve, ms));
@@ -231,6 +237,7 @@ describe("Dynamic Harness Filter UI Regression Suite", () => {
 	});
 
 	beforeEach(() => {
+		useAppStore.getState().resetAll();
 		document.body.innerHTML = "";
 		container = document.createElement("div");
 		document.body.appendChild(container);
@@ -337,6 +344,42 @@ describe("Dynamic Harness Filter UI Regression Suite", () => {
 					status: 200,
 					headers: { "Content-Type": "application/json" },
 				});
+			}
+			if (url.includes("/api/pricing")) {
+				return new Response(
+					JSON.stringify({
+						status: {
+							state: "fresh",
+							endpoint: "https://models.dev/api.json",
+							cachePath: "",
+							autoFetch: true,
+							cacheTtlHours: 24,
+							fetchedAt: null,
+							expiresAt: null,
+							modelCount: 0,
+							providerCount: 0,
+							lastError: null,
+							fetching: false,
+							history: [],
+							summary: {
+								activeModels: 2,
+								customModels: 0,
+								catalogModels: 0,
+								recordedOnlyModels: 0,
+								fallbackModels: 0,
+								unpricedModels: 1,
+								unpricedRequests: 2,
+							},
+						},
+						settings: {
+							autoFetch: true,
+							endpoint: "https://models.dev/api.json",
+							cacheTtlHours: 24,
+							customRules: {},
+						},
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				);
 			}
 			if (url.includes("/api/settings")) {
 				return new Response(JSON.stringify({}), {
@@ -693,6 +736,65 @@ describe("Dynamic Harness Filter UI Regression Suite", () => {
 					headers: { "Content-Type": "application/json" },
 				});
 			}
+			if (url.includes("/api/heatmap")) {
+				return new Response(
+					JSON.stringify({
+						from: 0,
+						until: 0,
+						days: [],
+						totals: {
+							requests: 0,
+							tokens: 0,
+							costUsd: 0,
+							sessions: 0,
+						},
+						maxTokens: 0,
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				);
+			}
+			if (url.includes("/api/pricing")) {
+				return new Response(
+					JSON.stringify({
+						status: {
+							state: "fresh",
+							endpoint: "https://models.dev/api.json",
+							cachePath: "",
+							autoFetch: true,
+							cacheTtlHours: 24,
+							fetchedAt: null,
+							expiresAt: null,
+							modelCount: 0,
+							providerCount: 0,
+							lastError: null,
+							fetching: false,
+							history: [],
+							summary: {
+								activeModels: 2,
+								customModels: 0,
+								catalogModels: 0,
+								recordedOnlyModels: 0,
+								fallbackModels: 0,
+								unpricedModels: 1,
+								unpricedRequests: 2,
+							},
+						},
+						settings: {
+							autoFetch: true,
+							endpoint: "https://models.dev/api.json",
+							cacheTtlHours: 24,
+							customRules: {},
+						},
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				);
+			}
+			if (url.includes("/api/settings")) {
+				return new Response(JSON.stringify({}), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
 			return new Response(JSON.stringify(status), {
 				status: 200,
 				headers: { "Content-Type": "application/json" },
@@ -754,5 +856,662 @@ describe("Dynamic Harness Filter UI Regression Suite", () => {
 		const popButtons = Array.from(document.body.querySelectorAll("button"));
 		const alphaOpt = popButtons.find((b) => b.textContent?.includes("alpha"));
 		expect(alphaOpt?.textContent).toContain("1");
+	});
+
+	test("SessionsPage preserves filters, sort, grouping, and expanded groups across session detail navigation", async () => {
+		const status = makeStatusPayload();
+		const baseTotals = {
+			sessions: 1,
+			messages: 2,
+			requests: 1,
+			inputTokens: 100,
+			outputTokens: 50,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			reasoningTokens: 0,
+			costUsd: 0.01,
+			estimatedRequests: 0,
+			unpricedRequests: 0,
+		};
+		const sessionsData = {
+			indexedAt: Date.now(),
+			warnings: [],
+			sessions: [
+				{
+					key: "codex:x1",
+					harness: "codex",
+					sessionId: "x1",
+					title: "Codex alpha task",
+					cwd: "/proj/alpha",
+					projectName: "alpha",
+					models: ["gpt-5"],
+					startedAt: 1000,
+					lastActivityAt: 3000,
+					durationMs: 1000,
+					isSubagent: false,
+					isReview: false,
+					hasTranscript: true,
+					totals: baseTotals,
+				},
+				{
+					key: "claude:c1",
+					harness: "claude",
+					sessionId: "c1",
+					title: "Claude beta task",
+					cwd: "/proj/beta",
+					projectName: "beta",
+					models: ["claude-sonnet-4"],
+					startedAt: 1000,
+					lastActivityAt: 2000,
+					durationMs: 1000,
+					isSubagent: false,
+					isReview: false,
+					hasTranscript: true,
+					totals: baseTotals,
+				},
+			],
+		};
+
+		globalThis.fetch = (async (input: RequestInfo | URL) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url.includes("/api/sessions")) {
+				return new Response(JSON.stringify(sessionsData), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			if (url.includes("/api/heatmap")) {
+				return new Response(
+					JSON.stringify({
+						from: 0,
+						until: 0,
+						days: [],
+						totals: {
+							requests: 0,
+							tokens: 0,
+							costUsd: 0,
+							sessions: 0,
+						},
+						maxTokens: 0,
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				);
+			}
+			if (url.includes("/api/pricing")) {
+				return new Response(
+					JSON.stringify({
+						status: {
+							state: "fresh",
+							endpoint: "https://models.dev/api.json",
+							cachePath: "",
+							autoFetch: true,
+							cacheTtlHours: 24,
+							fetchedAt: null,
+							expiresAt: null,
+							modelCount: 0,
+							providerCount: 0,
+							lastError: null,
+							fetching: false,
+							history: [],
+							summary: {
+								activeModels: 2,
+								customModels: 0,
+								catalogModels: 0,
+								recordedOnlyModels: 0,
+								fallbackModels: 0,
+								unpricedModels: 1,
+								unpricedRequests: 2,
+							},
+						},
+						settings: {
+							autoFetch: true,
+							endpoint: "https://models.dev/api.json",
+							cacheTtlHours: 24,
+							customRules: {},
+						},
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				);
+			}
+			if (url.includes("/api/settings")) {
+				return new Response(JSON.stringify({}), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			return new Response(JSON.stringify(status), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			});
+		}) as typeof fetch;
+
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		queryClient.setQueryData(queryKeys.status, status);
+
+		function DetailStub() {
+			const navigate = useNavigate();
+			return React.createElement(
+				"button",
+				{
+					type: "button",
+					onClick: () => navigate("/sessions?range=30d"),
+				},
+				"Back to sessions",
+			);
+		}
+
+		root.render(
+			React.createElement(
+				QueryClientProvider,
+				{ client: queryClient },
+				React.createElement(
+					MemoryRouter,
+					{ initialEntries: ["/sessions?range=30d"] },
+					React.createElement(
+						SettingsProvider,
+						null,
+						React.createElement(
+							RangeProvider,
+							null,
+							React.createElement(
+								Routes,
+								null,
+								React.createElement(Route, {
+									path: "/sessions",
+									element: React.createElement(SessionsPage),
+								}),
+								React.createElement(Route, {
+									path: "/sessions/:harness/:sessionId",
+									element: React.createElement(DetailStub),
+								}),
+							),
+						),
+					),
+				),
+			),
+		);
+
+		await sleep(80);
+
+		// Select Codex in sidebar harness filter and verify only Codex alpha task is shown
+		const codexSidebarBtn = Array.from(
+			container.querySelectorAll("aside button"),
+		).find((b) => b.textContent?.includes("Codex"));
+		click(codexSidebarBtn);
+		await sleep(40);
+
+		expect(container.textContent).toContain("Codex alpha task");
+		expect(container.textContent).not.toContain("Claude beta task");
+
+		// Navigate into session detail via rendered link
+		const sessionLink = Array.from(container.querySelectorAll("a")).find((a) =>
+			a.textContent?.includes("Codex alpha task"),
+		);
+		expect(sessionLink).toBeDefined();
+		click(sessionLink);
+		await sleep(50);
+
+		const backBtn = Array.from(container.querySelectorAll("button")).find((b) =>
+			b.textContent?.includes("Back to sessions"),
+		);
+		expect(backBtn).toBeDefined();
+
+		// Return to /sessions?range=30d (no filter params in target URL)
+		click(backBtn);
+		await sleep(60);
+
+		expect(useAppStore.getState().sessions.harness).toBe("codex");
+		expect(container.textContent).toContain("Codex alpha task");
+		expect(container.textContent).not.toContain("Claude beta task");
+	});
+
+	test("SessionsPage explicit URL drill-down overrides prior persisted store filters", async () => {
+		const status = makeStatusPayload();
+		const baseTotals = {
+			sessions: 1,
+			messages: 2,
+			requests: 1,
+			inputTokens: 100,
+			outputTokens: 50,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			reasoningTokens: 0,
+			costUsd: 0.01,
+			estimatedRequests: 0,
+			unpricedRequests: 0,
+		};
+		const sessionsData = {
+			indexedAt: Date.now(),
+			warnings: [],
+			sessions: [
+				{
+					key: "codex:x1",
+					harness: "codex",
+					sessionId: "x1",
+					title: "Codex alpha task",
+					cwd: "/proj/alpha",
+					projectName: "alpha",
+					models: ["gpt-5"],
+					startedAt: 1000,
+					lastActivityAt: 3000,
+					durationMs: 1000,
+					isSubagent: false,
+					isReview: false,
+					hasTranscript: true,
+					totals: baseTotals,
+				},
+				{
+					key: "claude:c1",
+					harness: "claude",
+					sessionId: "c1",
+					title: "Claude beta task",
+					cwd: "/proj/beta",
+					projectName: "beta",
+					models: ["claude-sonnet-4"],
+					startedAt: 1000,
+					lastActivityAt: 2000,
+					durationMs: 1000,
+					isSubagent: false,
+					isReview: false,
+					hasTranscript: true,
+					totals: baseTotals,
+				},
+			],
+		};
+
+		globalThis.fetch = (async (input: RequestInfo | URL) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url.includes("/api/sessions")) {
+				return new Response(JSON.stringify(sessionsData), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			if (url.includes("/api/heatmap")) {
+				return new Response(
+					JSON.stringify({
+						from: 0,
+						until: 0,
+						days: [],
+						totals: {
+							requests: 0,
+							tokens: 0,
+							costUsd: 0,
+							sessions: 0,
+						},
+						maxTokens: 0,
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				);
+			}
+			if (url.includes("/api/pricing")) {
+				return new Response(
+					JSON.stringify({
+						status: {
+							state: "fresh",
+							endpoint: "https://models.dev/api.json",
+							cachePath: "",
+							autoFetch: true,
+							cacheTtlHours: 24,
+							fetchedAt: null,
+							expiresAt: null,
+							modelCount: 0,
+							providerCount: 0,
+							lastError: null,
+							fetching: false,
+							history: [],
+							summary: {
+								activeModels: 2,
+								customModels: 0,
+								catalogModels: 0,
+								recordedOnlyModels: 0,
+								fallbackModels: 0,
+								unpricedModels: 1,
+								unpricedRequests: 2,
+							},
+						},
+						settings: {
+							autoFetch: true,
+							endpoint: "https://models.dev/api.json",
+							cacheTtlHours: 24,
+							customRules: {},
+						},
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				);
+			}
+			if (url.includes("/api/settings")) {
+				return new Response(JSON.stringify({}), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			return new Response(JSON.stringify(status), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			});
+		}) as typeof fetch;
+
+		// Seed previous harness filter in store
+		useAppStore.getState().setSessionsPatch({
+			harness: "codex",
+			models: ["gpt-5"],
+		});
+
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		queryClient.setQueryData(queryKeys.status, status);
+
+		root.render(
+			React.createElement(
+				QueryClientProvider,
+				{ client: queryClient },
+				React.createElement(
+					MemoryRouter,
+					{ initialEntries: ["/sessions?range=30d&project=%2Fproj%2Fbeta"] },
+					React.createElement(
+						SettingsProvider,
+						null,
+						React.createElement(
+							RangeProvider,
+							null,
+							React.createElement(SessionsPage),
+						),
+					),
+				),
+			),
+		);
+
+		await sleep(80);
+
+		const state = useAppStore.getState().sessions;
+		expect(state.harness).toBeNull();
+		expect(state.models).toEqual([]);
+		expect(state.projects).toEqual(["/proj/beta"]);
+		expect(container.textContent).toContain("Claude beta task");
+		expect(container.textContent).not.toContain("Codex alpha task");
+	});
+
+	test("ExplorePage, ProjectsPage, ModelsPage, and OverviewPage persist UI state across remounts", async () => {
+		const status = makeStatusPayload();
+		const totals = {
+			sessions: 1,
+			messages: 2,
+			requests: 3,
+			inputTokens: 100,
+			outputTokens: 50,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			reasoningTokens: 0,
+			costUsd: 0.25,
+			estimatedRequests: 0,
+			unpricedRequests: 0,
+		};
+
+		globalThis.fetch = (async (input: RequestInfo | URL) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url.includes("/api/explore")) {
+				return new Response(
+					JSON.stringify({
+						mode: "time",
+						metric: "tokens",
+						dimension: "harness",
+						bucket: "day",
+						breakdown: "none",
+						totals,
+						xLabels: [],
+						starts: [],
+						series: [],
+						rows: [],
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				);
+			}
+			if (url.includes("/api/projects")) {
+				return new Response(
+					JSON.stringify({
+						indexedAt: Date.now(),
+						warnings: [],
+						rows: [
+							{
+								cwd: "/proj/alpha",
+								name: "alpha",
+								harnesses: ["codex"],
+								models: ["gpt-5"],
+								sparkline: [1],
+								lastActivityAt: 1000,
+								totals,
+							},
+							{
+								cwd: "/proj/beta",
+								name: "beta",
+								harnesses: ["claude"],
+								models: ["claude-sonnet-4"],
+								sparkline: [2],
+								lastActivityAt: 2000,
+								totals,
+							},
+						],
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				);
+			}
+			if (url.includes("/api/models")) {
+				return new Response(
+					JSON.stringify({
+						indexedAt: Date.now(),
+						warnings: [],
+						rows: [
+							{
+								model: "gpt-5",
+								provider: "openai",
+								harnesses: ["codex"],
+								sparkline: [1],
+								lastActivityAt: 2000,
+								totals,
+								pricing: null,
+							},
+							{
+								model: "claude-sonnet-4",
+								provider: "anthropic",
+								harnesses: ["claude"],
+								sparkline: [2],
+								lastActivityAt: 1000,
+								totals: { ...totals, unpricedRequests: 2 },
+								pricing: null,
+							},
+						],
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				);
+			}
+			if (url.includes("/api/overview")) {
+				return new Response(
+					JSON.stringify({
+						range: { from: null, until: null },
+						indexedAt: Date.now(),
+						warnings: [],
+						totals,
+						previous: null,
+						bucketUnit: "day",
+						buckets: [],
+						harnesses: [],
+						projects: [],
+						models: [],
+						recentSessions: [],
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				);
+			}
+			if (url.includes("/api/heatmap")) {
+				return new Response(
+					JSON.stringify({
+						from: 0,
+						until: 0,
+						days: [],
+						totals: {
+							requests: 0,
+							tokens: 0,
+							costUsd: 0,
+							sessions: 0,
+						},
+						maxTokens: 0,
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				);
+			}
+			if (url.includes("/api/pricing")) {
+				return new Response(
+					JSON.stringify({
+						status: {
+							state: "fresh",
+							endpoint: "https://models.dev/api.json",
+							cachePath: "",
+							autoFetch: true,
+							cacheTtlHours: 24,
+							fetchedAt: null,
+							expiresAt: null,
+							modelCount: 0,
+							providerCount: 0,
+							lastError: null,
+							fetching: false,
+							history: [],
+							summary: {
+								activeModels: 2,
+								customModels: 0,
+								catalogModels: 0,
+								recordedOnlyModels: 0,
+								fallbackModels: 0,
+								unpricedModels: 1,
+								unpricedRequests: 2,
+							},
+						},
+						settings: {
+							autoFetch: true,
+							endpoint: "https://models.dev/api.json",
+							cacheTtlHours: 24,
+							customRules: {},
+						},
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				);
+			}
+			if (url.includes("/api/settings")) {
+				return new Response(JSON.stringify({}), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			return new Response(JSON.stringify(status), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			});
+		}) as typeof fetch;
+
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		queryClient.setQueryData(queryKeys.status, status);
+
+		const wrap = (initialEntry: string, node: React.ReactElement) =>
+			React.createElement(
+				QueryClientProvider,
+				{ client: queryClient },
+				React.createElement(
+					MemoryRouter,
+					{ initialEntries: [initialEntry] },
+					React.createElement(
+						SettingsProvider,
+						null,
+						React.createElement(RangeProvider, null, node),
+					),
+				),
+			);
+
+		// ExplorePage: pick custom-harness filter, unmount, remount on bare /explore?range=30d
+		root.render(wrap("/explore?range=30d", React.createElement(ExplorePage)));
+		await sleep(80);
+		const harnessBtn = Array.from(container.querySelectorAll("button")).find(
+			(b) => b.textContent?.startsWith("Harness"),
+		);
+		click(harnessBtn);
+		await sleep(40);
+		const customOpt = Array.from(document.body.querySelectorAll("button")).find(
+			(b) => b.textContent?.includes(getHarnessLabel("custom-harness")),
+		);
+		click(customOpt);
+		await sleep(40);
+		expect(useAppStore.getState().explore.harnesses).toEqual([
+			"custom-harness",
+		]);
+
+		root.render(wrap("/overview?range=30d", React.createElement(OverviewPage)));
+		await sleep(60);
+		const costBtn = Array.from(container.querySelectorAll("button")).find(
+			(b) => b.textContent?.trim() === "Cost",
+		);
+		expect(costBtn).toBeDefined();
+		click(costBtn);
+		await sleep(30);
+		expect(useAppStore.getState().overview.metric).toBe("cost");
+
+		// Remount ExplorePage without explore params in URL -> restores filter from store
+		root.render(wrap("/explore?range=30d", React.createElement(ExplorePage)));
+		await sleep(60);
+		const restoredHarnessBtn = Array.from(
+			container.querySelectorAll("button"),
+		).find((b) => b.textContent?.startsWith("Harness"));
+		expect(restoredHarnessBtn?.textContent).toContain("1");
+
+		// ProjectsPage: filter query + remount
+		root.render(wrap("/projects?range=30d", React.createElement(ProjectsPage)));
+		await sleep(60);
+		const projectInput = container.querySelector(
+			"input[data-search-input]",
+		) as HTMLInputElement | null;
+		expect(projectInput).not.toBeNull();
+		if (projectInput) {
+			const setter = Object.getOwnPropertyDescriptor(
+				win.HTMLInputElement.prototype,
+				"value",
+			)?.set;
+			setter?.call(projectInput, "beta");
+			projectInput.dispatchEvent(
+				new win.Event("input", { bubbles: true }) as unknown as Event,
+			);
+			await sleep(30);
+		}
+		expect(useAppStore.getState().projectsPage.query).toBe("beta");
+
+		root.render(wrap("/models?range=30d", React.createElement(ModelsPage)));
+		await sleep(60);
+		expect(useAppStore.getState().projectsPage.query).toBe("beta");
+
+		const modelInput = container.querySelector(
+			"input[data-search-input]",
+		) as HTMLInputElement | null;
+		expect(modelInput).not.toBeNull();
+		if (modelInput) {
+			const setter = Object.getOwnPropertyDescriptor(
+				win.HTMLInputElement.prototype,
+				"value",
+			)?.set;
+			setter?.call(modelInput, "claude");
+			modelInput.dispatchEvent(
+				new win.Event("input", { bubbles: true }) as unknown as Event,
+			);
+			await sleep(30);
+		}
+		expect(useAppStore.getState().modelsPage.query).toBe("claude");
+
+		root.render(wrap("/projects?range=30d", React.createElement(ProjectsPage)));
+		await sleep(50);
+		const restoredProjectInput = container.querySelector(
+			"input[data-search-input]",
+		) as HTMLInputElement | null;
+		expect(restoredProjectInput?.value).toBe("beta");
 	});
 });

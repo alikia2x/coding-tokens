@@ -1,6 +1,12 @@
 import { getHarnessLabel, HARNESS_NAMES } from "@shared/types";
-import { type ReactNode, useMemo } from "react";
-import { Link, useSearchParams } from "react-router";
+import {
+	type ReactNode,
+	useCallback,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+} from "react";
+import { Link, useNavigationType, useSearchParams } from "react-router";
 import {
 	Area,
 	AreaChart,
@@ -57,6 +63,7 @@ import { localizeLabel } from "~/lib/labels";
 import { useExplore, useModels, useProjects, useStatus } from "~/lib/queries";
 import { useRangeLabel } from "~/lib/range";
 import { useSettings } from "~/lib/settings";
+import { type ExploreSlice, useAppStore } from "~/lib/store";
 import { sessionsPath, UNKNOWN_PROJECT_KEY } from "~/lib/time-range";
 
 type Metric = "tokens" | "cost" | "requests" | "sessions";
@@ -64,6 +71,22 @@ type Dimension = "harness" | "project" | "model";
 type Mode = "time" | "dimension";
 type Bucket = "hour" | "day" | "week" | "month";
 type Chart = "bar" | "line" | "area";
+
+const EXPLORE_URL_KEYS = [
+	"mode",
+	"metric",
+	"dimension",
+	"bucket",
+	"breakdown",
+	"chart",
+	"harness",
+	"project",
+	"model",
+] as const;
+
+function hasUrlExploreParams(params: URLSearchParams): boolean {
+	return EXPLORE_URL_KEYS.some((key) => params.has(key));
+}
 
 function metricValue(
 	totals: {
@@ -92,6 +115,7 @@ function formatMetric(value: number, metric: Metric): string {
 export function ExplorePage() {
 	const range = useResolvedRange();
 	const [searchParams, setSearchParams] = useSearchParams();
+	const navigationType = useNavigationType();
 	const status = useStatus();
 	const projects = useProjects(range);
 	const models = useModels(range);
@@ -99,20 +123,93 @@ export function ExplorePage() {
 	const t = useT();
 	const { code } = useDateLocale();
 	const rangeLabel = useRangeLabel();
-	const mode = (searchParams.get("mode") ?? settings.exploreMode) as Mode;
-	const metric = (searchParams.get("metric") ??
-		settings.exploreMetric) as Metric;
-	const dimension = (searchParams.get("dimension") ??
+
+	const storeExplore = useAppStore((state) => state.explore);
+	const setExploreField = useAppStore((state) => state.setExploreField);
+	const applyExploreUrlState = useAppStore(
+		(state) => state.applyExploreUrlState,
+	);
+	const resetExploreState = useAppStore((state) => state.resetExploreState);
+	const ownSyncRef = useRef<string | null>(null);
+	const mountedRef = useRef(false);
+
+	const buildExploreParams = useCallback(
+		(base: URLSearchParams, slice: ExploreSlice): URLSearchParams => {
+			const next = new URLSearchParams();
+			for (const key of ["range", "from", "to"]) {
+				const value = base.get(key);
+				if (value) next.set(key, value);
+			}
+			if (slice.mode) next.set("mode", slice.mode);
+			if (slice.metric) next.set("metric", slice.metric);
+			if (slice.dimension) next.set("dimension", slice.dimension);
+			if (slice.bucket) next.set("bucket", slice.bucket);
+			if (slice.breakdown) next.set("breakdown", slice.breakdown);
+			if (slice.chart) next.set("chart", slice.chart);
+			for (const item of slice.harnesses) next.append("harness", item);
+			for (const item of slice.projects) next.append("project", item);
+			for (const item of slice.models) next.append("model", item);
+			return next;
+		},
+		[],
+	);
+
+	useLayoutEffect(() => {
+		const rawSearch = searchParams.toString();
+		if (ownSyncRef.current === rawSearch) {
+			ownSyncRef.current = null;
+			mountedRef.current = true;
+			return;
+		}
+		if (
+			hasUrlExploreParams(searchParams) &&
+			(!mountedRef.current || navigationType !== "POP")
+		) {
+			mountedRef.current = true;
+			applyExploreUrlState({
+				mode: (searchParams.get("mode") as Mode | null) ?? null,
+				metric: (searchParams.get("metric") as Metric | null) ?? null,
+				dimension: (searchParams.get("dimension") as Dimension | null) ?? null,
+				bucket: (searchParams.get("bucket") as Bucket | null) ?? null,
+				breakdown:
+					(searchParams.get("breakdown") as (Dimension | "none") | null) ??
+					null,
+				chart: (searchParams.get("chart") as Chart | null) ?? null,
+				harnesses: searchParams.getAll("harness"),
+				projects: searchParams.getAll("project"),
+				models: searchParams.getAll("model"),
+			});
+			return;
+		}
+		mountedRef.current = true;
+		const current = useAppStore.getState().explore;
+		const mirrored = buildExploreParams(searchParams, current);
+		const mirroredStr = mirrored.toString();
+		if (mirroredStr !== rawSearch) {
+			ownSyncRef.current = mirroredStr;
+			setSearchParams(mirrored, { replace: true });
+		}
+	}, [
+		searchParams,
+		navigationType,
+		applyExploreUrlState,
+		buildExploreParams,
+		setSearchParams,
+	]);
+
+	const mode = (storeExplore.mode ?? settings.exploreMode) as Mode;
+	const metric = (storeExplore.metric ?? settings.exploreMetric) as Metric;
+	const dimension = (storeExplore.dimension ??
 		settings.exploreDimension) as Dimension;
-	const bucket = (searchParams.get("bucket") ??
-		settings.exploreBucket) as Bucket;
-	const breakdown = (searchParams.get("breakdown") ??
-		settings.exploreBreakdown) as Dimension | "none";
-	const chart = (searchParams.get("chart") ??
+	const bucket = (storeExplore.bucket ?? settings.exploreBucket) as Bucket;
+	const breakdown = (storeExplore.breakdown ?? settings.exploreBreakdown) as
+		| Dimension
+		| "none";
+	const chart = (storeExplore.chart ??
 		(mode === "dimension" ? "bar" : settings.exploreChart)) as Chart;
-	const harnesses = searchParams.getAll("harness");
-	const projectValues = searchParams.getAll("project");
-	const modelValues = searchParams.getAll("model");
+	const harnesses = storeExplore.harnesses;
+	const projectValues = storeExplore.projects;
+	const modelValues = storeExplore.models;
 	const activeMetric = metric;
 
 	const explore = useExplore({
@@ -195,9 +292,14 @@ export function ExplorePage() {
 		return [...map.values()];
 	}, [models.data, modelValues, t]);
 
-	function setValue(key: string, value: string): void {
+	function setValue(
+		key: "mode" | "metric" | "dimension" | "bucket" | "breakdown" | "chart",
+		value: string,
+	): void {
+		setExploreField(key, value as ExploreSlice[typeof key]);
 		const next = new URLSearchParams(searchParams);
 		next.set(key, value);
+		ownSyncRef.current = next.toString();
 		setSearchParams(next, { replace: true });
 		const settingsKey = {
 			mode: "exploreMode",
@@ -217,19 +319,32 @@ export function ExplorePage() {
 		if (settingsKey) updateSettings({ [settingsKey]: value });
 	}
 
-	function setList(key: string, values: string[]): void {
+	function setList(
+		key: "harness" | "project" | "model",
+		values: string[],
+	): void {
+		const sliceKey =
+			key === "harness"
+				? "harnesses"
+				: key === "project"
+					? "projects"
+					: "models";
+		setExploreField(sliceKey, values);
 		const next = new URLSearchParams(searchParams);
 		next.delete(key);
 		for (const value of values) next.append(key, value);
+		ownSyncRef.current = next.toString();
 		setSearchParams(next, { replace: true });
 	}
 
 	function reset(): void {
+		resetExploreState();
 		const next = new URLSearchParams();
 		for (const key of ["range", "from", "to"]) {
 			const value = searchParams.get(key);
 			if (value) next.set(key, value);
 		}
+		ownSyncRef.current = next.toString();
 		setSearchParams(next, { replace: true });
 	}
 
