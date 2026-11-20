@@ -1,9 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { Route, Routes, useLocation } from "react-router";
 import { AppHeader } from "~/components/app-header";
 import { KeyboardShortcutsDialog } from "~/components/keyboard-shortcuts-dialog";
 import { LoadingScreen } from "~/components/loading-screen";
+import { ScrollArea, type ScrollAreaHandle } from "~/components/ui/scroll-area";
 import { useResolvedRange } from "~/lib/hooks";
 import { setAppLocale } from "~/lib/i18n";
 import { usePrefetchTabs, useRefreshData, useStatus } from "~/lib/queries";
@@ -46,12 +47,23 @@ export function App() {
 	const indexedAt = status.data?.indexedAt ?? null;
 	const pricingVersion = status.data?.pricingVersion ?? 0;
 	const dataVersion = indexedAt ? `${indexedAt}:${pricingVersion}` : null;
-	const previousDataVersion = useRef<string | null>(null);
+	const previousDataVersion = useRef<string | null | undefined>(undefined);
+	const scrollRef = useRef<ScrollAreaHandle>(null);
+	const previousPathname = useRef(location.pathname);
+
+	useLayoutEffect(() => {
+		if (previousPathname.current === location.pathname) return;
+		previousPathname.current = location.pathname;
+		if (location.hash) return;
+		const viewport = scrollRef.current?.getViewport();
+		if (viewport) viewport.scrollTop = 0;
+	}, [location.pathname, location.hash]);
 
 	useEffect(() => {
+		if (!status.data) return;
 		if (
 			dataVersion &&
-			previousDataVersion.current &&
+			previousDataVersion.current !== undefined &&
 			dataVersion !== previousDataVersion.current
 		) {
 			void queryClient.invalidateQueries({
@@ -60,8 +72,17 @@ export function App() {
 			});
 		}
 		previousDataVersion.current = dataVersion;
-	}, [dataVersion, queryClient]);
+	}, [status.data, dataVersion, queryClient]);
 
+	if (status.isError && !status.data)
+		return (
+			<LoadingScreen
+				phase="Failed"
+				progress={{ completed: 0, total: 5 }}
+				error={status.error.message}
+				onRetry={() => void status.refetch()}
+			/>
+		);
 	if (!status.data)
 		return (
 			<LoadingScreen phase="Starting" progress={{ completed: 0, total: 5 }} />
@@ -72,28 +93,39 @@ export function App() {
 				phase={status.data.phase}
 				progress={status.data.progress}
 				error={status.data.error}
+				onRetry={() => {
+					if (status.data?.error) mutateRefresh();
+					else void status.refetch();
+				}}
 			/>
 		);
 
 	return (
-		<div className="min-h-screen bg-background">
+		<div className="flex h-screen flex-col overflow-hidden bg-background">
 			<AppHeader status={status.data} />
-			<main key={location.pathname} className="page-enter">
-				<Routes>
-					<Route path="/" element={<OverviewPage />} />
-					<Route path="/explore" element={<ExplorePage />} />
-					<Route path="/sessions" element={<SessionsPage />} />
-					<Route
-						path="/sessions/:harness/:sessionId"
-						element={<SessionDetailPage />}
-					/>
-					<Route path="/projects" element={<ProjectsPage />} />
-					<Route path="/models" element={<ModelsPage />} />
-					<Route path="/harnesses" element={<HarnessesPage />} />
-					<Route path="/settings" element={<SettingsPage />} />
-					<Route path="*" element={<NotFoundPage />} />
-				</Routes>
-			</main>
+			<ScrollArea
+				ref={scrollRef}
+				className="min-h-0 flex-1"
+				overflow="y"
+				defer={false}
+			>
+				<main key={location.pathname} className="page-enter">
+					<Routes>
+						<Route path="/" element={<OverviewPage />} />
+						<Route path="/explore" element={<ExplorePage />} />
+						<Route path="/sessions" element={<SessionsPage />} />
+						<Route
+							path="/sessions/:harness/:sessionId"
+							element={<SessionDetailPage />}
+						/>
+						<Route path="/projects" element={<ProjectsPage />} />
+						<Route path="/models" element={<ModelsPage />} />
+						<Route path="/harnesses" element={<HarnessesPage />} />
+						<Route path="/settings" element={<SettingsPage />} />
+						<Route path="*" element={<NotFoundPage />} />
+					</Routes>
+				</main>
+			</ScrollArea>
 			<KeyboardShortcutsDialog
 				open={shortcuts.helpOpen}
 				onOpenChange={shortcuts.setHelpOpen}

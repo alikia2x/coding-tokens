@@ -193,6 +193,39 @@ export function formatTimeFor(value: number, code: DateLocaleCode): string {
 	return format.format(new Date(value));
 }
 
+const monthYearFormats = new Map<DateLocaleCode, Intl.DateTimeFormat>();
+
+function monthYearFormat(code: DateLocaleCode): Intl.DateTimeFormat {
+	let format = monthYearFormats.get(code);
+	if (!format) {
+		format = new Intl.DateTimeFormat(code, {
+			year: "numeric",
+			month: "short",
+		});
+		monthYearFormats.set(code, format);
+	}
+	return format;
+}
+
+function formatWeekRangeFor(value: number, code: DateLocaleCode): string {
+	const start = new Date(value);
+	const end = new Date(value);
+	end.setDate(end.getDate() + 6);
+	if (code === "zh-CN" || code === "zh-TW") {
+		if (
+			start.getFullYear() === end.getFullYear() &&
+			start.getMonth() === end.getMonth()
+		) {
+			return `${rangeFormat(code, false).format(start)}–${end.getDate()}日`;
+		}
+		return `${rangeFormat(code, false).format(start)}–${rangeFormat(
+			code,
+			false,
+		).format(end)}`;
+	}
+	return rangeFormat(code, false).formatRange(start, end);
+}
+
 /** Localized bucket label for hour/day/week/month chart axes. */
 export function formatBucketLabelFor(
 	value: number,
@@ -201,7 +234,8 @@ export function formatBucketLabelFor(
 ): string {
 	if (!Number.isFinite(value)) return "";
 	if (unit === "hour") return formatTimeFor(value, code);
-	if (unit === "month") return rangeFormat(code, true).format(new Date(value));
+	if (unit === "month") return monthYearFormat(code).format(new Date(value));
+	if (unit === "week") return formatWeekRangeFor(value, code);
 	return rangeFormat(code, false).format(new Date(value));
 }
 
@@ -226,6 +260,18 @@ export function formatBucketTooltipLabelFor(
 			tooltipTimeFormats.set(code, format);
 		}
 		return format.format(new Date(value));
+	}
+	if (unit === "week") {
+		const start = new Date(value);
+		const end = new Date(value);
+		end.setDate(end.getDate() + 6);
+		const currentYear = new Date().getFullYear();
+		if (
+			start.getFullYear() !== currentYear ||
+			start.getFullYear() !== end.getFullYear()
+		) {
+			return formatRangeDates(value, end.getTime() + 1, code);
+		}
 	}
 	return formatBucketLabelFor(value, unit, code);
 }

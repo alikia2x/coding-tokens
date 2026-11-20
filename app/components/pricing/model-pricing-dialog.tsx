@@ -6,7 +6,7 @@ import type {
 } from "@shared/types";
 import { cn } from "cn";
 import { Check, Search } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
 import {
 	Dialog,
@@ -18,6 +18,7 @@ import {
 } from "~/components/ui/dialog";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
+import { ScrollArea } from "~/components/ui/scroll-area";
 import { Switch } from "~/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "~/components/ui/toggle-group";
 import { formatCost } from "~/lib/format";
@@ -82,13 +83,20 @@ export function ModelPricingDialog({
 		useState<PricingCatalogSearchItem | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
+	const wasOpenRef = useRef(false);
+
 	useEffect(() => {
 		const timer = window.setTimeout(() => setDebouncedQuery(catalogQuery), 160);
 		return () => window.clearTimeout(timer);
 	}, [catalogQuery]);
 
 	useEffect(() => {
-		if (!open) return;
+		if (!open) {
+			wasOpenRef.current = false;
+			return;
+		}
+		if (wasOpenRef.current) return;
+		wasOpenRef.current = true;
 		const rule = row?.pricing?.customRule ?? initialRule ?? null;
 		setModelName(row?.model ?? rule?.model ?? "");
 		setMode(rule ? rule.mode : row ? "auto" : "rates");
@@ -300,15 +308,21 @@ export function ModelPricingDialog({
 								</div>
 								<div className="grid grid-cols-5 gap-1 font-mono text-[10px] tabular">
 									<div>
-										<div className="text-muted-foreground">In</div>
+										<div className="text-muted-foreground">
+											{t("pricing.editor.shortIn")}
+										</div>
 										<div>{formatUnitRate(pricing.effectiveRates.input)}</div>
 									</div>
 									<div>
-										<div className="text-muted-foreground">Out</div>
+										<div className="text-muted-foreground">
+											{t("pricing.editor.shortOut")}
+										</div>
 										<div>{formatUnitRate(pricing.effectiveRates.output)}</div>
 									</div>
 									<div>
-										<div className="text-muted-foreground">Cache R</div>
+										<div className="text-muted-foreground">
+											{t("pricing.editor.shortCacheRead")}
+										</div>
 										<div>
 											{formatUnitRate(
 												pricing.effectiveRates.cacheRead ??
@@ -317,7 +331,9 @@ export function ModelPricingDialog({
 										</div>
 									</div>
 									<div>
-										<div className="text-muted-foreground">Cache W</div>
+										<div className="text-muted-foreground">
+											{t("pricing.editor.shortCacheWrite")}
+										</div>
 										<div>
 											{formatUnitRate(
 												pricing.effectiveRates.cacheWrite ??
@@ -326,7 +342,9 @@ export function ModelPricingDialog({
 										</div>
 									</div>
 									<div>
-										<div className="text-muted-foreground">Reason</div>
+										<div className="text-muted-foreground">
+											{t("pricing.editor.shortReason")}
+										</div>
 										<div>
 											{formatUnitRate(
 												pricing.effectiveRates.reasoning ??
@@ -393,6 +411,7 @@ export function ModelPricingDialog({
 								value={catalogQuery}
 								onChange={(event) => setCatalogQuery(event.target.value)}
 								placeholder={t("pricing.editor.searchCatalog")}
+								aria-label={t("pricing.editor.searchCatalog")}
 								className="h-8 pl-8 text-[12px]"
 							/>
 						</div>
@@ -404,7 +423,11 @@ export function ModelPricingDialog({
 								<code className="font-mono text-[11px]">{aliasTarget}</code>
 							</div>
 						) : null}
-						<div className="max-h-44 divide-y overflow-y-auto rounded-md border">
+						<ScrollArea
+							className="max-h-44 rounded-md border"
+							overflow="y"
+							contentClassName="divide-y"
+						>
 							{(catalogSearch.data?.items ?? []).map((item) => {
 								const selected = aliasTarget === item.key;
 								return (
@@ -416,7 +439,7 @@ export function ModelPricingDialog({
 											setSelectedAliasItem(item);
 										}}
 										className={cn(
-											"flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] transition-colors hover:bg-hover",
+											"flex w-full items-center justify-between gap-2 py-2 pl-3 pr-4 text-left text-[11px] transition-colors hover:bg-hover",
 											selected && "bg-accent",
 										)}
 									>
@@ -443,7 +466,7 @@ export function ModelPricingDialog({
 									{t("pricing.editor.noCatalogResults")}
 								</p>
 							) : null}
-						</div>
+						</ScrollArea>
 					</div>
 				) : null}
 
@@ -587,9 +610,9 @@ export function ModelPricingDialog({
 					<div className="flex items-center justify-between text-[11px] text-muted-foreground tabular">
 						<span>{t("pricing.editor.preview")}</span>
 						<span>
-							{formatCost(row.totals.costUsd, true)} →{" "}
+							{formatCost(row.totals.costUsd)} →{" "}
 							<strong className="font-medium text-foreground">
-								{formatCost(previewCost, true)}
+								{formatCost(previewCost)}
 							</strong>
 						</span>
 					</div>

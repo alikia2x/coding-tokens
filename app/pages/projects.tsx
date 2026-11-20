@@ -24,47 +24,50 @@ import {
 	formatNumber,
 	formatRelativeTime,
 	formatTokens,
+	totalTokens,
 } from "~/lib/format";
 import { useResolvedRange } from "~/lib/hooks";
 import { useT } from "~/lib/i18n";
 import { localizeLabel } from "~/lib/labels";
 import { useProjects } from "~/lib/queries";
-import { rangeQueryString } from "~/lib/time-range";
+import { sessionsPath, UNKNOWN_PROJECT_KEY } from "~/lib/time-range";
 
-function tokenTotal(row: {
-	totals: {
-		inputTokens: number;
-		outputTokens: number;
-		cacheReadTokens: number;
-		cacheWriteTokens: number;
-	};
-}): number {
-	return (
-		row.totals.inputTokens +
-		row.totals.outputTokens +
-		row.totals.cacheReadTokens +
-		row.totals.cacheWriteTokens
-	);
+function compareNullable(
+	left: number | null,
+	right: number | null,
+	direction: "asc" | "desc",
+): number {
+	if (left === null && right === null) return 0;
+	if (left === null) return 1;
+	if (right === null) return -1;
+	return direction === "asc" ? left - right : right - left;
 }
 
 function compareProjects(
 	left: ProjectReportRow,
 	right: ProjectReportRow,
 	key: string,
+	direction: "asc" | "desc",
 ): number {
+	if (key === "recent") {
+		return compareNullable(
+			left.lastActivityAt,
+			right.lastActivityAt,
+			direction,
+		);
+	}
+	const sign = direction === "asc" ? 1 : -1;
 	switch (key) {
 		case "name":
-			return left.name.localeCompare(right.name);
+			return left.name.localeCompare(right.name) * sign;
 		case "sessions":
-			return left.totals.sessions - right.totals.sessions;
+			return (left.totals.sessions - right.totals.sessions) * sign;
 		case "requests":
-			return left.totals.requests - right.totals.requests;
+			return (left.totals.requests - right.totals.requests) * sign;
 		case "tokens":
-			return tokenTotal(left) - tokenTotal(right);
-		case "recent":
-			return (left.lastActivityAt ?? 0) - (right.lastActivityAt ?? 0);
+			return (totalTokens(left.totals) - totalTokens(right.totals)) * sign;
 		default:
-			return left.totals.costUsd - right.totals.costUsd;
+			return (left.totals.costUsd - right.totals.costUsd) * sign;
 	}
 }
 
@@ -77,7 +80,6 @@ export function ProjectsPage() {
 		direction: "desc",
 	});
 	const t = useT();
-	const rangeQuery = rangeQueryString(range);
 	const parsed = useMemo(() => parseSearchQuery(query), [query]);
 
 	const rows = useMemo(() => {
@@ -103,9 +105,8 @@ export function ProjectsPage() {
 				},
 			);
 		});
-		const direction = sort.direction === "asc" ? 1 : -1;
-		return [...filtered].sort(
-			(left, right) => compareProjects(left, right, sort.key) * direction,
+		return [...filtered].sort((left, right) =>
+			compareProjects(left, right, sort.key, sort.direction),
 		);
 	}, [projects.data, parsed, sort, t]);
 
@@ -115,7 +116,7 @@ export function ProjectsPage() {
 				(acc, row) => ({
 					sessions: acc.sessions + row.totals.sessions,
 					requests: acc.requests + row.totals.requests,
-					tokens: acc.tokens + tokenTotal(row),
+					tokens: acc.tokens + totalTokens(row.totals),
 					cost: acc.cost + row.totals.costUsd,
 				}),
 				{ sessions: 0, requests: 0, tokens: 0, cost: 0 },
@@ -144,7 +145,7 @@ export function ProjectsPage() {
 			/>
 			<SummaryStrip
 				items={[
-					{ label: t("metric.cost"), value: formatCost(summary.cost, true) },
+					{ label: t("metric.cost"), value: formatCost(summary.cost) },
 					{ label: t("metric.tokens"), value: formatTokens(summary.tokens) },
 					{
 						label: t("metric.requests"),
@@ -177,7 +178,12 @@ export function ProjectsPage() {
 					))}
 				</div>
 			)}
-			{!isInitialLoading && rows.length === 0 && (
+			{projects.isError && (
+				<div className="mt-3 rounded-lg border border-destructive/30 bg-destructive-surface p-4 text-sm text-destructive">
+					{t("error.usageLoad")} {projects.error.message}
+				</div>
+			)}
+			{!isInitialLoading && !projects.isError && rows.length === 0 && (
 				<EmptyState
 					className="mt-3"
 					title={t("empty.projectsInRange")}
@@ -240,7 +246,9 @@ export function ProjectsPage() {
 								<TableRow key={row.cwd ?? row.name} className="text-[12px]">
 									<TableCell className="px-2 py-2">
 										<Link
-											to={`/sessions?${rangeQuery}${row.cwd ? `&project=${encodeURIComponent(row.cwd)}` : ""}`}
+											to={sessionsPath(range, {
+												project: row.cwd ?? UNKNOWN_PROJECT_KEY,
+											})}
 											className="block max-w-72 truncate font-medium hover:underline"
 										>
 											{localizeLabel(t, row.name)}
@@ -261,13 +269,10 @@ export function ProjectsPage() {
 										{formatNumber(row.totals.requests)}
 									</TableCell>
 									<TableCell className="py-2 text-right tabular">
-										{formatTokens(tokenTotal(row))}
+										{formatTokens(totalTokens(row.totals))}
 									</TableCell>
 									<TableCell className="py-2 text-right tabular">
-										{formatCost(
-											row.totals.costUsd,
-											row.totals.estimatedRequests > 0,
-										)}
+										{formatCost(row.totals.costUsd)}
 									</TableCell>
 									<TableCell className="py-2 text-right text-[11px] text-muted-foreground">
 										{formatRelativeTime(row.lastActivityAt)}

@@ -9,6 +9,7 @@ import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { formatNumber } from "~/lib/format";
 import { useT } from "~/lib/i18n";
+import { UNKNOWN_PROJECT_KEY } from "~/lib/time-range";
 
 interface SessionsSidebarProps {
 	harness: HarnessName | null;
@@ -75,11 +76,11 @@ export function SessionsSidebar({
 	}, [status, counts, harness]);
 
 	return (
-		<aside className="lg:sticky lg:top-20 lg:self-start">
+		<aside className="lg:sticky lg:top-6 lg:self-start">
 			<div className="mb-2 px-2 text-[11px] font-medium text-muted-foreground">
 				{t("common.harnesses")}
 			</div>
-			<div className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible">
+			<div className="no-scrollbar flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible">
 				<button
 					type="button"
 					onClick={() => onSelectHarness(null)}
@@ -168,7 +169,9 @@ export function SessionsSidebar({
 							variant="outline"
 							className="gap-1 rounded font-mono text-[10px]"
 						>
-							{cwd.split("/").at(-1) ?? cwd}
+							{cwd === UNKNOWN_PROJECT_KEY
+								? t("projects.unknown")
+								: (cwd.split("/").at(-1) ?? cwd)}
 							<button
 								type="button"
 								aria-label={t("sessions.clearProjectFilter")}

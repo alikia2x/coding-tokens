@@ -1,18 +1,10 @@
 import type { BreakdownRow } from "@shared/types";
 import { Link } from "react-router";
-import { formatCost, formatTokens } from "~/lib/format";
+import { formatCost, formatTokens, totalTokens } from "~/lib/format";
 import { useResolvedRange } from "~/lib/hooks";
 import { useT } from "~/lib/i18n";
-import { rangeQueryString } from "~/lib/time-range";
-
-function modelTokens(row: BreakdownRow): number {
-	return (
-		row.totals.inputTokens +
-		row.totals.outputTokens +
-		row.totals.cacheReadTokens +
-		row.totals.cacheWriteTokens
-	);
-}
+import { localizeLabel } from "~/lib/labels";
+import { sessionsPath } from "~/lib/time-range";
 
 export function TopModels({
 	rows,
@@ -24,21 +16,21 @@ export function TopModels({
 	onToggleMetric?: () => void;
 }) {
 	const range = useResolvedRange();
-	const rangeQuery = rangeQueryString(range);
 	const t = useT();
 	const sorted = [...rows]
 		.sort((left, right) =>
 			metric === "tokens"
-				? modelTokens(right) - modelTokens(left)
+				? totalTokens(right.totals) - totalTokens(left.totals)
 				: right.totals.costUsd - left.totals.costUsd,
 		)
 		.slice(0, 5);
-	const max = Math.max(
-		1,
+	const rawMax = Math.max(
+		0,
 		...sorted.map((row) =>
-			metric === "tokens" ? modelTokens(row) : row.totals.costUsd,
+			metric === "tokens" ? totalTokens(row.totals) : row.totals.costUsd,
 		),
 	);
+	const max = rawMax > 0 ? rawMax : 1;
 	return (
 		<div>
 			<div className="flex items-baseline justify-between">
@@ -59,26 +51,26 @@ export function TopModels({
 			</div>
 			<div className="mt-2 divide-y">
 				{sorted.map((row) => {
-					const tokens = modelTokens(row);
+					const tokens = totalTokens(row.totals);
 					const primaryValue =
 						metric === "tokens"
 							? formatTokens(tokens)
-							: formatCost(row.totals.costUsd, true);
+							: formatCost(row.totals.costUsd);
 					const secondaryValue =
 						metric === "tokens"
-							? formatCost(row.totals.costUsd, true)
+							? formatCost(row.totals.costUsd)
 							: formatTokens(tokens);
 					const ratio =
 						metric === "tokens" ? tokens / max : row.totals.costUsd / max;
 					return (
 						<Link
 							key={row.key}
-							to={`/sessions?${rangeQuery}&model=${encodeURIComponent(row.key)}`}
+							to={sessionsPath(range, { model: row.key })}
 							className="block py-2 transition-colors hover:underline"
 						>
 							<div className="flex items-baseline justify-between gap-2">
 								<span className="truncate text-[12px] font-medium">
-									{row.label}
+									{localizeLabel(t, row.label)}
 								</span>
 								<span className="shrink-0 tabular">{primaryValue}</span>
 							</div>
@@ -87,7 +79,7 @@ export function TopModels({
 									<div
 										className="h-full bg-chart-1"
 										style={{
-											width: `${Math.max(2, ratio * 100)}%`,
+											width: ratio > 0 ? `${Math.max(2, ratio * 100)}%` : "0%",
 										}}
 									/>
 								</div>

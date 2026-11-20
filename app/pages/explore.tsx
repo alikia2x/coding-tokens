@@ -49,12 +49,15 @@ import {
 	formatNumber,
 	formatPercent,
 	formatTokens,
+	totalTokens,
 } from "~/lib/format";
 import { useResolvedRange } from "~/lib/hooks";
 import { type TranslationKey, useT } from "~/lib/i18n";
+import { localizeLabel } from "~/lib/labels";
 import { useExplore, useModels, useProjects, useStatus } from "~/lib/queries";
 import { useRangeLabel } from "~/lib/range";
 import { useSettings } from "~/lib/settings";
+import { sessionsPath, UNKNOWN_PROJECT_KEY } from "~/lib/time-range";
 
 type Metric = "tokens" | "cost" | "requests" | "sessions";
 type Dimension = "harness" | "project" | "model";
@@ -74,20 +77,14 @@ function metricValue(
 	},
 	metric: Metric,
 ): number {
-	if (metric === "tokens")
-		return (
-			totals.inputTokens +
-			totals.outputTokens +
-			totals.cacheReadTokens +
-			totals.cacheWriteTokens
-		);
+	if (metric === "tokens") return totalTokens(totals);
 	if (metric === "cost") return totals.costUsd;
 	if (metric === "requests") return totals.requests;
 	return totals.sessions;
 }
 
 function formatMetric(value: number, metric: Metric): string {
-	if (metric === "cost") return formatCost(value, true);
+	if (metric === "cost") return formatCost(value);
 	if (metric === "tokens") return formatTokens(value);
 	return formatNumber(value);
 }
@@ -156,26 +153,47 @@ export function ExplorePage() {
 				count: 0,
 			}));
 	}, [status.data, harnesses]);
-	const projectOptions = useMemo<FacetOption[]>(
-		() =>
-			(projects.data?.rows ?? [])
-				.filter((row) => row.cwd)
-				.map((row) => ({
-					value: row.cwd as string,
-					label: row.name,
-					count: row.totals.sessions,
-				})),
-		[projects.data],
-	);
-	const modelOptions = useMemo<FacetOption[]>(
-		() =>
-			(models.data?.rows ?? []).map((row) => ({
+	const projectOptions = useMemo<FacetOption[]>(() => {
+		const map = new Map<string, FacetOption>();
+		for (const row of projects.data?.rows ?? []) {
+			if (!row.cwd) continue;
+			map.set(row.cwd, {
+				value: row.cwd,
+				label: localizeLabel(t, row.name),
+				count: row.totals.sessions,
+			});
+		}
+		for (const selectedCwd of projectValues) {
+			if (!map.has(selectedCwd)) {
+				map.set(selectedCwd, {
+					value: selectedCwd,
+					label: selectedCwd.split("/").at(-1) || selectedCwd,
+					count: 0,
+				});
+			}
+		}
+		return [...map.values()];
+	}, [projects.data, projectValues, t]);
+	const modelOptions = useMemo<FacetOption[]>(() => {
+		const map = new Map<string, FacetOption>();
+		for (const row of models.data?.rows ?? []) {
+			map.set(row.model, {
 				value: row.model,
-				label: row.model,
+				label: localizeLabel(t, row.model),
 				count: row.totals.requests,
-			})),
-		[models.data],
-	);
+			});
+		}
+		for (const selectedModel of modelValues) {
+			if (!map.has(selectedModel)) {
+				map.set(selectedModel, {
+					value: selectedModel,
+					label: localizeLabel(t, selectedModel),
+					count: 0,
+				});
+			}
+		}
+		return [...map.values()];
+	}, [models.data, modelValues, t]);
 
 	function setValue(key: string, value: string): void {
 		const next = new URLSearchParams(searchParams);
@@ -218,12 +236,15 @@ export function ExplorePage() {
 	const data = useMemo(() => {
 		if (!explore.data) return [];
 		if (mode === "dimension")
-			return explore.data.rows.map((row, index) => ({
-				key: `${row.key}::${index}`,
-				label: row.label,
-				tooltipLabel: row.label,
-				value: metricValue(row.totals, activeMetric),
-			}));
+			return explore.data.rows.map((row, index) => {
+				const localized = localizeLabel(t, row.label);
+				return {
+					key: `${row.key}::${index}`,
+					label: localized,
+					tooltipLabel: localized,
+					value: metricValue(row.totals, activeMetric),
+				};
+			});
 		return explore.data.xLabels.map((label, index) => {
 			const start = explore.data?.starts[index];
 			const hasStart = typeof start === "number" && Number.isFinite(start);
@@ -241,7 +262,7 @@ export function ExplorePage() {
 				row[series.key] = series.points[index]?.value ?? 0;
 			return row;
 		});
-	}, [explore.data, mode, activeMetric, bucket, code]);
+	}, [explore.data, mode, activeMetric, bucket, code, t]);
 
 	const labelByKey = useMemo(
 		() =>
@@ -260,7 +281,7 @@ export function ExplorePage() {
 				]
 			: (explore.data?.series ?? []).map((item, index) => ({
 					key: item.key,
-					label: item.label,
+					label: localizeLabel(t, item.label),
 					color: colorForSeries(
 						item.key,
 						index,
@@ -268,11 +289,60 @@ export function ExplorePage() {
 					),
 				}));
 
+	const areaOverlay = useMemo(() => {
+		if (chart !== "area" || series.length === 0 || !data.length) {
+			return {
+				chartData: data,
+				strokeLines: [] as Array<{ dataKey: string; color: string }>,
+			};
+		}
+		const strokeLines: Array<{ dataKey: string; color: string }> = [];
+		const chartData: Array<Record<string, string | number | null>> = data.map(
+			(row) => ({ ...row }),
+		);
+		const cumulativeByIndex = chartData.map(() => 0);
+
+		for (let sIdx = 0; sIdx < series.length; sIdx += 1) {
+			const item = series[sIdx];
+			if (!item) continue;
+			const color = item.color ?? categoricalColors[0] ?? "var(--chart-1)";
+			const values = chartData.map((row) => Number(row[item.key] ?? 0));
+			for (let i = 0; i < chartData.length; i += 1) {
+				cumulativeByIndex[i] = (cumulativeByIndex[i] ?? 0) + (values[i] ?? 0);
+			}
+
+			let i = 0;
+			let island = 0;
+			while (i < values.length) {
+				if ((values[i] ?? 0) <= 0) {
+					i += 1;
+					continue;
+				}
+				const start = Math.max(0, i - 1);
+				let end = i;
+				while (end + 1 < values.length && (values[end + 1] ?? 0) > 0) {
+					end += 1;
+				}
+				const paddedEnd = Math.min(values.length - 1, end + 1);
+				const dataKey = `__area_stroke_${sIdx}_${island}`;
+				strokeLines.push({ dataKey, color });
+				for (let p = start; p <= paddedEnd; p += 1) {
+					const target = chartData[p];
+					if (target) target[dataKey] = cumulativeByIndex[p] ?? 0;
+				}
+				island += 1;
+				i = end + 1;
+			}
+		}
+
+		return { chartData, strokeLines };
+	}, [chart, data, series]);
+
 	const tableRows =
 		mode === "dimension"
 			? (explore.data?.rows ?? []).map((row, index) => ({
 					key: row.key,
-					label: row.label,
+					label: localizeLabel(t, row.label),
 					totals: row.totals,
 					color:
 						dimension === "harness"
@@ -281,7 +351,7 @@ export function ExplorePage() {
 				}))
 			: (explore.data?.series ?? []).map((item, index) => ({
 					key: item.key,
-					label: item.label,
+					label: localizeLabel(t, item.label),
 					totals: item.totals,
 					color: colorForSeries(
 						item.key,
@@ -446,7 +516,7 @@ export function ExplorePage() {
 				items={[
 					{
 						label: t("metric.cost"),
-						value: formatCost(explore.data?.totals.costUsd ?? 0, true),
+						value: formatCost(explore.data?.totals.costUsd ?? 0),
 					},
 					{
 						label: t("metric.tokens"),
@@ -485,6 +555,10 @@ export function ExplorePage() {
 				</div>
 				{explore.isLoading && !explore.data ? (
 					<Skeleton className="mt-4 h-[320px] rounded-md" />
+				) : explore.isError ? (
+					<div className="mt-4 rounded-lg border border-destructive/30 bg-destructive-surface p-4 text-sm text-destructive">
+						{t("error.usageLoad")} {explore.error.message}
+					</div>
 				) : data.length === 0 ? (
 					<EmptyState
 						className="mt-4 border-0"
@@ -542,9 +616,37 @@ export function ExplorePage() {
 								</LineChart>
 							) : chart === "area" ? (
 								<AreaChart
-									data={data}
+									data={areaOverlay.chartData}
 									margin={{ top: 8, right: 24, left: 0, bottom: 0 }}
 								>
+									<defs>
+										{series.map((item, index) => {
+											const color =
+												item.color ?? categoricalColors[0] ?? "var(--chart-1)";
+											const stacked = series.length > 1;
+											return (
+												<linearGradient
+													key={item.key}
+													id={`explore-area-${index}`}
+													x1="0"
+													y1="0"
+													x2="0"
+													y2="1"
+												>
+													<stop
+														offset="0%"
+														stopColor={color}
+														stopOpacity={stacked ? 0.8 : 0.48}
+													/>
+													<stop
+														offset="100%"
+														stopColor={color}
+														stopOpacity={stacked ? 0.52 : 0.08}
+													/>
+												</linearGradient>
+											);
+										})}
+									</defs>
 									<CartesianGrid vertical={false} stroke="var(--chart-grid)" />
 									<XAxis
 										dataKey="key"
@@ -572,17 +674,34 @@ export function ExplorePage() {
 											strokeDasharray: "3 3",
 										}}
 									/>
-									{series.map((item) => (
+									{series.map((item, index) => (
 										<Area
 											key={item.key}
 											type="linear"
 											stackId="explore"
 											dataKey={item.key}
 											name={item.label}
-											stroke={item.color ?? categoricalColors[0]}
-											fill={item.color ?? categoricalColors[0]}
-											fillOpacity={0.35}
-											strokeWidth={1.6}
+											stroke="none"
+											fill={`url(#explore-area-${index})`}
+											fillOpacity={1}
+											strokeWidth={0}
+											dot={false}
+											activeDot={{ r: 3 }}
+											isAnimationActive={false}
+										/>
+									))}
+									{areaOverlay.strokeLines.map((line) => (
+										<Line
+											key={line.dataKey}
+											type="linear"
+											dataKey={line.dataKey}
+											stroke={line.color}
+											strokeWidth={1.5}
+											dot={false}
+											activeDot={false}
+											legendType="none"
+											tooltipType="none"
+											connectNulls={false}
 											isAnimationActive={false}
 										/>
 									))}
@@ -769,20 +888,12 @@ export function ExplorePage() {
 									) : null}
 									{activeMetric !== "tokens" ? (
 										<TableCell className="py-2 text-right tabular">
-											{formatTokens(
-												row.totals.inputTokens +
-													row.totals.outputTokens +
-													row.totals.cacheReadTokens +
-													row.totals.cacheWriteTokens,
-											)}
+											{formatTokens(totalTokens(row.totals))}
 										</TableCell>
 									) : null}
 									{activeMetric !== "cost" ? (
 										<TableCell className="py-2 pr-2 text-right tabular">
-											{formatCost(
-												row.totals.costUsd,
-												row.totals.estimatedRequests > 0,
-											)}
+											{formatCost(row.totals.costUsd)}
 										</TableCell>
 									) : null}
 								</TableRow>
@@ -827,6 +938,7 @@ function ExploreTooltip({
 }: {
 	active?: boolean;
 	payload?: Array<{
+		dataKey?: string | number;
 		name?: string;
 		value?: number;
 		color?: string;
@@ -836,14 +948,18 @@ function ExploreTooltip({
 	metric: Metric;
 }) {
 	if (!active || !payload?.length) return null;
-	const heading = payload[0]?.payload?.tooltipLabel ?? label;
+	const visiblePayload = payload.filter(
+		(item) => !String(item.dataKey ?? item.name ?? "").startsWith("__"),
+	);
+	if (!visiblePayload.length) return null;
+	const heading = visiblePayload[0]?.payload?.tooltipLabel ?? label;
 	return (
 		<div className="min-w-40 rounded-md border bg-popover px-3 py-2 text-popover-foreground shadow-md">
 			<div className="text-[11px] font-medium">{heading}</div>
 			<div className="mt-1.5 space-y-1">
-				{payload.map((item) => (
+				{visiblePayload.map((item) => (
 					<div
-						key={item.name}
+						key={String(item.dataKey ?? item.name)}
 						className="flex items-center justify-between gap-4 text-[11px]"
 					>
 						<span className="flex items-center gap-1.5 text-muted-foreground">
@@ -870,17 +986,13 @@ function rowLink(
 	dimension: Dimension,
 	searchParams: URLSearchParams,
 ): string {
-	const params = new URLSearchParams();
-	for (const name of ["range", "from", "to"]) {
-		const value = searchParams.get(name);
-		if (value) params.set(name, value);
-	}
 	const dimensionKey = mode === "time" ? breakdown : dimension;
-	if (dimensionKey === "harness" && key !== "__other" && key !== "all")
-		params.set("harness", key);
-	if (dimensionKey === "project" && key !== "__other" && key !== "all")
-		params.set("project", key);
-	if (dimensionKey === "model" && key !== "__other" && key !== "all")
-		params.set("model", key);
-	return `/sessions${params.size ? `?${params.toString()}` : ""}`;
+	if (key === "__other" || key === "all") return sessionsPath(searchParams);
+	if (dimensionKey === "harness")
+		return sessionsPath(searchParams, { harness: key });
+	if (dimensionKey === "project")
+		return sessionsPath(searchParams, { project: key || UNKNOWN_PROJECT_KEY });
+	if (dimensionKey === "model")
+		return sessionsPath(searchParams, { model: key });
+	return sessionsPath(searchParams);
 }

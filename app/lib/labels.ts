@@ -4,7 +4,9 @@ const placeholderKeys: Record<string, TranslationKey> = {
 	"Untitled session": "session.untitled",
 	"Unknown project": "projects.unknown",
 	"Unknown model": "models.unknown",
-	"Unrecorded Model": "models.unknown",
+	"Unrecorded model": "models.unknown",
+	All: "common.all",
+	Other: "common.other",
 };
 
 type Translate = (

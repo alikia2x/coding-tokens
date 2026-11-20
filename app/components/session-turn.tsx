@@ -4,15 +4,17 @@ import type {
 	TurnSummary,
 } from "@shared/types";
 import { ChevronRight, Wrench } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ToolChain } from "~/components/tool-chain";
+import { ScrollArea } from "~/components/ui/scroll-area";
 import {
 	formatCost,
 	formatDateTime,
 	formatLatency,
 	formatThroughput,
 	formatTokens,
+	totalTokens,
 } from "~/lib/format";
 import { type TranslationKey, useT } from "~/lib/i18n";
 
@@ -20,14 +22,7 @@ type Block =
 	| { kind: "item"; item: DetailItem }
 	| { kind: "tools"; items: DetailItem[] };
 
-function totalTokens(totals: TurnSummary["totals"]): number {
-	return (
-		totals.inputTokens +
-		totals.outputTokens +
-		totals.cacheReadTokens +
-		totals.cacheWriteTokens
-	);
-}
+const REMARK_PLUGINS = [remarkGfm];
 
 function blocksOf(items: DetailItem[]): Block[] {
 	const blocks: Block[] = [];
@@ -54,6 +49,23 @@ function roleLabelKey(role: DetailItem["role"]): TranslationKey {
 	return "common.other";
 }
 
+const markdownComponents: Components = {
+	pre: ({ node: _node, className, ...props }) => (
+		<ScrollArea className="chat-markdown-pre" overflow="x">
+			<pre className={className} {...props} />
+		</ScrollArea>
+	),
+	table: ({ node: _node, className, ...props }) => (
+		<ScrollArea
+			className="chat-markdown-table"
+			overflow="x"
+			contentClassName="pb-2.5"
+		>
+			<table className={className} {...props} />
+		</ScrollArea>
+	),
+};
+
 function MessageBlock({ item }: { item: DetailItem }) {
 	const t = useT();
 	if (
@@ -71,16 +83,23 @@ function MessageBlock({ item }: { item: DetailItem }) {
 					{t(roleLabelKey(item.role))}
 					<ChevronRight className="ml-auto size-3.5 transition-transform group-open:rotate-90" />
 				</summary>
-				<pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap font-mono text-[10px] leading-4 text-muted-foreground">
-					{item.text}
-				</pre>
+				<ScrollArea className="mt-2 max-h-80" contentClassName="pr-3 pb-2.5">
+					<pre className="m-0 whitespace-pre-wrap font-mono text-[10px] leading-4 text-muted-foreground">
+						{item.text}
+					</pre>
+				</ScrollArea>
 			</details>
 		);
 	}
 
 	const body = item.text ? (
 		<div className="chat-markdown">
-			<ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown>
+			<ReactMarkdown
+				remarkPlugins={REMARK_PLUGINS}
+				components={markdownComponents}
+			>
+				{item.text}
+			</ReactMarkdown>
 		</div>
 	) : null;
 
@@ -89,9 +108,11 @@ function MessageBlock({ item }: { item: DetailItem }) {
 			<div className="flex justify-end py-3" data-item-id={item.id}>
 				<div className="max-w-[82%] rounded-lg bg-surface px-4 py-2.5">
 					{body}
-					<div className="mt-1 text-right text-[10px] text-muted-foreground tabular">
-						{item.timestamp ? formatDateTime(item.timestamp) : ""}
-					</div>
+					{item.timestamp !== null ? (
+						<div className="mt-1 text-right text-[10px] text-muted-foreground tabular">
+							{formatDateTime(item.timestamp)}
+						</div>
+					) : null}
 				</div>
 			</div>
 		);
@@ -138,11 +159,7 @@ export function SessionTurn({
 						})}
 					</span>
 				) : null}
-				{turn.requests ? (
-					<span>
-						{formatCost(turn.totals.costUsd, turn.totals.estimatedRequests > 0)}
-					</span>
-				) : null}
+				{turn.requests ? <span>{formatCost(turn.totals.costUsd)}</span> : null}
 				{turn.durationMs !== null &&
 				turn.durationMs !== undefined &&
 				turn.durationMs > 0 ? (

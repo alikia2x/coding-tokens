@@ -22,8 +22,11 @@ export const queryKeys = {
 	settings: ["settings"] as const,
 	pricing: ["pricing"] as const,
 	pricingCatalog: (query: string) => ["pricingCatalog", query] as const,
-	overview: (from: number | null, until: number | null) =>
-		["overview", from, until] as const,
+	overview: (
+		from: number | null,
+		until: number | null,
+		bucket?: "hour" | "day" | "week" | "month",
+	) => ["overview", from, until, bucket ?? "auto"] as const,
 	sessions: (from: number | null, until: number | null) =>
 		["sessions", from, until] as const,
 	projects: (from: number | null, until: number | null) =>
@@ -52,10 +55,13 @@ export function useStatus() {
 	});
 }
 
-export function useOverview(range: ResolvedRange) {
+export function useOverview(
+	range: ResolvedRange,
+	bucket?: "hour" | "day" | "week" | "month",
+) {
 	return useQuery({
-		queryKey: queryKeys.overview(range.from, range.until),
-		queryFn: () => api.overview(range),
+		queryKey: queryKeys.overview(range.from, range.until, bucket),
+		queryFn: () => api.overview(range, bucket),
 		placeholderData: keepPreviousData,
 		staleTime: 5 * 60_000,
 	});
@@ -113,6 +119,7 @@ export function useSessionDetail(
 	return useQuery({
 		queryKey: queryKeys.session(harness, sessionId, level),
 		queryFn: () => api.sessionDetail(harness, sessionId, level),
+		enabled: Boolean(harness && sessionId),
 		staleTime: 5 * 60_000,
 		retry: 1,
 	});
@@ -133,10 +140,11 @@ export function useSessionsSearch(
 	query: string,
 	enabled: boolean,
 ) {
+	const trimmed = query.trim();
 	return useQuery({
-		queryKey: queryKeys.sessionsSearch(range.from, range.until, query),
-		queryFn: () => api.sessionsSearch(range, query),
-		enabled,
+		queryKey: queryKeys.sessionsSearch(range.from, range.until, trimmed),
+		queryFn: () => api.sessionsSearch(range, trimmed),
+		enabled: enabled && Boolean(trimmed),
 		staleTime: 30_000,
 		placeholderData: keepPreviousData,
 	});
@@ -147,6 +155,9 @@ export function useRefreshData() {
 	return useMutation({
 		mutationFn: api.refresh,
 		onSuccess: async () => {
+			if (typeof window !== "undefined") {
+				window.dispatchEvent(new Event("coding-tokens:refresh-now"));
+			}
 			await queryClient.invalidateQueries({ queryKey: queryKeys.status });
 		},
 	});
@@ -205,7 +216,12 @@ export function useExplore(options: {
 	projects: string[];
 	models: string[];
 }) {
-	const key = JSON.stringify(options);
+	const key = JSON.stringify({
+		...options,
+		harnesses: [...options.harnesses].sort(),
+		projects: [...options.projects].sort(),
+		models: [...options.models].sort(),
+	});
 	return useQuery({
 		queryKey: queryKeys.explore(key),
 		queryFn: () => api.explore(options),
@@ -250,7 +266,8 @@ function invalidatePricingDependents(
 	queryClient: ReturnType<typeof useQueryClient>,
 ): Promise<void> {
 	return queryClient.invalidateQueries({
-		predicate: (query) => query.queryKey[0] !== "settings",
+		predicate: (query) =>
+			query.queryKey[0] !== "settings" && query.queryKey[0] !== "pricing",
 	});
 }
 

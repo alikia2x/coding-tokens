@@ -16,25 +16,12 @@ import {
 	formatNumber,
 	formatPercent,
 	formatTokens,
+	totalTokens,
 } from "~/lib/format";
 import { useResolvedRange } from "~/lib/hooks";
 import { useT } from "~/lib/i18n";
 import { useHarnesses } from "~/lib/queries";
-import { rangeQueryString } from "~/lib/time-range";
-
-function tokensOf(totals: {
-	inputTokens: number;
-	outputTokens: number;
-	cacheReadTokens: number;
-	cacheWriteTokens: number;
-}): number {
-	return (
-		totals.inputTokens +
-		totals.outputTokens +
-		totals.cacheReadTokens +
-		totals.cacheWriteTokens
-	);
-}
+import { type ResolvedRange, sessionsPath } from "~/lib/time-range";
 
 export function HarnessesPage() {
 	const range = useResolvedRange();
@@ -42,7 +29,6 @@ export function HarnessesPage() {
 	const [query, setQuery] = useState("");
 	const [open, setOpen] = useState<Set<string>>(() => new Set());
 	const t = useT();
-	const rangeQuery = rangeQueryString(range);
 	const parsed = useMemo(() => parseSearchQuery(query), [query]);
 	const rows = useMemo(
 		() =>
@@ -91,6 +77,16 @@ export function HarnessesPage() {
 		);
 	}
 
+	if (harnesses.isError && !harnesses.data) {
+		return (
+			<PageContainer>
+				<div className="rounded-lg border border-destructive/30 bg-destructive-surface p-4 text-sm text-destructive">
+					{t("error.usageLoad")} {harnesses.error.message}
+				</div>
+			</PageContainer>
+		);
+	}
+
 	return (
 		<PageContainer>
 			<SectionHeading title={t("common.harnesses")} />
@@ -98,11 +94,11 @@ export function HarnessesPage() {
 				items={[
 					{
 						label: t("metric.cost"),
-						value: formatCost(totals?.costUsd ?? 0, true),
+						value: formatCost(totals?.costUsd ?? 0),
 					},
 					{
 						label: t("metric.tokens"),
-						value: formatTokens(totals ? tokensOf(totals) : 0),
+						value: formatTokens(totals ? totalTokens(totals) : 0),
 					},
 					{
 						label: t("metric.requests"),
@@ -127,6 +123,12 @@ export function HarnessesPage() {
 				</div>
 			</div>
 
+			{harnesses.isError ? (
+				<div className="mt-3 rounded-lg border border-destructive/30 bg-destructive-surface p-4 text-sm text-destructive">
+					{t("error.usageLoad")} {harnesses.error.message}
+				</div>
+			) : null}
+
 			{rows.length === 0 ? (
 				<EmptyState
 					className="mt-3"
@@ -149,7 +151,7 @@ export function HarnessesPage() {
 								key={row.harness}
 								row={row}
 								open={open.has(row.harness)}
-								rangeQuery={rangeQuery}
+								range={range}
 								onToggle={() => toggle(row.harness)}
 							/>
 						))}
@@ -163,12 +165,12 @@ export function HarnessesPage() {
 function HarnessRow({
 	row,
 	open,
-	rangeQuery,
+	range,
 	onToggle,
 }: {
 	row: HarnessReportRow;
 	open: boolean;
-	rangeQuery: string;
+	range: ResolvedRange;
 	onToggle: () => void;
 }) {
 	const t = useT();
@@ -203,10 +205,10 @@ function HarnessRow({
 					{formatNumber(row.totals.requests)}
 				</span>
 				<span className="text-right text-[11px] tabular max-lg:hidden">
-					{formatTokens(tokensOf(row.totals))}
+					{formatTokens(totalTokens(row.totals))}
 				</span>
 				<span className="text-right text-[11px] tabular max-lg:hidden">
-					{formatCost(row.totals.costUsd, row.totals.estimatedRequests > 0)}
+					{formatCost(row.totals.costUsd)}
 				</span>
 				<ChevronRight
 					className={cn(
@@ -228,7 +230,12 @@ function HarnessRow({
 							<div className="mt-1.5 h-1.5 overflow-hidden rounded-[1px] bg-muted">
 								<div
 									className="h-full bg-chart-1"
-									style={{ width: `${Math.max(1, row.costShare * 100)}%` }}
+									style={{
+										width:
+											row.costShare > 0
+												? `${Math.max(1, row.costShare * 100)}%`
+												: "0%",
+									}}
 								/>
 							</div>
 							<div className="mt-3 text-[10px] text-muted-foreground">
@@ -258,7 +265,7 @@ function HarnessRow({
 									{t("overview.topModels")}
 								</span>
 								<Link
-									to={`/sessions?${rangeQuery}&harness=${row.harness}`}
+									to={sessionsPath(range, { harness: row.harness })}
 									className="text-muted-foreground hover:text-foreground"
 								>
 									{t("harnesses.viewSessions")}
@@ -268,7 +275,10 @@ function HarnessRow({
 								{row.topModels.map((model) => (
 									<Link
 										key={model.model}
-										to={`/sessions?${rangeQuery}&harness=${row.harness}&model=${encodeURIComponent(model.model)}`}
+										to={sessionsPath(range, {
+											harness: row.harness,
+											model: model.model,
+										})}
 										className="grid grid-cols-[minmax(0,1fr)_80px_84px] items-center gap-3 py-1.5 text-[11px] hover:underline"
 									>
 										<span className="truncate">{model.model}</span>
@@ -276,7 +286,7 @@ function HarnessRow({
 											{formatTokens(model.tokens)}
 										</span>
 										<span className="text-right tabular">
-											{formatCost(model.costUsd, true)}
+											{formatCost(model.costUsd)}
 										</span>
 									</Link>
 								))}

@@ -5,11 +5,6 @@
 
 	html {
 		scroll-behavior: smooth;
-		scrollbar-width: none;
-	}
-
-	html::-webkit-scrollbar {
-		display: none;
 	}
 
 	body {
@@ -140,15 +135,59 @@
 	transform: scaleX(1);
 }
 
-.chat-markdown pre::-webkit-scrollbar {
-	width: 8px;
-	height: 8px;
+.os-theme-app {
+	box-sizing: border-box;
+	z-index: 20;
+	--os-size: 10px;
+	--os-padding-perpendicular: 2px;
+	--os-padding-axis: 2px;
+	--os-track-border-radius: 9999px;
+	--os-track-bg: transparent;
+	--os-track-bg-hover: transparent;
+	--os-track-bg-active: transparent;
+	--os-handle-border-radius: 9999px;
+	--os-handle-min-size: 32px;
+	--os-handle-interactive-area-offset: 4px;
+	--os-handle-bg: color-mix(in oklab, var(--muted-foreground) 32%, transparent);
+	--os-handle-bg-hover: color-mix(
+		in oklab,
+		var(--muted-foreground) 55%,
+		transparent
+	);
+	--os-handle-bg-active: color-mix(
+		in oklab,
+		var(--muted-foreground) 78%,
+		transparent
+	);
+	transition:
+		opacity 200ms cubic-bezier(0.2, 0, 0.2, 1),
+		visibility 200ms cubic-bezier(0.2, 0, 0.2, 1),
+		top 150ms,
+		right 150ms,
+		bottom 150ms,
+		left 150ms;
 }
 
-.chat-markdown pre::-webkit-scrollbar-thumb {
-	background: color-mix(in oklab, var(--muted-foreground) 30%, transparent);
-	border: 2px solid var(--surface);
-	border-radius: 999px;
+.dark .os-theme-app {
+	--os-handle-bg: color-mix(in oklab, var(--muted-foreground) 36%, transparent);
+	--os-handle-bg-hover: color-mix(
+		in oklab,
+		var(--muted-foreground) 60%,
+		transparent
+	);
+	--os-handle-bg-active: color-mix(
+		in oklab,
+		var(--muted-foreground) 82%,
+		transparent
+	);
+}
+
+[data-overlayscrollbars~="host"] > [data-overlayscrollbars-padding],
+[data-overlayscrollbars~="host"] > [data-overlayscrollbars-viewport],
+[data-overlayscrollbars~="host"]
+	> [data-overlayscrollbars-padding]
+	> [data-overlayscrollbars-viewport] {
+	max-height: inherit;
 }
 
 @media (prefers-reduced-motion: reduce) {

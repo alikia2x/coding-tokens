@@ -14,10 +14,7 @@ import { useSearchParams } from "react-router";
 import type { FacetOption } from "~/components/facet-filter";
 import { PageContainer } from "~/components/page-container";
 import { BatchExportDialog } from "~/components/sessions/batch-export-dialog";
-import {
-	SessionList,
-	sessionTotalTokens,
-} from "~/components/sessions/session-list";
+import { SessionList } from "~/components/sessions/session-list";
 import { SessionsSidebar } from "~/components/sessions/sessions-sidebar";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -29,11 +26,14 @@ import {
 	SelectValue,
 } from "~/components/ui/select";
 import { Switch } from "~/components/ui/switch";
+import { totalTokens } from "~/lib/format";
 import { useResolvedRange } from "~/lib/hooks";
 import { type TranslationKey, useT } from "~/lib/i18n";
+import { localizeLabel } from "~/lib/labels";
 import { useSessions, useSessionsSearch, useStatus } from "~/lib/queries";
 import { useRangeLabel } from "~/lib/range";
 import { useSettings } from "~/lib/settings";
+import { UNKNOWN_PROJECT_KEY } from "~/lib/time-range";
 
 type SortKey = "recent" | "cost" | "tokens" | "requests" | "title";
 
@@ -52,7 +52,7 @@ function sortSessions(rows: SessionSummary[], key: SortKey): SessionSummary[] {
 		if (key === "title") return left.title.localeCompare(right.title);
 		if (key === "cost") return right.totals.costUsd - left.totals.costUsd;
 		if (key === "tokens") {
-			return sessionTotalTokens(right) - sessionTotalTokens(left);
+			return totalTokens(right.totals) - totalTokens(left.totals);
 		}
 		if (key === "requests") return right.totals.requests - left.totals.requests;
 		return (
@@ -60,6 +60,15 @@ function sortSessions(rows: SessionSummary[], key: SortKey): SessionSummary[] {
 			(left.lastActivityAt ?? left.startedAt ?? 0)
 		);
 	});
+}
+
+function groupMaxActivity(rows: SessionSummary[]): number {
+	let max = 0;
+	for (const row of rows) {
+		const ts = row.lastActivityAt ?? row.startedAt ?? 0;
+		if (ts > max) max = ts;
+	}
+	return max;
 }
 
 export function SessionsPage() {
@@ -79,18 +88,17 @@ export function SessionsPage() {
 	const showEmpty = searchParams.get("empty") === "1";
 
 	const urlQuery = searchParams.get("q") ?? "";
+	const committedQuery = urlQuery.trim();
 	const [draftQuery, setDraftQuery] = useState(urlQuery);
-	const [committedQuery, setCommittedQuery] = useState(urlQuery);
 
 	useEffect(() => {
 		setDraftQuery(urlQuery);
-		setCommittedQuery(urlQuery);
 	}, [urlQuery]);
 
 	const bodySearch = useSessionsSearch(
 		range,
 		committedQuery,
-		Boolean(committedQuery.trim()),
+		Boolean(committedQuery),
 	);
 	const [grouped, setGrouped] = useState(true);
 	const [sort, setSort] = useState<SortKey>("recent");
@@ -104,7 +112,12 @@ export function SessionsPage() {
 		[committedQuery],
 	);
 	const hasFreshBodySearch =
-		Boolean(committedQuery.trim()) && bodySearch.data?.query === committedQuery;
+		Boolean(committedQuery) && bodySearch.data?.query.trim() === committedQuery;
+	const isBodySearching =
+		Boolean(committedQuery) &&
+		!hasFreshBodySearch &&
+		!bodySearch.isError &&
+		(bodySearch.isLoading || bodySearch.isFetching);
 	const bodyMatchKeys = useMemo(() => {
 		if (!hasFreshBodySearch || !bodySearch.data) return null;
 		return new Set(bodySearch.data.keys);
@@ -128,7 +141,7 @@ export function SessionsPage() {
 			if (
 				omit !== "project" &&
 				projectSet.size &&
-				(!session.cwd || !projectSet.has(session.cwd))
+				!projectSet.has(session.cwd ?? UNKNOWN_PROJECT_KEY)
 			)
 				return false;
 			if (
@@ -140,7 +153,7 @@ export function SessionsPage() {
 			if (!includeInternal && (session.isSubagent || session.isReview))
 				return false;
 			if (!showEmpty && session.totals.requests === 0) return false;
-			if (!committedQuery.trim()) return true;
+			if (!committedQuery) return true;
 			if (bodyMatchKeys) return bodyMatchKeys.has(session.key);
 			return matchesSessionQuery(
 				{
@@ -191,14 +204,13 @@ export function SessionsPage() {
 		if (!grouped) return null;
 		const map = new Map<string, SessionSummary[]>();
 		for (const session of filtered) {
-			const key = session.cwd ?? "unknown";
+			const key = session.cwd ?? UNKNOWN_PROJECT_KEY;
 			const list = map.get(key) ?? [];
 			list.push(session);
 			map.set(key, list);
 		}
 		return [...map.entries()].sort(
-			(left, right) =>
-				(right[1][0]?.lastActivityAt ?? 0) - (left[1][0]?.lastActivityAt ?? 0),
+			(left, right) => groupMaxActivity(right[1]) - groupMaxActivity(left[1]),
 		);
 	}, [filtered, grouped]);
 
@@ -212,20 +224,28 @@ export function SessionsPage() {
 	const projectOptions = useMemo<FacetOption[]>(() => {
 		const labels = new Map<string, string>();
 		for (const session of all) {
-			if (session.cwd && !labels.has(session.cwd)) {
-				labels.set(session.cwd, session.projectName);
+			const projectKey = session.cwd ?? UNKNOWN_PROJECT_KEY;
+			if (!labels.has(projectKey)) {
+				labels.set(
+					projectKey,
+					session.cwd
+						? localizeLabel(t, session.projectName)
+						: t("projects.unknown"),
+				);
 			}
 		}
 		const map = new Map<string, FacetOption>();
 		for (const session of all) {
 			if (!matchesFilters(session, "project")) continue;
-			if (!session.cwd) continue;
-			const current = map.get(session.cwd);
+			const projectKey = session.cwd ?? UNKNOWN_PROJECT_KEY;
+			const current = map.get(projectKey);
 			if (current) current.count += 1;
 			else {
-				map.set(session.cwd, {
-					value: session.cwd,
-					label: session.projectName,
+				map.set(projectKey, {
+					value: projectKey,
+					label: session.cwd
+						? localizeLabel(t, session.projectName)
+						: t("projects.unknown"),
 					count: 1,
 				});
 			}
@@ -235,14 +255,16 @@ export function SessionsPage() {
 				map.set(selectedCwd, {
 					value: selectedCwd,
 					label:
-						labels.get(selectedCwd) ??
-						(selectedCwd.split("/").at(-1) || selectedCwd),
+						selectedCwd === UNKNOWN_PROJECT_KEY
+							? t("projects.unknown")
+							: (labels.get(selectedCwd) ??
+								(selectedCwd.split("/").at(-1) || selectedCwd)),
 					count: 0,
 				});
 			}
 		}
 		return [...map.values()].sort((left, right) => right.count - left.count);
-	}, [all, matchesFilters, projects]);
+	}, [all, matchesFilters, projects, t]);
 
 	const modelOptions = useMemo<FacetOption[]>(() => {
 		const map = new Map<string, FacetOption>();
@@ -272,15 +294,17 @@ export function SessionsPage() {
 			models.length ||
 			includeInternal ||
 			showEmpty ||
-			committedQuery.trim(),
+			committedQuery,
 	);
 
-	const defaultExpanded = useRef(false);
+	const filterSignature = `${range.from ?? ""}\n${range.until ?? ""}\n${harness ?? ""}\n${projects.join(",")}\n${models.join(",")}\n${includeInternal}\n${showEmpty}\n${committedQuery}`;
+	const expandedSignatureRef = useRef<string | null>(null);
 	useEffect(() => {
-		if (defaultExpanded.current || !grouped || !groups?.length) return;
-		defaultExpanded.current = true;
+		if (!grouped || !groups?.length) return;
+		if (expandedSignatureRef.current === filterSignature) return;
+		expandedSignatureRef.current = filterSignature;
 		setExpandedGroups(new Set([groups[0]?.[0] ?? ""]));
-	}, [groups, grouped]);
+	}, [filterSignature, grouped, groups]);
 
 	const allGroupKeys = groups?.map(([key]) => key) ?? [];
 	const allExpanded =
@@ -303,19 +327,16 @@ export function SessionsPage() {
 
 	function commitSearch(value: string): void {
 		const trimmed = value.trim();
-		setCommittedQuery(trimmed);
 		setParam("q", trimmed || null);
 	}
 
 	function clearSearch(): void {
 		setDraftQuery("");
-		setCommittedQuery("");
 		setParam("q", null);
 	}
 
 	function clearFilters(): void {
 		setDraftQuery("");
-		setCommittedQuery("");
 		const next = new URLSearchParams();
 		for (const key of ["range", "from", "to"]) {
 			const value = searchParams.get(key);
@@ -473,11 +494,18 @@ export function SessionsPage() {
 					</div>
 
 					<SessionList
-						loading={sessions.isLoading && !sessions.data}
+						loading={(sessions.isLoading && !sessions.data) || isBodySearching}
+						error={
+							sessions.isError
+								? sessions.error.message
+								: committedQuery && bodySearch.isError
+									? bodySearch.error.message
+									: null
+						}
 						filtered={deferredFiltered}
 						groups={deferredGroups}
 						expandedGroups={expandedGroups}
-						forceExpand={Boolean(committedQuery.trim())}
+						forceExpand={Boolean(committedQuery)}
 						snippets={bodySnippets}
 						terms={parsed.terms}
 						hasFilters={hasFilters}

@@ -4,6 +4,8 @@ import {
 	CalendarDays,
 	Check,
 	ChevronDown,
+	ChevronLeft,
+	ChevronRight,
 	RotateCcw,
 	X,
 } from "lucide-react";
@@ -37,6 +39,11 @@ const MINUTE_MS = 60_000;
 const MINUTES_IN_DAY = 24 * 60;
 
 type Endpoint = "start" | "end";
+type CalendarView = "days" | "months" | "years";
+
+function addMonths(date: Date, delta: number): Date {
+	return new Date(date.getFullYear(), date.getMonth() + delta, 1);
+}
 
 function startOfDay(date: Date): Date {
 	const next = new Date(date);
@@ -92,7 +99,7 @@ export function TimeRangePicker() {
 	const rangeLabel = useRangeLabel();
 	const { settings } = useSettings();
 	const t = useT();
-	const { locale, weekStartsOn } = useDateLocale();
+	const { locale, code, weekStartsOn } = useDateLocale();
 	const twoMonths = useMediaQuery("(min-width: 780px)");
 	const [open, setOpen] = useState(false);
 	const [fromDate, setFromDate] = useState<Date | undefined>();
@@ -102,16 +109,25 @@ export function TimeRangePicker() {
 	const [active, setActive] = useState<Endpoint | null>(null);
 	const [month, setMonth] = useState(() => startOfMonth(new Date()));
 	const [hoverDate, setHoverDate] = useState<Date | null>(null);
+	const [calendarView, setCalendarView] = useState<CalendarView>("days");
+	const [viewYear, setViewYear] = useState(() => new Date().getFullYear());
+	const [yearGridStart, setYearGridStart] = useState(
+		() => Math.floor(new Date().getFullYear() / 12) * 12,
+	);
 
 	function initializeDraft(): void {
+		setCalendarView("days");
 		if (range.from === null && range.until === null) {
+			const now = new Date();
 			setFromDate(undefined);
 			setToDate(undefined);
 			setFromMinutes(0);
 			setToMinutes(MINUTES_IN_DAY - 1);
 			setActive(null);
 			setHoverDate(null);
-			setMonth(startOfMonth(new Date()));
+			setMonth(startOfMonth(now));
+			setViewYear(now.getFullYear());
+			setYearGridStart(Math.floor(now.getFullYear() / 12) * 12);
 			return;
 		}
 		const start = range.from !== null ? new Date(range.from) : null;
@@ -123,13 +139,16 @@ export function TimeRangePicker() {
 							: range.until - MINUTE_MS,
 					)
 				: null;
+		const anchor = start ?? end ?? new Date();
 		setFromDate(start ? startOfDay(start) : undefined);
 		setToDate(end ? startOfDay(end) : undefined);
 		setFromMinutes(start ? minutesSinceMidnight(start) : 0);
 		setToMinutes(end ? minutesSinceMidnight(end) : MINUTES_IN_DAY - 1);
 		setActive(null);
 		setHoverDate(null);
-		setMonth(startOfMonth(start ?? end ?? new Date()));
+		setMonth(startOfMonth(anchor));
+		setViewYear(anchor.getFullYear());
+		setYearGridStart(Math.floor(anchor.getFullYear() / 12) * 12);
 	}
 
 	function handleOpenChange(next: boolean): void {
@@ -146,14 +165,68 @@ export function TimeRangePicker() {
 		[toDate, toMinutes],
 	);
 	const validation = useMemo(() => {
-		if (fromValue === null && toValue === null)
-			return t("time.error.chooseDates");
 		if (fromValue !== null && toValue !== null && fromValue > toValue)
 			return t("time.error.startAfterEnd");
 		return null;
 	}, [fromValue, toValue, t]);
 	const duration = durationLabel(fromValue, toValue, t);
+	const rangeSummary = useMemo(() => {
+		if (fromValue === null && toValue === null) return t("range.all");
+		if (fromValue !== null && toValue === null) {
+			return t("range.fromDate", {
+				date: formatPickerDate(new Date(fromValue), code),
+			});
+		}
+		if (fromValue === null && toValue !== null) {
+			return t("range.untilDate", {
+				date: formatPickerDate(new Date(toValue), code),
+			});
+		}
+		return duration;
+	}, [fromValue, toValue, duration, code, t]);
 	const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+	const calendarClassNames = useMemo(
+		() => ({
+			nav: "hidden",
+			month_caption: "hidden",
+			months: "relative flex flex-col gap-4 md:flex-row",
+			week: "mt-1 flex w-full",
+			weekdays: "mt-1 flex",
+		}),
+		[],
+	);
+	const calendarLabels = useMemo(
+		() => ({
+			labelPrevious: () => t("calendar.previousMonth"),
+			labelNext: () => t("calendar.nextMonth"),
+		}),
+		[t],
+	);
+	const yearFormatter = useMemo(
+		() => new Intl.DateTimeFormat(code, { year: "numeric" }),
+		[code],
+	);
+	const monthFormatter = useMemo(
+		() => new Intl.DateTimeFormat(code, { month: "short" }),
+		[code],
+	);
+	const yearFirst = useMemo(
+		() =>
+			code.startsWith("zh") || code.startsWith("ja") || code.startsWith("ko"),
+		[code],
+	);
+	const monthNames = useMemo(
+		() =>
+			Array.from({ length: 12 }, (_, index) => ({
+				index,
+				label: monthFormatter.format(new Date(2026, index, 1)),
+			})),
+		[monthFormatter],
+	);
+	const visibleMonths = useMemo(
+		() => (twoMonths ? [month, addMonths(month, 1)] : [month]),
+		[twoMonths, month],
+	);
 
 	// The preview band connects the already-selected start day to the day the
 	// pointer is over, without restyling the selected start day itself.
@@ -212,7 +285,7 @@ export function TimeRangePicker() {
 		if (active === "start") {
 			setFromDate(clicked);
 			if (toDate && clicked > toDate) {
-				setToDate(clicked);
+				setToDate(undefined);
 				setToMinutes(MINUTES_IN_DAY - 1);
 			}
 			setActive("end");
@@ -254,6 +327,8 @@ export function TimeRangePicker() {
 		// previous range's end (which also skipped the end-of-day adjustment).
 		setFromDate(clicked);
 		setToDate(undefined);
+		setFromMinutes(0);
+		setToMinutes(MINUTES_IN_DAY - 1);
 		setActive("end");
 	}
 
@@ -276,10 +351,18 @@ export function TimeRangePicker() {
 		setActive(null);
 		setHoverDate(null);
 		setMonth(startOfMonth(start));
+		setCalendarView("days");
+		setViewYear(start.getFullYear());
+		setYearGridStart(Math.floor(start.getFullYear() / 12) * 12);
 	}
 
 	function applyCustom(): void {
-		if (validation || (fromValue === null && toValue === null)) return;
+		if (validation) return;
+		if (fromValue === null && toValue === null) {
+			setRange({ key: "all" });
+			setOpen(false);
+			return;
+		}
 		setRange({
 			key: "custom",
 			from: fromValue,
@@ -312,11 +395,11 @@ export function TimeRangePicker() {
 				align="end"
 				sideOffset={8}
 				collisionPadding={12}
-				className="w-[min(96vw,820px)] overflow-hidden p-0"
+				className="w-auto max-w-[96vw] overflow-hidden p-0"
 			>
-				<div className="grid md:grid-cols-[176px_minmax(0,1fr)]">
-					<aside className="border-b bg-surface p-2 md:border-b-0 md:border-r">
-						<div className="px-2 pb-1.5 pt-1 text-[11px] font-medium text-muted-foreground">
+				<div className="grid md:grid-cols-[148px_auto]">
+					<aside className="border-b bg-surface/60 p-2 md:border-b-0 md:border-r">
+						<div className="px-2 pb-1.5 pt-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/75">
 							{t("range.title")}
 						</div>
 						<div className="grid grid-cols-2 gap-0.5 md:grid-cols-1">
@@ -328,8 +411,8 @@ export function TimeRangePicker() {
 										type="button"
 										onClick={() => selectPreset(preset.key)}
 										className={cn(
-											"flex items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-[12px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
-											isActive && "bg-muted text-foreground",
+											"flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground",
+											isActive && "bg-accent font-medium text-foreground",
 										)}
 									>
 										<span>{t(preset.label)}</span>
@@ -353,7 +436,7 @@ export function TimeRangePicker() {
 							</button>
 						</div>
 
-						<div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
+						<div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1.5">
 							<EndpointField
 								endpoint="start"
 								label={t("time.start")}
@@ -365,10 +448,11 @@ export function TimeRangePicker() {
 									setFromDate(undefined);
 									setFromMinutes(0);
 									setHoverDate(null);
+									setActive(toDate ? "start" : null);
 								}}
 								onMinutesChange={setFromMinutes}
 							/>
-							<ArrowRight className="size-4 text-muted-foreground" />
+							<ArrowRight className="size-3.5 text-muted-foreground/60" />
 							<EndpointField
 								endpoint="end"
 								label={t("time.end")}
@@ -380,45 +464,262 @@ export function TimeRangePicker() {
 									setToDate(undefined);
 									setToMinutes(MINUTES_IN_DAY - 1);
 									setHoverDate(null);
+									setActive(fromDate ? "end" : null);
 								}}
 								onMinutesChange={setToMinutes}
 							/>
 						</div>
 
 						{/* biome-ignore lint/a11y/noStaticElementInteractions: clears the hover preview */}
-						<div className="mt-1" onMouseLeave={() => setHoverDate(null)}>
-							<Calendar
-								mode="range"
-								selected={
-									fromDate
-										? {
-												from: fromDate,
-												to: active === "end" && hoverDate ? undefined : toDate,
-											}
-										: toDate
-											? { from: toDate, to: toDate }
-											: undefined
-								}
-								onSelect={handleSelect}
-								modifiers={modifiers}
-								modifiersClassNames={modifiersClassNames}
-								onDayMouseEnter={(day) => {
-									if (active === "end" && fromDate && !toDate)
-										setHoverDate(day);
-								}}
-								numberOfMonths={twoMonths ? 2 : 1}
-								month={month}
-								onMonthChange={setMonth}
-								locale={locale}
-								weekStartsOn={weekStartsOn}
-								showOutsideDays={false}
-								classNames={{ week: "flex w-full" }}
-								labels={{
-									labelPrevious: () => t("calendar.previousMonth"),
-									labelNext: () => t("calendar.nextMonth"),
-								}}
-								className="mx-auto mt-1 p-0 [--cell-size:--spacing(9)]"
-							/>
+						<div
+							className="mt-2"
+							onMouseLeave={() => {
+								if (hoverDate) setHoverDate(null);
+							}}
+						>
+							{calendarView === "days" ? (
+								<div>
+									<div className="mb-1 flex h-8 items-center justify-between gap-2">
+										<button
+											type="button"
+											aria-label={t("calendar.previousMonth")}
+											onClick={() => setMonth(addMonths(month, -1))}
+											className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+										>
+											<ChevronLeft className="size-4" />
+										</button>
+										<div
+											className={cn(
+												"grid flex-1 items-center gap-4",
+												twoMonths ? "grid-cols-2" : "grid-cols-1",
+											)}
+										>
+											{visibleMonths.map((item) => {
+												const y = item.getFullYear();
+												const m = item.getMonth();
+												const yearBtn = (
+													<button
+														type="button"
+														data-calendar-year-trigger={y}
+														onClick={() => {
+															setViewYear(y);
+															setYearGridStart(Math.floor(y / 12) * 12);
+															setCalendarView("years");
+														}}
+														className="rounded px-1 py-0.5 text-[13px] font-medium transition-colors hover:bg-muted"
+													>
+														{yearFormatter.format(item)}
+													</button>
+												);
+												const monthBtn = (
+													<button
+														type="button"
+														data-calendar-month-trigger={m}
+														onClick={() => {
+															setViewYear(y);
+															setCalendarView("months");
+														}}
+														className="rounded px-1 py-0.5 text-[13px] font-medium transition-colors hover:bg-muted"
+													>
+														{monthFormatter.format(item)}
+													</button>
+												);
+												return (
+													<div
+														key={`${y}-${m}`}
+														className="flex items-center justify-center"
+													>
+														{yearFirst ? (
+															<>
+																{yearBtn}
+																{monthBtn}
+															</>
+														) : (
+															<>
+																{monthBtn}
+																{yearBtn}
+															</>
+														)}
+													</div>
+												);
+											})}
+										</div>
+										<button
+											type="button"
+											aria-label={t("calendar.nextMonth")}
+											onClick={() => setMonth(addMonths(month, 1))}
+											className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+										>
+											<ChevronRight className="size-4" />
+										</button>
+									</div>
+									<Calendar
+										mode="range"
+										selected={
+											fromDate
+												? {
+														from: fromDate,
+														to:
+															active === "end" && hoverDate
+																? undefined
+																: toDate,
+													}
+												: toDate
+													? { from: toDate, to: toDate }
+													: undefined
+										}
+										onSelect={handleSelect}
+										modifiers={modifiers}
+										modifiersClassNames={modifiersClassNames}
+										onDayMouseEnter={(day) => {
+											if (active !== "end" || !fromDate || toDate) return;
+											const normalized = startOfDay(day);
+											if (
+												hoverDate &&
+												normalized.getTime() === hoverDate.getTime()
+											)
+												return;
+											setHoverDate(normalized);
+										}}
+										numberOfMonths={twoMonths ? 2 : 1}
+										month={month}
+										onMonthChange={setMonth}
+										locale={locale}
+										weekStartsOn={weekStartsOn}
+										showOutsideDays={false}
+										classNames={calendarClassNames}
+										labels={calendarLabels}
+										className="mx-auto p-0 [--cell-size:--spacing(8.5)]"
+									/>
+								</div>
+							) : calendarView === "months" ? (
+								<div
+									className={cn(
+										"mx-auto flex min-h-[248px] flex-col",
+										twoMonths ? "w-[492px]" : "w-[238px]",
+									)}
+								>
+									<div className="mb-2 flex h-8 items-center justify-between">
+										<button
+											type="button"
+											aria-label={t("calendar.previousMonth")}
+											onClick={() => setViewYear((prev) => prev - 1)}
+											className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+										>
+											<ChevronLeft className="size-4" />
+										</button>
+										<button
+											type="button"
+											data-calendar-year-trigger={viewYear}
+											onClick={() => {
+												setYearGridStart(Math.floor(viewYear / 12) * 12);
+												setCalendarView("years");
+											}}
+											className="rounded-md px-2 py-0.5 text-[13px] font-medium transition-colors hover:bg-muted"
+										>
+											{yearFormatter.format(new Date(viewYear, 0, 1))}
+										</button>
+										<button
+											type="button"
+											aria-label={t("calendar.nextMonth")}
+											onClick={() => setViewYear((prev) => prev + 1)}
+											className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+										>
+											<ChevronRight className="size-4" />
+										</button>
+									</div>
+									<div
+										className={cn(
+											"grid flex-1 content-center gap-2",
+											twoMonths ? "grid-cols-4" : "grid-cols-3",
+										)}
+									>
+										{monthNames.map((item) => {
+											const isCurrent =
+												month.getFullYear() === viewYear &&
+												month.getMonth() === item.index;
+											return (
+												<button
+													key={item.index}
+													type="button"
+													data-calendar-month={item.index}
+													onClick={() => {
+														setMonth(new Date(viewYear, item.index, 1));
+														setCalendarView("days");
+													}}
+													className={cn(
+														"h-11 rounded-md text-[13px] font-medium transition-colors",
+														isCurrent
+															? "bg-primary text-primary-foreground"
+															: "text-foreground hover:bg-muted",
+													)}
+												>
+													{item.label}
+												</button>
+											);
+										})}
+									</div>
+								</div>
+							) : (
+								<div
+									className={cn(
+										"mx-auto flex min-h-[248px] flex-col",
+										twoMonths ? "w-[492px]" : "w-[238px]",
+									)}
+								>
+									<div className="mb-2 flex h-8 items-center justify-between">
+										<button
+											type="button"
+											aria-label={t("calendar.previousMonth")}
+											onClick={() => setYearGridStart((prev) => prev - 12)}
+											className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+										>
+											<ChevronLeft className="size-4" />
+										</button>
+										<span className="text-[13px] font-medium tabular">
+											{yearGridStart} – {yearGridStart + 11}
+										</span>
+										<button
+											type="button"
+											aria-label={t("calendar.nextMonth")}
+											onClick={() => setYearGridStart((prev) => prev + 12)}
+											className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+										>
+											<ChevronRight className="size-4" />
+										</button>
+									</div>
+									<div
+										className={cn(
+											"grid flex-1 content-center gap-2",
+											twoMonths ? "grid-cols-4" : "grid-cols-3",
+										)}
+									>
+										{Array.from({ length: 12 }, (_, idx) => {
+											const yearValue = yearGridStart + idx;
+											const isCurrent = month.getFullYear() === yearValue;
+											return (
+												<button
+													key={yearValue}
+													type="button"
+													data-calendar-year={yearValue}
+													onClick={() => {
+														setViewYear(yearValue);
+														setCalendarView("months");
+													}}
+													className={cn(
+														"h-11 rounded-md text-[13px] font-medium tabular transition-colors",
+														isCurrent
+															? "bg-primary text-primary-foreground"
+															: "text-foreground hover:bg-muted",
+													)}
+												>
+													{yearFormatter.format(new Date(yearValue, 0, 1))}
+												</button>
+											);
+										})}
+									</div>
+								</div>
+							)}
 						</div>
 
 						<div className="mt-2 flex items-center justify-between gap-3 border-t pt-2">
@@ -428,7 +729,7 @@ export function TimeRangePicker() {
 								) : (
 									<p className="flex items-center gap-2 truncate">
 										<span>{timeZone}</span>
-										{duration ? <span>{duration}</span> : null}
+										{rangeSummary ? <span>{rangeSummary}</span> : null}
 									</p>
 								)}
 							</div>
@@ -480,35 +781,55 @@ function EndpointField({
 	return (
 		<div
 			className={cn(
-				"flex min-w-0 items-center justify-between gap-1.5 rounded-lg border bg-card px-2.5 py-2 transition-colors",
-				active && "border-foreground/35 ring-1 ring-foreground/10",
+				"min-w-0 rounded-lg border border-border/80 bg-muted/25 px-2.5 py-2 transition-colors",
+				active && "border-foreground/45 bg-card ring-1 ring-foreground/10",
 			)}
 		>
-			<button
-				type="button"
-				data-endpoint={endpoint}
-				onClick={onFocus}
-				className="min-w-0 flex-1 text-left"
-			>
-				<span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-					{label}
-				</span>
-				<span className="mt-0.5 block truncate text-[12px] font-medium">
-					{date ? formatPickerDate(date, code) : t("time.selectDate")}
-				</span>
-			</button>
-			{date && (
+			<div className="flex items-center justify-between gap-2 text-[10px] leading-none">
 				<button
 					type="button"
-					data-clear-endpoint={endpoint}
-					aria-label={t("common.clearField", { label })}
-					onClick={onClear}
-					className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+					onClick={onFocus}
+					className="font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground"
 				>
-					<X className="size-3" />
+					{label}
 				</button>
-			)}
-			<TimeInput minutes={minutes} onChange={onMinutesChange} label={label} />
+				{date ? (
+					<button
+						type="button"
+						data-clear-endpoint={endpoint}
+						aria-label={t("common.clearField", { label })}
+						onClick={onClear}
+						className="inline-flex items-center gap-0.5 text-muted-foreground/80 transition-colors hover:text-foreground"
+					>
+						<X className="size-2.5" />
+						<span>{t("common.clear")}</span>
+					</button>
+				) : null}
+			</div>
+			<div className="mt-1.5 flex min-h-6 items-center justify-between gap-2">
+				<button
+					type="button"
+					data-endpoint={endpoint}
+					onClick={onFocus}
+					className="min-w-0 flex-1 text-left"
+				>
+					<span
+						className={cn(
+							"block truncate text-[12px] font-medium",
+							!date && "font-normal text-muted-foreground",
+						)}
+					>
+						{date ? formatPickerDate(date, code) : t("time.selectDate")}
+					</span>
+				</button>
+				{date ? (
+					<TimeInput
+						minutes={minutes}
+						onChange={onMinutesChange}
+						label={label}
+					/>
+				) : null}
+			</div>
 		</div>
 	);
 }
@@ -517,10 +838,12 @@ function TimeInput({
 	minutes,
 	onChange,
 	label,
+	disabled = false,
 }: {
 	minutes: number;
 	onChange: (minutes: number) => void;
 	label: string;
+	disabled?: boolean;
 }) {
 	const t = useT();
 	const { code } = useDateLocale();
@@ -604,9 +927,15 @@ function TimeInput({
 	}
 
 	return (
-		<div className="inline-flex h-7 shrink-0 items-center gap-0.5 rounded-md border border-input bg-background px-1 text-[11px] tabular transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50 dark:bg-input/30">
+		<div
+			className={cn(
+				"inline-flex h-6 shrink-0 items-center gap-0.5 rounded-md border border-transparent bg-muted/70 px-1.5 text-[11px] tabular transition-[color,box-shadow,border-color,background-color] hover:bg-muted focus-within:border-ring focus-within:bg-background focus-within:ring-[2px] focus-within:ring-ring/40",
+				disabled && "pointer-events-none opacity-40",
+			)}
+		>
 			<input
 				value={hourText}
+				disabled={disabled}
 				inputMode="numeric"
 				maxLength={2}
 				aria-label={`${label} ${t("time.hourPart")}`}
@@ -640,6 +969,7 @@ function TimeInput({
 			<input
 				ref={minuteRef}
 				value={minuteText}
+				disabled={disabled}
 				inputMode="numeric"
 				maxLength={2}
 				aria-label={`${label} ${t("time.minutePart")}`}
@@ -669,6 +999,7 @@ function TimeInput({
 						<button
 							key={value}
 							type="button"
+							disabled={disabled}
 							onClick={() => setPeriod(value)}
 							aria-pressed={period === value}
 							className={cn(

@@ -1,7 +1,7 @@
 import type { SessionStats, SessionSummary, TurnSummary } from "@shared/types";
 import { cn } from "cn";
 import { ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
 	Bar,
 	BarChart,
@@ -12,6 +12,7 @@ import {
 	YAxis,
 } from "recharts";
 import { CopyButton } from "~/components/copy-button";
+import { tokenColors } from "~/lib/chart-colors";
 import {
 	formatCost,
 	formatDateTime,
@@ -21,30 +22,25 @@ import {
 	formatPercent,
 	formatThroughput,
 	formatTokens,
+	totalTokens,
 } from "~/lib/format";
 import { useT } from "~/lib/i18n";
 
-function totalTokens(totals: SessionSummary["totals"]): number {
-	return (
-		totals.inputTokens +
-		totals.outputTokens +
-		totals.cacheReadTokens +
-		totals.cacheWriteTokens
-	);
-}
+const TURN_CHART_MARGIN = { top: 4, right: 4, left: 0, bottom: 0 };
+const TURN_TOOLTIP_CURSOR = { fill: "var(--hover)", fillOpacity: 0.7 };
 
 const tokenParts = [
-	{ key: "inputTokens", label: "metric.input", color: "var(--chart-1)" },
-	{ key: "outputTokens", label: "metric.output", color: "var(--chart-2)" },
+	{ key: "inputTokens", label: "metric.input", color: tokenColors.input },
+	{ key: "outputTokens", label: "metric.output", color: tokenColors.output },
 	{
 		key: "cacheReadTokens",
 		label: "metric.cacheRead",
-		color: "var(--chart-7)",
+		color: tokenColors.cacheRead,
 	},
 	{
 		key: "cacheWriteTokens",
 		label: "metric.cacheWrite",
-		color: "var(--chart-4)",
+		color: tokenColors.cacheWrite,
 	},
 ] as const;
 
@@ -65,20 +61,25 @@ export function SessionUsagePanel({
 		totals.inputTokens + totals.cacheReadTokens + totals.cacheWriteTokens;
 	const cacheHit =
 		cacheDenominator > 0 ? totals.cacheReadTokens / cacheDenominator : null;
-	const modelMax = Math.max(
-		1,
-		...stats.models.map((model) => totalTokens(model.totals)),
+	const modelMax = useMemo(
+		() =>
+			Math.max(1, ...stats.models.map((model) => totalTokens(model.totals))),
+		[stats.models],
 	);
-	const turnData = turns
-		.filter((turn) => turn.index >= 0)
-		.map((turn) => ({
-			label: `T${turn.index + 1}`,
-			tokens: totalTokens(turn.totals),
-			cost: turn.totals.costUsd,
-			durationMs: turn.durationMs ?? null,
-			ttftMs: turn.ttftMs ?? null,
-			tokensPerSecond: turn.tokensPerSecond ?? null,
-		}));
+	const turnData = useMemo(
+		() =>
+			turns
+				.filter((turn) => turn.index >= 0)
+				.map((turn) => ({
+					label: `T${turn.index + 1}`,
+					tokens: totalTokens(turn.totals),
+					cost: turn.totals.costUsd,
+					durationMs: turn.durationMs ?? null,
+					ttftMs: turn.ttftMs ?? null,
+					tokensPerSecond: turn.tokensPerSecond ?? null,
+				})),
+		[turns],
+	);
 	const metrics = stats.metrics;
 	const hasGenerationMetrics = Boolean(
 		metrics &&
@@ -297,38 +298,41 @@ export function SessionUsagePanel({
 									{t("common.models")}
 								</div>
 								<div className="mt-1.5 space-y-2">
-									{stats.models.map((model) => (
-										<div key={model.model}>
-											<div className="flex items-baseline justify-between gap-3 text-[11px]">
-												<span className="truncate">{model.model}</span>
-												<span className="shrink-0 tabular">
-													{formatTokens(totalTokens(model.totals))}
-												</span>
+									{stats.models.map((model) => {
+										const modelTokens = totalTokens(model.totals);
+										return (
+											<div key={model.model}>
+												<div className="flex items-baseline justify-between gap-3 text-[11px]">
+													<span className="truncate">{model.model}</span>
+													<span className="shrink-0 tabular">
+														{formatTokens(modelTokens)}
+													</span>
+												</div>
+												<div className="mt-1 h-1 overflow-hidden rounded-[1px] bg-muted">
+													<div
+														className="h-full bg-chart-1"
+														style={{
+															width:
+																modelTokens > 0
+																	? `${Math.max(1, (modelTokens / modelMax) * 100)}%`
+																	: "0%",
+														}}
+													/>
+												</div>
+												<div className="mt-0.5 flex justify-between text-[10px] text-muted-foreground tabular">
+													<span>
+														{t("count.requests", {
+															count: model.totals.requests,
+															formatted: formatNumber(model.totals.requests),
+														})}
+													</span>
+													{model.totals.costUsd > 0 ? (
+														<span>{formatCost(model.totals.costUsd)}</span>
+													) : null}
+												</div>
 											</div>
-											<div className="mt-1 h-1 overflow-hidden rounded-[1px] bg-muted">
-												<div
-													className="h-full bg-chart-1"
-													style={{
-														width: `${Math.max(
-															1,
-															(totalTokens(model.totals) / modelMax) * 100,
-														)}%`,
-													}}
-												/>
-											</div>
-											<div className="mt-0.5 flex justify-between text-[10px] text-muted-foreground tabular">
-												<span>
-													{t("count.requests", {
-														count: model.totals.requests,
-														formatted: formatNumber(model.totals.requests),
-													})}
-												</span>
-												{model.totals.costUsd > 0 ? (
-													<span>{formatCost(model.totals.costUsd)}</span>
-												) : null}
-											</div>
-										</div>
-									))}
+										);
+									})}
 								</div>
 							</div>
 						</div>
@@ -348,10 +352,7 @@ export function SessionUsagePanel({
 								</div>
 								<div className="mt-1 h-[112px]">
 									<ResponsiveContainer width="100%" height="100%">
-										<BarChart
-											data={turnData}
-											margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
-										>
+										<BarChart data={turnData} margin={TURN_CHART_MARGIN}>
 											<CartesianGrid
 												vertical={false}
 												stroke="var(--chart-grid)"
@@ -372,7 +373,7 @@ export function SessionUsagePanel({
 											/>
 											<Tooltip
 												content={<TurnTooltip />}
-												cursor={{ fill: "var(--hover)", fillOpacity: 0.7 }}
+												cursor={TURN_TOOLTIP_CURSOR}
 												isAnimationActive={false}
 											/>
 											<Bar

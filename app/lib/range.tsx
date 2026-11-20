@@ -35,24 +35,39 @@ interface RangeContextValue {
 
 const RangeContext = createContext<RangeContextValue | null>(null);
 
-export function useNow(intervalMs = 60_000): number {
+function msUntilNextLocalMidnight(nowMs: number): number {
+	const date = new Date(nowMs);
+	const nextMidnight = new Date(
+		date.getFullYear(),
+		date.getMonth(),
+		date.getDate() + 1,
+		0,
+		0,
+		0,
+		50,
+	).getTime();
+	return Math.max(1000, nextMidnight - nowMs);
+}
+
+export function useNow(): number {
 	const [now, setNow] = useState(() => Date.now());
 	useEffect(() => {
-		const timer = window.setInterval(() => setNow(Date.now()), intervalMs);
-		return () => window.clearInterval(timer);
-	}, [intervalMs]);
+		const refresh = () => setNow(Date.now());
+		const timer = window.setTimeout(refresh, msUntilNextLocalMidnight(now));
+		window.addEventListener("coding-tokens:refresh-now", refresh);
+		return () => {
+			window.clearTimeout(timer);
+			window.removeEventListener("coding-tokens:refresh-now", refresh);
+		};
+	}, [now]);
 	return now;
 }
 
 export function RangeProvider({ children }: { children: ReactNode }) {
 	const [searchParams, setSearchParams] = useSearchParams();
-	const { settings } = useSettings();
+	const { settings, settled: settingsSettled } = useSettings();
 	const now = useNow();
-	const [stored, setStored] = useState<PersistedRange | null>(() =>
-		readStoredRange(),
-	);
-	const storedRef = useRef(stored);
-	storedRef.current = stored;
+	const storedRef = useRef<PersistedRange | null>(readStoredRange());
 
 	// Only these three values decide the active range, so typing in a page
 	// filter does not churn range-dependent queries.
@@ -61,26 +76,30 @@ export function RangeProvider({ children }: { children: ReactNode }) {
 	const toParam = searchParams.get("to");
 	const rangeSignature = `${rangeParam ?? ""}\n${fromParam ?? ""}\n${toParam ?? ""}`;
 
-	const range = useMemo(() => {
+	const { range, hasExplicitSource } = useMemo(() => {
 		const [key, from, to] = rangeSignature.split("\n");
 		const fromUrl = parseRangeValues(key, from, to, now);
-		if (fromUrl) return fromUrl;
+		if (fromUrl) return { range: fromUrl, hasExplicitSource: true };
 		const fromStorage = resolvePersistedRange(storedRef.current, now);
-		if (fromStorage) return fromStorage;
-		return resolveRange(new URLSearchParams(), now, settings.defaultRange);
+		if (fromStorage) return { range: fromStorage, hasExplicitSource: true };
+		return {
+			range: resolveRange(new URLSearchParams(), now, settings.defaultRange),
+			hasExplicitSource: false,
+		};
 	}, [rangeSignature, now, settings.defaultRange]);
 
 	useEffect(() => {
+		if (!hasExplicitSource && !settingsSettled) return;
 		const next = persistedFromResolved(range);
 		if (samePersistedRange(storedRef.current, next)) return;
 		storedRef.current = next;
-		setStored(next);
 		writeStoredRange(next);
-	}, [range, range.key, range.from, range.until]);
+	}, [hasExplicitSource, settingsSettled, range]);
 
 	// Keep the URL in sync so links, reloads, and window copies all carry the
 	// same range. Unknown or incomplete range params are repaired in place.
 	useEffect(() => {
+		if (!hasExplicitSource && !settingsSettled) return;
 		const current = new URLSearchParams(searchParams.toString());
 		const currentKey = current.get("range");
 		const needsRepair =
@@ -102,7 +121,13 @@ export function RangeProvider({ children }: { children: ReactNode }) {
 			next.set(key, value);
 		}
 		setSearchParams(next, { replace: true });
-	}, [searchParams, setSearchParams, range]);
+	}, [
+		hasExplicitSource,
+		settingsSettled,
+		searchParams,
+		setSearchParams,
+		range,
+	]);
 
 	const setRange = useCallback(
 		(selection: RangeSelection) => {
@@ -112,8 +137,10 @@ export function RangeProvider({ children }: { children: ReactNode }) {
 				until: selection.key === "custom" ? (selection.until ?? null) : null,
 			} satisfies PersistedRange;
 			storedRef.current = nextStored;
-			setStored(nextStored);
 			writeStoredRange(nextStored);
+			if (typeof window !== "undefined") {
+				window.dispatchEvent(new Event("coding-tokens:refresh-now"));
+			}
 			setSearchParams(
 				(previous) => {
 					const next = new URLSearchParams(previous);

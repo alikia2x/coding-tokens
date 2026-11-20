@@ -96,19 +96,28 @@ void i18n.use(initReactI18next).init({
 	returnNull: false,
 });
 
+function syncFormatLocale(locale: AppLocale): void {
+	const fixedT = i18n.getFixedT(locale);
+	setFormatLocale(locale, {
+		all: fixedT("range.all"),
+		fromDate: (date) => fixedT("range.fromDate", { date }),
+		untilDate: (date) => fixedT("range.untilDate", { date }),
+	});
+}
+
 export function setAppLocale(locale: AppLocale): void {
 	const resolved = normalizeAppLocale(locale);
 	void i18n.changeLanguage(resolved);
 	try {
 		localStorage.setItem("coding-tokens-locale", resolved);
 	} catch {}
-	setFormatLocale(resolved);
+	syncFormatLocale(resolved);
 	if (typeof document !== "undefined") {
 		document.documentElement.lang = resolved;
 	}
 }
 
-setFormatLocale(normalizeAppLocale(i18n.language));
+syncFormatLocale(normalizeAppLocale(i18n.language));
 
 export default i18n;
 

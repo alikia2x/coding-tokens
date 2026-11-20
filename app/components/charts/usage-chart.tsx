@@ -1,4 +1,5 @@
 import type { UsageBucket } from "@shared/types";
+import { Check, ChevronDown } from "lucide-react";
 import { useMemo } from "react";
 import {
 	Bar,
@@ -9,30 +10,46 @@ import {
 	XAxis,
 	YAxis,
 } from "recharts";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "~/components/ui/dropdown-menu";
 import { ToggleGroup, ToggleGroupItem } from "~/components/ui/toggle-group";
+import { tokenColors } from "~/lib/chart-colors";
 import {
 	type DateLocaleCode,
 	formatBucketLabelFor,
 	formatBucketTooltipLabelFor,
 	useDateLocale,
 } from "~/lib/date-locale";
-import { formatCompact, formatCost, formatNumber } from "~/lib/format";
+import {
+	formatCompact,
+	formatCost,
+	formatCostAxis,
+	formatNumber,
+	totalTokens,
+} from "~/lib/format";
 import { useT } from "~/lib/i18n";
 
 export type UsageMetric = "tokens" | "cost";
 
+const CHART_MARGIN = { top: 4, right: 24, left: 0, bottom: 0 };
+const TOOLTIP_CURSOR = { fill: "var(--hover)", fillOpacity: 0.7 };
+
 const tokenSeries = [
-	{ key: "inputTokens", label: "metric.input", color: "var(--chart-1)" },
-	{ key: "outputTokens", label: "metric.output", color: "var(--chart-2)" },
+	{ key: "inputTokens", label: "metric.input", color: tokenColors.input },
+	{ key: "outputTokens", label: "metric.output", color: tokenColors.output },
 	{
 		key: "cacheReadTokens",
 		label: "metric.cacheRead",
-		color: "var(--chart-7)",
+		color: tokenColors.cacheRead,
 	},
 	{
 		key: "cacheWriteTokens",
 		label: "metric.cacheWrite",
-		color: "var(--chart-4)",
+		color: tokenColors.cacheWrite,
 	},
 ] as const;
 
@@ -78,11 +95,7 @@ function TokenTooltip({
 	const t = useT();
 	const data = payload?.[0]?.payload;
 	if (!active || !data) return null;
-	const total =
-		data.inputTokens +
-		data.outputTokens +
-		data.cacheReadTokens +
-		data.cacheWriteTokens;
+	const total = totalTokens(data);
 	return (
 		<div className="min-w-48 rounded-md border bg-popover px-3 py-2 text-popover-foreground shadow-md">
 			<div className="flex items-baseline justify-between gap-6">
@@ -138,16 +151,22 @@ function CostTooltip({
 	);
 }
 
+export type UsageBucketUnit = "hour" | "day" | "week" | "month";
+
+const BUCKET_UNITS: UsageBucketUnit[] = ["hour", "day", "week", "month"];
+
 export function UsageChart({
 	buckets,
 	metric,
 	onMetricChange,
 	unit,
+	onUnitChange,
 }: {
 	buckets: UsageBucket[];
 	metric: UsageMetric;
 	onMetricChange: (metric: UsageMetric) => void;
-	unit: "hour" | "day" | "week" | "month";
+	unit: UsageBucketUnit;
+	onUnitChange?: (unit: UsageBucketUnit) => void;
 }) {
 	const t = useT();
 	const { code } = useDateLocale();
@@ -174,9 +193,39 @@ export function UsageChart({
 					<h2 className="text-[13px] font-semibold">
 						{t("overview.usageOverTime")}
 					</h2>
-					<p className="mt-0.5 text-[11px] text-muted-foreground">
-						{t(metric === "tokens" ? "metric.tokens" : "metric.cost")}{" "}
-						{t(`chart.by.${unit}`)}
+					<p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+						<span>
+							{t(metric === "tokens" ? "metric.tokens" : "metric.cost")}
+						</span>
+						{onUnitChange ? (
+							<DropdownMenu>
+								<DropdownMenuTrigger asChild>
+									<button
+										type="button"
+										className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+									>
+										<span>{t(`chart.by.${unit}`)}</span>
+										<ChevronDown className="size-3 opacity-70" />
+									</button>
+								</DropdownMenuTrigger>
+								<DropdownMenuContent align="start" className="min-w-28">
+									{BUCKET_UNITS.map((option) => (
+										<DropdownMenuItem
+											key={option}
+											onSelect={() => onUnitChange(option)}
+											className="flex items-center justify-between gap-2 text-[12px]"
+										>
+											<span>{t(`chart.by.${option}`)}</span>
+											{option === unit ? (
+												<Check className="size-3.5 text-foreground" />
+											) : null}
+										</DropdownMenuItem>
+									))}
+								</DropdownMenuContent>
+							</DropdownMenu>
+						) : (
+							<span>{t(`chart.by.${unit}`)}</span>
+						)}
 					</p>
 				</div>
 				<ToggleGroup
@@ -212,10 +261,7 @@ export function UsageChart({
 			) : (
 				<div className="mt-3 min-h-[270px] flex-1">
 					<ResponsiveContainer width="100%" height="100%">
-						<BarChart
-							data={data}
-							margin={{ top: 4, right: 24, left: 0, bottom: 0 }}
-						>
+						<BarChart data={data} margin={CHART_MARGIN}>
 							<CartesianGrid vertical={false} stroke="var(--chart-grid)" />
 							<XAxis
 								dataKey="key"
@@ -232,12 +278,12 @@ export function UsageChart({
 								width={metric === "cost" ? 54 : 46}
 								tickFormatter={(value: number) =>
 									metric === "cost"
-										? `$${formatCompact(value)}`
+										? formatCostAxis(value)
 										: formatCompact(value)
 								}
 							/>
 							<Tooltip
-								cursor={{ fill: "var(--hover)", fillOpacity: 0.7 }}
+								cursor={TOOLTIP_CURSOR}
 								content={
 									metric === "tokens" ? <TokenTooltip /> : <CostTooltip />
 								}

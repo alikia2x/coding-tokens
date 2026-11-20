@@ -29,51 +29,70 @@ import {
 	formatPercent,
 	formatRelativeTime,
 	formatTokens,
+	totalTokens,
 } from "~/lib/format";
 import { useResolvedRange } from "~/lib/hooks";
 import { useT } from "~/lib/i18n";
 import { localizeLabel } from "~/lib/labels";
 import { useModels } from "~/lib/queries";
-import { rangeQueryString } from "~/lib/time-range";
+import { sessionsPath } from "~/lib/time-range";
 
-function tokenTotal(row: {
-	totals: {
-		inputTokens: number;
-		outputTokens: number;
-		cacheReadTokens: number;
-		cacheWriteTokens: number;
-	};
-}): number {
+function isRowUnpriced(row: ModelReportRow): boolean {
 	return (
-		row.totals.inputTokens +
-		row.totals.outputTokens +
-		row.totals.cacheReadTokens +
-		row.totals.cacheWriteTokens
+		row.pricing?.source === "unpriced" ||
+		(row.totals.requests > 0 &&
+			row.totals.unpricedRequests >= row.totals.requests)
 	);
+}
+
+function compareNullable(
+	left: number | null,
+	right: number | null,
+	direction: "asc" | "desc",
+): number {
+	if (left === null && right === null) return 0;
+	if (left === null) return 1;
+	if (right === null) return -1;
+	return direction === "asc" ? left - right : right - left;
 }
 
 function compareModels(
 	left: ModelReportRow,
 	right: ModelReportRow,
 	key: string,
+	direction: "asc" | "desc",
 ): number {
+	if (key === "cache") {
+		return compareNullable(
+			left.cacheReadShare,
+			right.cacheReadShare,
+			direction,
+		);
+	}
+	if (key === "efficiency") {
+		return compareNullable(
+			left.costPerMillionTokens,
+			right.costPerMillionTokens,
+			direction,
+		);
+	}
+	if (key === "recent") {
+		return compareNullable(
+			left.lastActivityAt,
+			right.lastActivityAt,
+			direction,
+		);
+	}
+	const sign = direction === "asc" ? 1 : -1;
 	switch (key) {
 		case "model":
-			return left.model.localeCompare(right.model);
+			return left.model.localeCompare(right.model) * sign;
 		case "requests":
-			return left.totals.requests - right.totals.requests;
+			return (left.totals.requests - right.totals.requests) * sign;
 		case "tokens":
-			return tokenTotal(left) - tokenTotal(right);
-		case "cache":
-			return (left.cacheReadShare ?? 0) - (right.cacheReadShare ?? 0);
-		case "efficiency":
-			return (
-				(left.costPerMillionTokens ?? 0) - (right.costPerMillionTokens ?? 0)
-			);
-		case "recent":
-			return (left.lastActivityAt ?? 0) - (right.lastActivityAt ?? 0);
+			return (totalTokens(left.totals) - totalTokens(right.totals)) * sign;
 		default:
-			return left.totals.costUsd - right.totals.costUsd;
+			return (left.totals.costUsd - right.totals.costUsd) * sign;
 	}
 }
 
@@ -89,28 +108,17 @@ export function ModelsPage() {
 		direction: "desc",
 	});
 	const t = useT();
-	const rangeQuery = rangeQueryString(range);
 	const parsed = useMemo(() => parseSearchQuery(query), [query]);
 
 	const allRows = models.data?.rows ?? [];
 	const unpricedModelCount = useMemo(
-		() =>
-			allRows.filter(
-				(row) =>
-					row.pricing?.source === "unpriced" ||
-					(row.totals.requests > 0 &&
-						row.totals.unpricedRequests >= row.totals.requests),
-			).length,
+		() => allRows.filter((row) => isRowUnpriced(row)).length,
 		[allRows],
 	);
 
 	const rows = useMemo(() => {
 		const filtered = allRows.filter((row) => {
-			if (
-				unpricedOnly &&
-				row.pricing?.source !== "unpriced" &&
-				!(row.totals.requests > 0 && row.totals.unpricedRequests > 0)
-			) {
+			if (unpricedOnly && !isRowUnpriced(row)) {
 				return false;
 			}
 			const localized = localizeLabel(t, row.model);
@@ -133,9 +141,8 @@ export function ModelsPage() {
 				},
 			);
 		});
-		const direction = sort.direction === "asc" ? 1 : -1;
-		return [...filtered].sort(
-			(left, right) => compareModels(left, right, sort.key) * direction,
+		return [...filtered].sort((left, right) =>
+			compareModels(left, right, sort.key, sort.direction),
 		);
 	}, [allRows, unpricedOnly, parsed, sort, t]);
 
@@ -144,7 +151,7 @@ export function ModelsPage() {
 			rows.reduce(
 				(acc, row) => ({
 					requests: acc.requests + row.totals.requests,
-					tokens: acc.tokens + tokenTotal(row),
+					tokens: acc.tokens + totalTokens(row.totals),
 					cacheRead: acc.cacheRead + row.totals.cacheReadTokens,
 					cost: acc.cost + row.totals.costUsd,
 				}),
@@ -201,7 +208,7 @@ export function ModelsPage() {
 			/>
 			<SummaryStrip
 				items={[
-					{ label: t("metric.cost"), value: formatCost(summary.cost, true) },
+					{ label: t("metric.cost"), value: formatCost(summary.cost) },
 					{ label: t("metric.tokens"), value: formatTokens(summary.tokens) },
 					{
 						label: t("metric.requests"),
@@ -234,7 +241,12 @@ export function ModelsPage() {
 					))}
 				</div>
 			)}
-			{!isInitialLoading && rows.length === 0 && (
+			{models.isError && (
+				<div className="mt-3 rounded-lg border border-destructive/30 bg-destructive-surface p-4 text-sm text-destructive">
+					{t("error.usageLoad")} {models.error.message}
+				</div>
+			)}
+			{!isInitialLoading && !models.isError && rows.length === 0 && (
 				<EmptyState
 					className="mt-3"
 					title={t("empty.modelsInRange")}
@@ -300,22 +312,15 @@ export function ModelsPage() {
 						</TableHeader>
 						<TableBody>
 							{rows.map((row) => {
-								const source = row.pricing?.source;
-								const exceptionLabel =
-									source === "unpriced" ||
-									source === "custom" ||
-									source === "custom_alias"
-										? t(`pricing.source.${source}`)
-										: null;
-								const isUnpriced =
-									(row.totals.requests > 0 &&
-										row.totals.unpricedRequests >= row.totals.requests) ||
-									source === "unpriced";
+								const isUnpriced = isRowUnpriced(row);
+								const exceptionLabel = isUnpriced
+									? t("pricing.source.unpriced")
+									: null;
 								return (
 									<TableRow key={row.model} className="group text-[12px]">
 										<TableCell className="px-2 py-2">
 											<Link
-												to={`/sessions?${rangeQuery}&model=${encodeURIComponent(row.model)}`}
+												to={sessionsPath(range, { model: row.model })}
 												className="block max-w-80 truncate font-medium hover:underline"
 											>
 												{localizeLabel(t, row.model)}
@@ -324,14 +329,7 @@ export function ModelsPage() {
 												<span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
 													{row.provider ? <span>{row.provider}</span> : null}
 													{exceptionLabel ? (
-														<span
-															className={cn(
-																"rounded px-1 py-px text-[9.5px] leading-tight",
-																source === "unpriced"
-																	? "bg-warning/10 font-medium text-warning"
-																	: "bg-muted text-muted-foreground",
-															)}
-														>
+														<span className="rounded bg-warning/10 px-1 py-px text-[9.5px] font-medium leading-tight text-warning">
 															{exceptionLabel}
 														</span>
 													) : null}
@@ -347,7 +345,7 @@ export function ModelsPage() {
 											{formatNumber(row.totals.requests)}
 										</TableCell>
 										<TableCell className="py-2 text-right tabular">
-											{formatTokens(tokenTotal(row))}
+											{formatTokens(totalTokens(row.totals))}
 										</TableCell>
 										<TableCell className="py-2 text-right tabular">
 											{formatPercent(row.cacheReadShare)}
@@ -369,19 +367,14 @@ export function ModelsPage() {
 													className="-mx-1.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors hover:bg-hover"
 												>
 													<Pencil className="size-2.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-													<span>
-														{formatCost(
-															row.totals.costUsd,
-															row.totals.estimatedRequests > 0,
-														)}
-													</span>
+													<span>{formatCost(row.totals.costUsd)}</span>
 												</button>
 											)}
 										</TableCell>
 										<TableCell className="py-2 text-right tabular">
 											{row.costPerMillionTokens === null
 												? "—"
-												: formatCost(row.costPerMillionTokens, true)}
+												: formatCost(row.costPerMillionTokens)}
 										</TableCell>
 										<TableCell className="py-2 text-right text-[11px] text-muted-foreground">
 											{formatRelativeTime(row.lastActivityAt)}

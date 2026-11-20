@@ -15,6 +15,8 @@ import {
 	DialogTitle,
 } from "~/components/ui/dialog";
 import { Input } from "~/components/ui/input";
+import { Label } from "~/components/ui/label";
+import { ScrollArea } from "~/components/ui/scroll-area";
 import {
 	Select,
 	SelectContent,
@@ -120,6 +122,13 @@ export function BatchExportDialog({
 		settings.batchExportOrganization,
 		settings.batchExportPathTemplate,
 	]);
+
+	useEffect(() => {
+		return () => {
+			abortRef.current?.abort();
+			abortRef.current = null;
+		};
+	}, []);
 
 	function handleCancel(): void {
 		abortRef.current?.abort();
@@ -242,9 +251,15 @@ export function BatchExportDialog({
 							</p>
 						</div>
 						{result.warnings.length > 0 ? (
-							<div className="max-h-24 overflow-auto rounded-md bg-warning-surface px-2.5 py-2 text-[11px] text-warning">
-								{result.warnings[0]}
-							</div>
+							<ScrollArea
+								className="max-h-24 rounded-md bg-warning-surface"
+								contentClassName="space-y-1 px-2.5 py-2 pr-3.5 text-[11px] text-warning"
+							>
+								{result.warnings.map((warning, index) => (
+									// biome-ignore lint/suspicious/noArrayIndexKey: warnings list is static per export result and may contain duplicates
+									<div key={`${index}:${warning}`}>{warning}</div>
+								))}
+							</ScrollArea>
 						) : null}
 						<div className="flex items-center justify-end gap-2 pt-2">
 							{result.outputPath || result.directory ? (
@@ -269,9 +284,12 @@ export function BatchExportDialog({
 				) : (
 					<div className="min-w-0 space-y-4">
 						<div className="flex items-center justify-between gap-4">
-							<span className="text-[12px] text-muted-foreground">
+							<Label
+								htmlFor="batch-export-detail-level"
+								className="text-[12px] font-normal text-muted-foreground"
+							>
 								{t("sessions.exportDetailLevel")}
-							</span>
+							</Label>
 							<Select
 								value={level}
 								onValueChange={(value) => {
@@ -280,7 +298,11 @@ export function BatchExportDialog({
 									updateSettings({ batchExportDetailLevel: next });
 								}}
 							>
-								<SelectTrigger size="sm" className="w-[180px] text-[12px]">
+								<SelectTrigger
+									id="batch-export-detail-level"
+									size="sm"
+									className="w-[180px] text-[12px]"
+								>
 									<SelectValue />
 								</SelectTrigger>
 								<SelectContent align="end">
@@ -294,9 +316,12 @@ export function BatchExportDialog({
 						</div>
 
 						<div className="flex items-center justify-between gap-4">
-							<span className="text-[12px] text-muted-foreground">
+							<Label
+								htmlFor="batch-export-organization"
+								className="text-[12px] font-normal text-muted-foreground"
+							>
 								{t("sessions.exportOrganization")}
-							</span>
+							</Label>
 							<Select
 								value={organization}
 								onValueChange={(value) => {
@@ -305,7 +330,11 @@ export function BatchExportDialog({
 									updateSettings({ batchExportOrganization: next });
 								}}
 							>
-								<SelectTrigger size="sm" className="w-[180px] text-[12px]">
+								<SelectTrigger
+									id="batch-export-organization"
+									size="sm"
+									className="w-[180px] text-[12px]"
+								>
 									<SelectValue />
 								</SelectTrigger>
 								<SelectContent align="end">
@@ -320,10 +349,14 @@ export function BatchExportDialog({
 
 						{organization === "custom" ? (
 							<div className="space-y-2 rounded-md border bg-surface/40 p-3">
-								<div className="text-[11px] font-medium text-muted-foreground">
+								<Label
+									htmlFor="batch-export-path-template"
+									className="text-[11px] font-medium text-muted-foreground"
+								>
 									{t("sessions.exportPathTemplate")}
-								</div>
+								</Label>
 								<Input
+									id="batch-export-path-template"
 									value={pathTemplate}
 									onChange={(event) => setPathTemplate(event.target.value)}
 									onBlur={() => {
@@ -362,10 +395,14 @@ export function BatchExportDialog({
 						) : null}
 
 						<div className="flex items-center justify-between gap-4">
-							<span className="text-[12px] text-muted-foreground">
+							<Label
+								htmlFor="batch-export-timestamps"
+								className="text-[12px] font-normal text-muted-foreground"
+							>
 								{t("sessions.exportIncludeTimestamps")}
-							</span>
+							</Label>
 							<Switch
+								id="batch-export-timestamps"
 								checked={includeTimestamps}
 								onCheckedChange={(checked) => {
 									setIncludeTimestamps(checked);
@@ -376,10 +413,14 @@ export function BatchExportDialog({
 						</div>
 
 						<div className="flex items-center justify-between gap-4">
-							<span className="text-[12px] text-muted-foreground">
+							<Label
+								htmlFor="batch-export-token-stats"
+								className="text-[12px] font-normal text-muted-foreground"
+							>
 								{t("sessions.exportIncludeTokenStats")}
-							</span>
+							</Label>
 							<Switch
+								id="batch-export-token-stats"
 								checked={includeTokenStats}
 								onCheckedChange={(checked) => {
 									setIncludeTokenStats(checked);
@@ -390,10 +431,14 @@ export function BatchExportDialog({
 						</div>
 
 						<div className="flex items-center justify-between gap-4">
-							<span className="text-[12px] text-muted-foreground">
+							<Label
+								htmlFor="batch-export-zip"
+								className="text-[12px] font-normal text-muted-foreground"
+							>
 								{t("sessions.exportAsZip")}
-							</span>
+							</Label>
 							<Switch
+								id="batch-export-zip"
 								checked={asZip}
 								onCheckedChange={(checked) => {
 									setAsZip(checked);

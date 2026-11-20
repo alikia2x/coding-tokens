@@ -1,66 +1,83 @@
 import type { BreakdownRow, ProjectSummary } from "@shared/types";
 import { Link } from "react-router";
 import { HarnessDot, harnessColor } from "~/components/harness-badge";
-import { formatCost, formatPercent } from "~/lib/format";
+import { ScrollArea } from "~/components/ui/scroll-area";
+import { categoricalColors } from "~/lib/chart-colors";
+import {
+	formatCost,
+	formatPercent,
+	formatTokens,
+	totalTokens,
+} from "~/lib/format";
 import { useResolvedRange } from "~/lib/hooks";
 import { useT } from "~/lib/i18n";
 import { localizeLabel } from "~/lib/labels";
-import { rangeQueryString } from "~/lib/time-range";
+import {
+	rangeQueryString,
+	sessionsPath,
+	UNKNOWN_PROJECT_KEY,
+} from "~/lib/time-range";
 
-const PROJECT_COLORS = [
-	"var(--chart-1)",
-	"var(--chart-2)",
-	"var(--chart-3)",
-	"var(--chart-4)",
-	"var(--chart-5)",
-	"var(--chart-6)",
-];
+function rowMetricValue(row: BreakdownRow, metric: "cost" | "tokens"): number {
+	return metric === "tokens" ? totalTokens(row.totals) : row.totals.costUsd;
+}
+
+const PROJECT_COLORS = categoricalColors.slice(0, 6);
 
 export function HarnessShare({
 	rows,
 	projectRows = [],
 	dimension = "project",
+	metric = "cost",
 	onToggleDimension,
 }: {
 	rows: BreakdownRow[];
 	projectRows?: ProjectSummary[];
 	dimension?: "project" | "harness";
+	metric?: "cost" | "tokens";
 	onToggleDimension?: () => void;
 }) {
 	const range = useResolvedRange();
 	const rangeQuery = rangeQueryString(range);
 	const t = useT();
 	const mappedProjects: BreakdownRow[] = projectRows.map((project) => ({
-		key: project.cwd ?? project.name,
+		key: project.cwd ?? UNKNOWN_PROJECT_KEY,
 		label: project.name,
 		totals: project.totals,
 	}));
-	const allRowsForTotal = dimension === "project" ? mappedProjects : rows;
+	const allRowsForTotal = [
+		...(dimension === "project" ? mappedProjects : rows),
+	].sort(
+		(left, right) =>
+			rowMetricValue(right, metric) - rowMetricValue(left, metric),
+	);
 	const total = allRowsForTotal.reduce(
-		(sum, row) => sum + row.totals.costUsd,
+		(sum, row) => sum + rowMetricValue(row, metric),
 		0,
 	);
-	const nonZeroRows = allRowsForTotal.filter((row) => row.totals.costUsd > 0);
+	const nonZeroRows = allRowsForTotal.filter(
+		(row) => rowMetricValue(row, metric) > 0,
+	);
 	const topRows = nonZeroRows.slice(0, 5);
 	const overflowRows = nonZeroRows.slice(5);
-	const overflowCost = overflowRows.reduce(
-		(sum, row) => sum + row.totals.costUsd,
+	const overflowValue = overflowRows.reduce(
+		(sum, row) => sum + rowMetricValue(row, metric),
 		0,
 	);
 	const displayRows: BreakdownRow[] =
-		overflowCost > 0
+		overflowValue > 0
 			? [
 					...topRows,
 					{
 						key: "__other__",
 						label: t("common.other"),
 						totals: {
-							inputTokens: 0,
+							inputTokens: metric === "tokens" ? overflowValue : 0,
 							outputTokens: 0,
 							cacheReadTokens: 0,
 							cacheWriteTokens: 0,
 							reasoningTokens: 0,
-							costUsd: overflowCost,
+							costUsd: metric === "cost" ? overflowValue : 0,
 							requests: 0,
 							sessions: 0,
 							messages: 0,
@@ -73,8 +90,14 @@ export function HarnessShare({
 	const visible = displayRows;
 	const title =
 		dimension === "project"
-			? t("projects.costByProject")
-			: t("harnesses.costByHarness");
+			? metric === "tokens"
+				? t("projects.tokensByProject")
+				: t("projects.costByProject")
+			: metric === "tokens"
+				? t("harnesses.tokensByHarness")
+				: t("harnesses.costByHarness");
+	const formatValue = (value: number) =>
+		metric === "tokens" ? formatTokens(value) : formatCost(value);
 
 	return (
 		<div>
@@ -91,7 +114,7 @@ export function HarnessShare({
 					<h2 className="text-[13px] font-semibold">{title}</h2>
 				)}
 				<span className="text-[11px] text-muted-foreground tabular">
-					{formatCost(total, true)}
+					{formatValue(total)}
 				</span>
 			</div>
 			<div className="mt-3 flex h-2 overflow-hidden rounded-[2px] bg-muted">
@@ -99,7 +122,7 @@ export function HarnessShare({
 					<div
 						key={row.key}
 						style={{
-							width: `${total > 0 ? (row.totals.costUsd / total) * 100 : 0}%`,
+							width: `${total > 0 ? (rowMetricValue(row, metric) / total) * 100 : 0}%`,
 							background:
 								row.key === "__other__"
 									? "var(--muted-foreground)"
@@ -111,9 +134,14 @@ export function HarnessShare({
 					/>
 				))}
 			</div>
-			<div className="mt-3 max-h-[260px] divide-y overflow-y-auto">
+			<ScrollArea
+				className="mt-3 max-h-[260px]"
+				overflow="y"
+				contentClassName="divide-y pr-3"
+			>
 				{displayRows.map((row, index) => {
-					const share = total > 0 ? row.totals.costUsd / total : 0;
+					const value = rowMetricValue(row, metric);
+					const share = total > 0 ? value / total : 0;
 					const isOther = row.key === "__other__";
 					const harness = row.key as keyof typeof harnessColor;
 					const target = isOther
@@ -121,8 +149,8 @@ export function HarnessShare({
 							? `/harnesses?${rangeQuery}`
 							: `/projects?${rangeQuery}`
 						: dimension === "harness"
-							? `/sessions?${rangeQuery}&harness=${row.key}`
-							: `/sessions?${rangeQuery}&project=${encodeURIComponent(row.key)}`;
+							? sessionsPath(range, { harness: row.key })
+							: sessionsPath(range, { project: row.key });
 					return (
 						<Link
 							key={row.key}
@@ -148,7 +176,7 @@ export function HarnessShare({
 								{formatPercent(share)}
 							</span>
 							<span className="w-20 text-right tabular">
-								{formatCost(row.totals.costUsd, true)}
+								{formatValue(value)}
 							</span>
 						</Link>
 					);
@@ -160,7 +188,7 @@ export function HarnessShare({
 							: t("empty.harnesses")}
 					</p>
 				) : null}
-			</div>
+			</ScrollArea>
 		</div>
 	);
 }

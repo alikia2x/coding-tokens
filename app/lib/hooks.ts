@@ -54,28 +54,31 @@ export function useProgressiveLimit(
 	initial: number,
 	step = initial,
 	forceAll = false,
+	resetKey?: string | number,
 ): {
 	limit: number;
 	hasMore: boolean;
 	sentinelRef: RefObject<HTMLDivElement | null>;
 } {
-	const [windowState, setWindowState] = useState({ total, limit: initial });
+	const [limit, setLimit] = useState(initial);
+	const prevResetKeyRef = useRef(resetKey);
 	const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+	useEffect(() => {
+		if (prevResetKeyRef.current === resetKey) return;
+		prevResetKeyRef.current = resetKey;
+		setLimit(initial);
+	}, [resetKey, initial]);
 
 	const loadMore = useCallback(() => {
 		startTransition(() => {
-			setWindowState((current) => {
-				const base = current.total === total ? current.limit : initial;
-				return {
-					total,
-					limit: Math.min(total, base + step),
-				};
-			});
+			setLimit((current) => Math.min(total, Math.max(initial, current) + step));
 		});
 	}, [total, initial, step]);
 
-	const activeLimit = windowState.total === total ? windowState.limit : initial;
-	const effectiveLimit = forceAll ? total : Math.min(activeLimit, total);
+	const effectiveLimit = forceAll
+		? total
+		: Math.min(Math.max(initial, limit), total);
 	const hasMore = !forceAll && effectiveLimit < total;
 
 	useEffect(() => {

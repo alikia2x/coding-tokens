@@ -26,7 +26,12 @@ import { useDebouncedValue, useResolvedRange } from "~/lib/hooks";
 import { type TranslationKey, useT } from "~/lib/i18n";
 import { localizeLabel } from "~/lib/labels";
 import { useSearch } from "~/lib/queries";
-import { rangeQueryString } from "~/lib/time-range";
+import {
+	sessionsPath as buildSessionsPath,
+	rangeQueryString,
+	UNKNOWN_PROJECT_KEY,
+} from "~/lib/time-range";
+import { isMacOS } from "~/lib/use-app-shortcuts";
 
 const pages: Array<{ path: string; label: TranslationKey }> = [
 	{ path: "/", label: "nav.overview" },
@@ -58,20 +63,16 @@ export function CommandSearch() {
 	function close(): void {
 		setOpen(false);
 		setQuery("");
+		setComposing(false);
 	}
 
 	function go(path: string): void {
-		navigate(`${path}?${rangeQuery}`);
+		navigate(path.includes("?") ? path : `${path}?${rangeQuery}`);
 		close();
 	}
 
-	function sessionsPath(filters: Record<string, string>): string {
-		const params = new URLSearchParams(rangeQuery);
-		for (const [key, value] of Object.entries(filters)) params.set(key, value);
-		return `/sessions${params.size ? `?${params.toString()}` : ""}`;
-	}
-
 	const data = search.data;
+	const shortcutLabel = isMacOS() ? "Cmd K" : "Ctrl K";
 	return (
 		<>
 			<button
@@ -98,10 +99,16 @@ export function CommandSearch() {
 				</svg>
 				<span className="hidden lg:inline">{t("common.search")}</span>
 				<kbd className="hidden rounded border bg-surface px-1 font-mono text-[10px] leading-4 lg:inline">
-					Cmd K
+					{shortcutLabel}
 				</kbd>
 			</button>
-			<Dialog open={open} onOpenChange={setOpen}>
+			<Dialog
+				open={open}
+				onOpenChange={(nextOpen) => {
+					if (!nextOpen) close();
+					else setOpen(true);
+				}}
+			>
 				<DialogContent
 					showCloseButton={false}
 					className="top-[18%] max-w-[620px] translate-y-0 gap-0 overflow-hidden p-0"
@@ -191,15 +198,18 @@ export function CommandSearch() {
 											value={`project-${project.cwd ?? project.name}`}
 											onSelect={() =>
 												go(
-													sessionsPath(
-														project.cwd ? { project: project.cwd } : {},
-													),
+													buildSessionsPath(range, {
+														project: project.cwd ?? UNKNOWN_PROJECT_KEY,
+													}),
 												)
 											}
 										>
 											<div className="min-w-0 flex-1">
 												<div className="truncate text-[13px]">
-													<Highlight text={project.name} terms={parsed.terms} />
+													<Highlight
+														text={localizeLabel(t, project.name)}
+														terms={parsed.terms}
+													/>
 												</div>
 												<div className="truncate text-[11px] text-muted-foreground">
 													{project.cwd}
@@ -218,7 +228,9 @@ export function CommandSearch() {
 										<CommandItem
 											key={model.model}
 											value={`model-${model.model}`}
-											onSelect={() => go(sessionsPath({ model: model.model }))}
+											onSelect={() =>
+												go(buildSessionsPath(range, { model: model.model }))
+											}
 										>
 											<div className="min-w-0 flex-1 truncate text-[13px]">
 												<Highlight text={model.model} terms={parsed.terms} />
@@ -238,7 +250,7 @@ export function CommandSearch() {
 											value={`harness-${harness.harness}`}
 											onSelect={() =>
 												go(
-													sessionsPath({
+													buildSessionsPath(range, {
 														harness: harness.harness as HarnessName,
 													}),
 												)

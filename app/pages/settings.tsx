@@ -233,17 +233,24 @@ export function SettingsPage() {
 						</span>
 					</Row>
 					<Row label={t("status.refresh")}>
-						<Button
-							variant="outline"
-							size="sm"
-							disabled={status.data?.indexing || refresh.isPending}
-							onClick={() => refresh.mutate()}
-						>
-							<RotateCw
-								className={status.data?.indexing ? "animate-spin" : ""}
-							/>
-							{t("status.refresh")}
-						</Button>
+						<div className="flex items-center gap-3">
+							{refresh.isError ? (
+								<span className="text-[11px] text-destructive">
+									{refresh.error.message}
+								</span>
+							) : null}
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={status.data?.indexing || refresh.isPending}
+								onClick={() => refresh.mutate()}
+							>
+								<RotateCw
+									className={status.data?.indexing ? "animate-spin" : ""}
+								/>
+								{t("status.refresh")}
+							</Button>
+						</div>
 					</Row>
 					<Row label={t("pricing.title")}>
 						<div className="flex items-center gap-3">

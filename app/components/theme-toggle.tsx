@@ -10,6 +10,7 @@ import {
 	DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
 import { type TranslationKey, useT } from "~/lib/i18n";
+import { useSettings } from "~/lib/settings";
 import { type ThemeMode, useTheme } from "~/lib/theme";
 
 const modes: Array<{
@@ -24,6 +25,7 @@ const modes: Array<{
 
 export function ThemeToggle() {
 	const { mode, resolved, setMode } = useTheme();
+	const { update } = useSettings();
 	const t = useT();
 	const Icon = resolved === "dark" ? Moon : Sun;
 	return (
@@ -38,7 +40,12 @@ export function ThemeToggle() {
 				<DropdownMenuSeparator />
 				<DropdownMenuRadioGroup
 					value={mode}
-					onValueChange={(value) => setMode(value as ThemeMode)}
+					onValueChange={(value) => {
+						if (value === "light" || value === "dark" || value === "system") {
+							setMode(value);
+							update({ theme: value });
+						}
+					}}
 				>
 					{modes.map((item) => (
 						<DropdownMenuRadioItem key={item.value} value={item.value}>

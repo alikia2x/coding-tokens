@@ -20,6 +20,53 @@ const tabs: Array<{ to: string; label: TranslationKey; end?: boolean }> = [
 	{ to: "/harnesses", label: "common.harnesses" },
 ];
 
+function NavTabs({
+	rangeQuery,
+	pricingError,
+	mobile = false,
+}: {
+	rangeQuery: string;
+	pricingError?: string | null;
+	mobile?: boolean;
+}) {
+	const t = useT();
+	return (
+		<nav
+			className={
+				mobile
+					? "no-scrollbar flex items-center gap-1 overflow-x-auto border-t px-4 md:hidden"
+					: "no-drag hidden items-center gap-0.5 md:flex"
+			}
+			aria-label={t("nav.primary")}
+		>
+			{tabs.map((tab) => (
+				<NavLink
+					key={tab.to}
+					to={`${tab.to}?${rangeQuery}`}
+					end={tab.end}
+					className={({ isActive }) =>
+						cn(
+							"relative flex items-center gap-1.5 font-medium text-muted-foreground transition-colors after:absolute after:-bottom-px after:h-0.5 after:origin-left after:scale-x-0 after:bg-foreground after:transition-transform after:duration-150",
+							mobile
+								? "h-10 shrink-0 px-2 text-[12px] after:inset-x-2"
+								: "h-16 px-3 text-[13px] leading-5 after:inset-x-3 hover:text-foreground",
+							isActive && "text-foreground after:scale-x-100",
+						)
+					}
+				>
+					<span>{t(tab.label)}</span>
+					{tab.to === "/models" && pricingError ? (
+						<span
+							className="size-1.5 rounded-full bg-warning"
+							title={pricingError}
+						/>
+					) : null}
+				</NavLink>
+			))}
+		</nav>
+	);
+}
+
 export function AppHeader({ status }: { status: StatusPayload }) {
 	const location = useLocation();
 	const t = useT();
@@ -27,8 +74,9 @@ export function AppHeader({ status }: { status: StatusPayload }) {
 	const rangeQuery = rangeQueryString(range);
 	const isDetail = /^\/sessions\/[^/]+\/[^/]+/u.test(location.pathname);
 	const hasTrafficLights = status.desktopPlatform === "darwin";
+	const pricingError = status.pricing?.lastError;
 	return (
-		<header className="drag-region sticky top-0 z-40 border-b bg-background">
+		<header className="drag-region relative z-40 shrink-0 border-b bg-background">
 			<div
 				className={cn(
 					"mx-auto flex h-16 max-w-[1480px] items-center gap-5 pr-5 sm:pr-8",
@@ -43,73 +91,30 @@ export function AppHeader({ status }: { status: StatusPayload }) {
 						Coding Tokens
 					</span>
 				</Link>
-				<nav
-					className="no-drag hidden items-center gap-0.5 md:flex"
-					aria-label={t("nav.primary")}
-				>
-					{tabs.map((tab) => (
-						<NavLink
-							key={tab.to}
-							to={`${tab.to}?${rangeQuery}`}
-							end={tab.end}
-							className={({ isActive }) =>
-								cn(
-									"relative flex h-16 items-center gap-1.5 px-3 text-[13px] font-medium leading-5 text-muted-foreground transition-colors after:absolute after:inset-x-3 after:-bottom-px after:h-0.5 after:origin-left after:scale-x-0 after:bg-foreground after:transition-transform after:duration-150 hover:text-foreground",
-									isActive && "text-foreground after:scale-x-100",
-								)
-							}
-						>
-							<span>{t(tab.label)}</span>
-							{tab.to === "/models" && status.pricing?.lastError ? (
-								<span
-									className="size-1.5 rounded-full bg-warning"
-									title={status.pricing.lastError}
-								/>
-							) : null}
-						</NavLink>
-					))}
-				</nav>
+				<NavTabs rangeQuery={rangeQuery} pricingError={pricingError} />
 				<div className="no-drag ml-auto flex items-center gap-1.5">
 					<CommandSearch />
 					{isDetail ? null : <TimeRangePicker />}
 					<RefreshButton status={status} />
 					<LanguageToggle />
-					<Link
-						to="/settings"
-						aria-label={t("nav.settings")}
-						className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
-					>
-						<Settings className="size-4" />
-					</Link>
-					<ThemeToggle />
-				</div>
-			</div>
-			<nav
-				className="no-scrollbar flex items-center gap-1 overflow-x-auto border-t px-4 md:hidden"
-				aria-label={t("nav.primary")}
-			>
-				{tabs.map((tab) => (
 					<NavLink
-						key={tab.to}
-						to={`${tab.to}?${rangeQuery}`}
-						end={tab.end}
+						to={`/settings?${rangeQuery}`}
+						aria-label={t("nav.settings")}
 						className={({ isActive }) =>
 							cn(
-								"relative flex h-10 shrink-0 items-center gap-1.5 px-2 text-[12px] font-medium text-muted-foreground transition-colors after:absolute after:inset-x-2 after:-bottom-px after:h-0.5 after:origin-left after:scale-x-0 after:bg-foreground after:transition-transform after:duration-150",
-								isActive && "text-foreground after:scale-x-100",
+								"inline-flex size-8 items-center justify-center rounded-md transition-colors",
+								isActive
+									? "bg-muted text-foreground"
+									: "text-muted-foreground hover:bg-hover hover:text-foreground",
 							)
 						}
 					>
-						<span>{t(tab.label)}</span>
-						{tab.to === "/models" && status.pricing?.lastError ? (
-							<span
-								className="size-1.5 rounded-full bg-warning"
-								title={status.pricing.lastError}
-							/>
-						) : null}
+						<Settings className="size-4" />
 					</NavLink>
-				))}
-			</nav>
+					<ThemeToggle />
+				</div>
+			</div>
+			<NavTabs rangeQuery={rangeQuery} pricingError={pricingError} mobile />
 		</header>
 	);
 }

@@ -6,7 +6,7 @@ import {
 	PopoverTrigger,
 } from "~/components/ui/popover";
 import { tokenColors } from "~/lib/chart-colors";
-import { formatPercent, formatTokens } from "~/lib/format";
+import { formatPercent, formatTokens, totalTokens } from "~/lib/format";
 import { useT } from "~/lib/i18n";
 
 type TokenTotals = Pick<
@@ -31,11 +31,7 @@ const parts = [
 
 export function TokenTotal({ totals }: { totals: TokenTotals }) {
 	const t = useT();
-	const total =
-		totals.inputTokens +
-		totals.outputTokens +
-		totals.cacheReadTokens +
-		totals.cacheWriteTokens;
+	const total = totalTokens(totals);
 	return (
 		<Popover>
 			<PopoverTrigger asChild>

@@ -54,14 +54,16 @@ export function ContributionHeatmap({
 		return result;
 	}, [weeks, code]);
 	const weekdayLabels = useMemo(() => {
-		const firstWeek = weeks[0] ?? [];
-		return Array.from({ length: 7 }, (_, index) => ({
-			index,
-			label:
-				index % 2 === 1
-					? formatWeekdayShortFor(firstWeek[index]?.start ?? Date.now(), code)
-					: "",
-		}));
+		return Array.from({ length: 7 }, (_, index) => {
+			if (index % 2 !== 1) return { index, label: "" };
+			const sampleStart =
+				weeks.find((week) => week[index])?.[index]?.start ??
+				new Date(2024, 0, 7 + index).getTime();
+			return {
+				index,
+				label: formatWeekdayShortFor(sampleStart, code),
+			};
+		});
 	}, [weeks, code]);
 	const labelByIndex = new Map(
 		labels.map((label) => [label.index, label.label]),
@@ -137,7 +139,7 @@ export function ContributionHeatmap({
 									formatted: formatNumber(totals.requests),
 								})}
 							</span>
-							<span>{formatCost(totals.costUsd, true)}</span>
+							<span>{formatCost(totals.costUsd)}</span>
 							<span>
 								{t("metric.peak")} {formatNumber(maxTokens)}
 							</span>
@@ -180,10 +182,14 @@ export function ContributionHeatmap({
 							return (
 								<div
 									key={day.date}
-									className="aspect-square w-full rounded-[2px] outline-0 outline-offset-1 transition-[outline,transform] duration-100 hover:z-10 hover:scale-110 hover:outline hover:outline-1 hover:outline-foreground"
+									// biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard-focusable heatmap day cell
+									tabIndex={0}
+									className="aspect-square w-full rounded-[2px] outline-0 outline-offset-1 transition-[outline,transform] duration-100 hover:z-10 hover:scale-110 hover:outline hover:outline-1 hover:outline-foreground focus-visible:z-10 focus-visible:scale-110 focus-visible:outline focus-visible:outline-1 focus-visible:outline-foreground"
 									style={{ background: color(day) }}
 									onMouseEnter={() => setHovered(day)}
 									onMouseLeave={() => setHovered(null)}
+									onFocus={() => setHovered(day)}
+									onBlur={() => setHovered(null)}
 									role="img"
 									aria-label={`${formatDateFor(day.start, code)}: ${t("count.tokens", { count: day.tokens, formatted: formatNumber(day.tokens) })}`}
 								/>

@@ -4,7 +4,11 @@ import { Link, useSearchParams } from "react-router";
 import { HarnessShare } from "~/components/charts/harness-share";
 import { ContributionHeatmap } from "~/components/charts/heatmap";
 import { TopModels } from "~/components/charts/top-models";
-import { UsageChart, type UsageMetric } from "~/components/charts/usage-chart";
+import {
+	type UsageBucketUnit,
+	UsageChart,
+	type UsageMetric,
+} from "~/components/charts/usage-chart";
 import { HarnessDot } from "~/components/harness-badge";
 import { KpiCard } from "~/components/kpi-card";
 import { PageContainer } from "~/components/page-container";
@@ -25,6 +29,7 @@ import {
 	formatPercent,
 	formatRelativeTime,
 	formatTokens,
+	totalTokens,
 } from "~/lib/format";
 import { useResolvedRange } from "~/lib/hooks";
 import { useT } from "~/lib/i18n";
@@ -32,31 +37,45 @@ import { localizeLabel } from "~/lib/labels";
 import { useHeatmap, useOverview } from "~/lib/queries";
 import { useRangeLabel } from "~/lib/range";
 import { useSettings } from "~/lib/settings";
-import { rangeQueryString } from "~/lib/time-range";
+import {
+	rangeQueryString,
+	sessionsPath,
+	UNKNOWN_PROJECT_KEY,
+} from "~/lib/time-range";
 
-function totalTokens(totals: {
-	inputTokens: number;
-	outputTokens: number;
-	cacheReadTokens: number;
-	cacheWriteTokens: number;
-}): number {
-	return (
-		totals.inputTokens +
-		totals.outputTokens +
-		totals.cacheReadTokens +
-		totals.cacheWriteTokens
-	);
+function perSessionRatio(
+	numerator: number,
+	sessions: number,
+): { count: number; formatted: string } {
+	if (!sessions || numerator <= 0) {
+		return { count: 0, formatted: formatNumber(0) };
+	}
+	const ratio = numerator / sessions;
+	if (ratio < 1) {
+		const rounded = Number(ratio.toFixed(1)) || 0.1;
+		return { count: rounded, formatted: formatNumber(rounded) };
+	}
+	const rounded = Math.round(ratio);
+	return { count: rounded, formatted: formatNumber(rounded) };
 }
 
 export function OverviewPage() {
 	const range = useResolvedRange();
-	const overview = useOverview(range);
-	const heatmap = useHeatmap();
 	const { settings, update: updateSettings } = useSettings();
 	const [searchParams, setSearchParams] = useSearchParams();
-	const [metric, setMetric] = useState<UsageMetric>(
-		searchParams.get("metric") === "tokens" ? "tokens" : "cost",
-	);
+	const rangeSignature = `${range.key}:${range.from ?? ""}:${range.until ?? ""}`;
+	const [bucketSelection, setBucketSelection] = useState<{
+		signature: string;
+		unit: UsageBucketUnit;
+	} | null>(null);
+	const bucketOverride =
+		bucketSelection?.signature === rangeSignature
+			? bucketSelection.unit
+			: undefined;
+	const overview = useOverview(range, bucketOverride);
+	const heatmap = useHeatmap();
+	const metric: UsageMetric =
+		searchParams.get("metric") === "tokens" ? "tokens" : "cost";
 	const t = useT();
 	const rangeLabel = useRangeLabel();
 	const rangeQuery = rangeQueryString(range);
@@ -74,18 +93,19 @@ export function OverviewPage() {
 	const data = overview.data;
 	if (!data) return null;
 	const tokens = totalTokens(data.totals);
-	const estimated = data.totals.estimatedRequests > 0;
 	const cacheShare = tokens > 0 ? data.totals.cacheReadTokens / tokens : 0;
 	const previousRequests = data.previous?.requests ?? 0;
 	const activeHarnessCount = data.harnesses.filter(
 		(row) => row.totals.requests > 0,
 	).length;
-	const requestsPerSession = data.totals.sessions
-		? Math.round(data.totals.requests / data.totals.sessions)
-		: 0;
-	const messagesPerSession = data.totals.sessions
-		? Math.round(data.totals.messages / data.totals.sessions)
-		: 0;
+	const requestsPerSession = perSessionRatio(
+		data.totals.requests,
+		data.totals.sessions,
+	);
+	const messagesPerSession = perSessionRatio(
+		data.totals.messages,
+		data.totals.sessions,
+	);
 
 	return (
 		<PageContainer>
@@ -119,7 +139,7 @@ export function OverviewPage() {
 				<KpiCard
 					className="rounded-none border-0 bg-card"
 					label={t("metric.cost")}
-					value={formatCost(data.totals.costUsd, estimated)}
+					value={formatCost(data.totals.costUsd)}
 					detail={t("count.harnesses", {
 						count: activeHarnessCount,
 						formatted: formatNumber(activeHarnessCount),
@@ -158,7 +178,6 @@ export function OverviewPage() {
 							data.totals.requests
 								? data.totals.costUsd / data.totals.requests
 								: 0,
-							estimated,
 						),
 					})}
 					previous={
@@ -174,10 +193,7 @@ export function OverviewPage() {
 					className="rounded-none border-0 bg-card"
 					label={t("common.sessions")}
 					value={formatNumber(data.totals.sessions)}
-					detail={t("count.requestsPerSession", {
-						count: requestsPerSession,
-						formatted: formatNumber(requestsPerSession),
-					})}
+					detail={t("count.requestsPerSession", requestsPerSession)}
 					previous={
 						previousRequests
 							? {
@@ -191,10 +207,7 @@ export function OverviewPage() {
 					className="rounded-none border-0 bg-card"
 					label={t("metric.messages")}
 					value={formatNumber(data.totals.messages)}
-					detail={t("count.messagesPerSession", {
-						count: messagesPerSession,
-						formatted: formatNumber(messagesPerSession),
-					})}
+					detail={t("count.messagesPerSession", messagesPerSession)}
 					previous={
 						previousRequests
 							? {
@@ -212,12 +225,14 @@ export function OverviewPage() {
 						buckets={data.buckets}
 						metric={metric}
 						onMetricChange={(next) => {
-							setMetric(next);
 							const params = new URLSearchParams(searchParams);
 							params.set("metric", next);
 							setSearchParams(params, { replace: true });
 						}}
 						unit={data.bucketUnit}
+						onUnitChange={(next) => {
+							setBucketSelection({ signature: rangeSignature, unit: next });
+						}}
 					/>
 				</div>
 				<div className="divide-y rounded-lg border bg-card">
@@ -226,6 +241,7 @@ export function OverviewPage() {
 							rows={data.harnesses}
 							projectRows={data.projects}
 							dimension={settings.overviewShareDimension}
+							metric={metric}
 							onToggleDimension={() =>
 								updateSettings({
 									overviewShareDimension:
@@ -237,24 +253,17 @@ export function OverviewPage() {
 						/>
 					</div>
 					<div className="p-4">
-						<TopModels
-							rows={data.models}
-							metric={settings.overviewModelsMetric}
-							onToggleMetric={() =>
-								updateSettings({
-									overviewModelsMetric:
-										settings.overviewModelsMetric === "cost"
-											? "tokens"
-											: "cost",
-								})
-							}
-						/>
+						<TopModels rows={data.models} metric={metric} />
 					</div>
 				</div>
 			</div>
 
 			<div className="mt-3">
-				{heatmap.data ? (
+				{heatmap.isError ? (
+					<div className="rounded-lg border border-destructive/30 bg-destructive-surface p-4 text-sm text-destructive">
+						{t("error.usageLoad")} {heatmap.error.message}
+					</div>
+				) : heatmap.data ? (
 					<ContributionHeatmap
 						days={heatmap.data.days}
 						maxTokens={heatmap.data.maxTokens}
@@ -304,7 +313,9 @@ export function OverviewPage() {
 								<TableRow key={project.cwd ?? project.name}>
 									<TableCell className="px-2 py-2">
 										<Link
-											to={`/sessions?${rangeQuery}${project.cwd ? `&project=${encodeURIComponent(project.cwd)}` : ""}`}
+											to={sessionsPath(range, {
+												project: project.cwd ?? UNKNOWN_PROJECT_KEY,
+											})}
 											className="block max-w-64 truncate font-medium hover:underline"
 										>
 											{localizeLabel(t, project.name)}
@@ -317,10 +328,7 @@ export function OverviewPage() {
 										{formatTokens(totalTokens(project.totals))}
 									</TableCell>
 									<TableCell className="py-2 text-right tabular">
-										{formatCost(
-											project.totals.costUsd,
-											project.totals.estimatedRequests > 0,
-										)}
+										{formatCost(project.totals.costUsd)}
 									</TableCell>
 									<TableCell className="py-2 pr-2 text-right text-[11px] text-muted-foreground">
 										{formatRelativeTime(project.lastActivityAt)}
@@ -341,7 +349,7 @@ export function OverviewPage() {
 						title={t("overview.recentSessions")}
 						actions={
 							<Link
-								to={`/sessions?${rangeQuery}`}
+								to={sessionsPath(range)}
 								className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
 							>
 								{t("common.allSessions")}
@@ -367,10 +375,7 @@ export function OverviewPage() {
 								</div>
 								<div className="text-right">
 									<div className="tabular">
-										{formatCost(
-											session.totals.costUsd,
-											session.totals.estimatedRequests > 0,
-										)}
+										{formatCost(session.totals.costUsd)}
 									</div>
 									<div className="text-[10px] text-muted-foreground">
 										{formatRelativeTime(session.lastActivityAt)}
@@ -395,7 +400,7 @@ function OverviewSkeleton() {
 		<PageContainer>
 			<Skeleton className="h-6 w-32" />
 			<div className="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border lg:grid-cols-5">
-				{Array.from({ length: 4 }, (_, index) => (
+				{Array.from({ length: 5 }, (_, index) => (
 					// biome-ignore lint/suspicious/noArrayIndexKey: static placeholder list
 					<Skeleton key={index} className="h-[104px] rounded-lg" />
 				))}

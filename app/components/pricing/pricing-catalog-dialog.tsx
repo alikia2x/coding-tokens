@@ -19,6 +19,8 @@ import {
 	DialogTitle,
 } from "~/components/ui/dialog";
 import { Input } from "~/components/ui/input";
+import { Label } from "~/components/ui/label";
+import { ScrollArea } from "~/components/ui/scroll-area";
 import {
 	Select,
 	SelectContent,
@@ -28,7 +30,7 @@ import {
 } from "~/components/ui/select";
 import { Switch } from "~/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
-import { api } from "~/lib/api";
+import { api, triggerBlobDownload } from "~/lib/api";
 import { formatDateTime, formatNumber, formatRelativeTime } from "~/lib/format";
 import { useT } from "~/lib/i18n";
 import {
@@ -68,6 +70,7 @@ export function PricingCatalogDialog({
 	const [endpoint, setEndpoint] = useState(DEFAULT_CATALOG_URL);
 	const [cacheTtlHours, setCacheTtlHours] = useState("24");
 	const [sourceError, setSourceError] = useState<string | null>(null);
+	const [refreshError, setRefreshError] = useState<string | null>(null);
 	const [rulesNotice, setRulesNotice] = useState<string | null>(null);
 	const [rulesError, setRulesError] = useState<string | null>(null);
 
@@ -77,35 +80,62 @@ export function PricingCatalogDialog({
 		null,
 	);
 	const fileInputRef = useRef<HTMLInputElement | null>(null);
+	const wasOpenRef = useRef(false);
+	const initializedSettingsRef = useRef(false);
 
 	const status = pricing.data?.status;
 	const settings = pricing.data?.settings;
 
 	useEffect(() => {
-		if (!open) return;
-		setTab(initialTab);
-		setSourceError(null);
-		setRulesNotice(null);
-		setRulesError(null);
-	}, [open, initialTab]);
-
-	useEffect(() => {
-		if (!settings) return;
-		setAutoFetch(settings.autoFetch);
-		setEndpoint(settings.endpoint);
-		setCacheTtlHours(String(settings.cacheTtlHours));
-	}, [settings]);
+		if (!open) {
+			wasOpenRef.current = false;
+			initializedSettingsRef.current = false;
+			return;
+		}
+		if (!wasOpenRef.current) {
+			wasOpenRef.current = true;
+			setTab(initialTab);
+			setSourceError(null);
+			setRefreshError(null);
+			setRulesNotice(null);
+			setRulesError(null);
+		}
+		if (settings && !initializedSettingsRef.current) {
+			initializedSettingsRef.current = true;
+			setAutoFetch(settings.autoFetch);
+			setEndpoint(settings.endpoint);
+			setCacheTtlHours(String(settings.cacheTtlHours));
+		}
+	}, [open, initialTab, settings]);
 
 	const customRuleList = useMemo(() => {
 		const map = settings?.customRules ?? {};
 		return Object.values(map).sort((a, b) => b.updatedAt - a.updatedAt);
 	}, [settings]);
 
+	async function handleRefreshCatalog(): Promise<void> {
+		setRefreshError(null);
+		try {
+			await refreshPricing.mutateAsync();
+		} catch (err) {
+			setRefreshError(err instanceof Error ? err.message : String(err));
+		}
+	}
+
+	async function handleDeleteRule(model: string): Promise<void> {
+		setRulesError(null);
+		try {
+			await deleteRule.mutateAsync(model);
+		} catch (err) {
+			setRulesError(err instanceof Error ? err.message : String(err));
+		}
+	}
+
 	async function handleSaveSource(andRefresh: boolean): Promise<void> {
 		setSourceError(null);
 		const trimmed = endpoint.trim();
 		if (!/^https?:\/\//iu.test(trimmed)) {
-			setSourceError("URL must start with http:// or https://");
+			setSourceError(t("pricing.error.invalidEndpoint"));
 			return;
 		}
 		try {
@@ -127,12 +157,7 @@ export function PricingCatalogDialog({
 		const blob = new Blob([JSON.stringify(settings.customRules, null, 2)], {
 			type: "application/json",
 		});
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement("a");
-		anchor.href = url;
-		anchor.download = "coding-tokens-model-prices.json";
-		anchor.click();
-		URL.revokeObjectURL(url);
+		triggerBlobDownload(blob, "coding-tokens-model-prices.json");
 	}
 
 	async function handleImportFile(
@@ -147,7 +172,7 @@ export function PricingCatalogDialog({
 			const text = await file.text();
 			const parsed = JSON.parse(text) as unknown;
 			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-				throw new Error("Expected a JSON object mapping model names to rules");
+				throw new Error(t("pricing.error.invalidRulesJson"));
 			}
 			const record = parsed as Record<string, CustomModelPriceRule>;
 			await importRules.mutateAsync({ rules: record, replace: false });
@@ -246,7 +271,7 @@ export function PricingCatalogDialog({
 							variant="outline"
 							size="sm"
 							disabled={refreshPricing.isPending || status?.fetching}
-							onClick={() => void refreshPricing.mutateAsync()}
+							onClick={() => void handleRefreshCatalog()}
 						>
 							<RotateCw
 								className={
@@ -260,6 +285,9 @@ export function PricingCatalogDialog({
 								: t("pricing.refreshNow")}
 						</Button>
 					</div>
+					{refreshError ? (
+						<p className="text-[11px] text-destructive">{refreshError}</p>
+					) : null}
 
 					<Tabs
 						value={tab}
@@ -328,7 +356,11 @@ export function PricingCatalogDialog({
 								<p className="text-[11px] text-destructive">{rulesError}</p>
 							) : null}
 
-							<div className="max-h-72 divide-y overflow-y-auto rounded-md border">
+							<ScrollArea
+								className="max-h-72 rounded-md border"
+								overflow="y"
+								contentClassName="divide-y"
+							>
 								{customRuleList.length === 0 ? (
 									<p className="px-3 py-8 text-center text-[12px] text-muted-foreground">
 										{t("pricing.rules.empty")}
@@ -337,7 +369,7 @@ export function PricingCatalogDialog({
 									customRuleList.map((rule) => (
 										<div
 											key={rule.model}
-											className="flex items-center justify-between gap-3 px-3 py-2.5 text-[12px]"
+											className="flex items-center justify-between gap-3 py-2.5 pl-3 pr-4 text-[12px]"
 										>
 											<div className="min-w-0">
 												<div className="flex items-center gap-2">
@@ -368,6 +400,7 @@ export function PricingCatalogDialog({
 													type="button"
 													variant="ghost"
 													size="icon-xs"
+													aria-label={`${t("common.edit")} ${rule.model}`}
 													onClick={() => openEditRule(rule)}
 												>
 													<Pencil className="size-3.5" />
@@ -376,10 +409,9 @@ export function PricingCatalogDialog({
 													type="button"
 													variant="ghost"
 													size="icon-xs"
+													aria-label={`${t("common.delete")} ${rule.model}`}
 													disabled={deleteRule.isPending}
-													onClick={() =>
-														void deleteRule.mutateAsync(rule.model)
-													}
+													onClick={() => void handleDeleteRule(rule.model)}
 												>
 													<Trash2 className="size-3.5 text-muted-foreground" />
 												</Button>
@@ -387,22 +419,32 @@ export function PricingCatalogDialog({
 										</div>
 									))
 								)}
-							</div>
+							</ScrollArea>
 						</TabsContent>
 
 						<TabsContent value="source" className="mt-3 space-y-3">
 							<div className="divide-y rounded-md border">
 								<div className="flex items-center justify-between gap-4 px-3 py-2.5">
-									<span className="text-[12px] text-muted-foreground">
+									<Label
+										htmlFor="pricing-auto-fetch"
+										className="text-[12px] font-normal text-muted-foreground"
+									>
 										{t("pricing.source.autoFetch")}
-									</span>
-									<Switch checked={autoFetch} onCheckedChange={setAutoFetch} />
+									</Label>
+									<Switch
+										id="pricing-auto-fetch"
+										checked={autoFetch}
+										onCheckedChange={setAutoFetch}
+									/>
 								</div>
 								<div className="space-y-1.5 px-3 py-2.5">
 									<div className="flex items-center justify-between gap-2">
-										<span className="text-[12px] text-muted-foreground">
+										<Label
+											htmlFor="pricing-endpoint"
+											className="text-[12px] font-normal text-muted-foreground"
+										>
 											{t("pricing.source.endpoint")}
-										</span>
+										</Label>
 										{endpoint !== DEFAULT_CATALOG_URL ? (
 											<button
 												type="button"
@@ -414,20 +456,28 @@ export function PricingCatalogDialog({
 										) : null}
 									</div>
 									<Input
+										id="pricing-endpoint"
 										value={endpoint}
 										onChange={(event) => setEndpoint(event.target.value)}
 										className="h-8 font-mono text-[11px]"
 									/>
 								</div>
 								<div className="flex items-center justify-between gap-4 px-3 py-2.5">
-									<span className="text-[12px] text-muted-foreground">
+									<Label
+										htmlFor="pricing-cache-ttl"
+										className="text-[12px] font-normal text-muted-foreground"
+									>
 										{t("pricing.source.cacheTtl")}
-									</span>
+									</Label>
 									<Select
 										value={cacheTtlHours}
 										onValueChange={setCacheTtlHours}
 									>
-										<SelectTrigger size="sm" className="w-[140px] text-[12px]">
+										<SelectTrigger
+											id="pricing-cache-ttl"
+											size="sm"
+											className="w-[140px] text-[12px]"
+										>
 											<SelectValue />
 										</SelectTrigger>
 										<SelectContent align="end">
@@ -453,7 +503,9 @@ export function PricingCatalogDialog({
 											variant="ghost"
 											size="xs"
 											title={status.cachePath}
-											onClick={() => void api.revealPath(status.cachePath)}
+											onClick={() =>
+												void api.revealPath(status.cachePath).catch(() => {})
+											}
 										>
 											<FolderOpen className="size-3.5" />
 											{t("pricing.openCacheFolder")}

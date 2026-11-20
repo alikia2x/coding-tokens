@@ -6,7 +6,7 @@ import { Link } from "react-router";
 import { EmptyState } from "~/components/empty-state";
 import { HarnessDot } from "~/components/harness-badge";
 import { Highlight } from "~/components/highlight";
-import { Badge } from "~/components/ui/badge";
+import { SessionRoleBadge } from "~/components/session-role-badge";
 import { Button } from "~/components/ui/button";
 import { Skeleton } from "~/components/ui/skeleton";
 import {
@@ -14,19 +14,12 @@ import {
 	formatNumber,
 	formatRelativeTime,
 	formatTokens,
+	totalTokens,
 } from "~/lib/format";
 import { useProgressiveLimit } from "~/lib/hooks";
 import { useT } from "~/lib/i18n";
 import { localizeLabel } from "~/lib/labels";
-
-export function sessionTotalTokens(session: SessionSummary): number {
-	return (
-		session.totals.inputTokens +
-		session.totals.outputTokens +
-		session.totals.cacheReadTokens +
-		session.totals.cacheWriteTokens
-	);
-}
+import { UNKNOWN_PROJECT_KEY } from "~/lib/time-range";
 
 function SessionListHeader() {
 	const t = useT();
@@ -40,25 +33,6 @@ function SessionListHeader() {
 			</div>
 		</div>
 	);
-}
-
-function SessionRoleBadge({ session }: { session: SessionSummary }) {
-	const t = useT();
-	if (session.isReview) {
-		return (
-			<Badge variant="outline" className="rounded text-[9px]">
-				{t("session.review")}
-			</Badge>
-		);
-	}
-	if (session.isSubagent) {
-		return (
-			<Badge variant="outline" className="rounded text-[9px]">
-				{t("session.subagent")}
-			</Badge>
-		);
-	}
-	return null;
 }
 
 const SessionRow = memo(function SessionRow({
@@ -90,7 +64,10 @@ const SessionRow = memo(function SessionRow({
 					<span className="truncate text-[13px] font-medium group-hover:underline">
 						<Highlight text={localizeLabel(t, session.title)} terms={terms} />
 					</span>
-					<SessionRoleBadge session={session} />
+					<SessionRoleBadge
+						isReview={session.isReview}
+						isSubagent={session.isSubagent}
+					/>
 				</div>
 				<div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
 					<span className="truncate">
@@ -106,13 +83,8 @@ const SessionRow = memo(function SessionRow({
 				) : null}
 			</div>
 			<div className="hidden items-center gap-5 text-right text-[12px] tabular sm:flex">
-				<div className="w-20">{formatTokens(sessionTotalTokens(session))}</div>
-				<div className="w-16">
-					{formatCost(
-						session.totals.costUsd,
-						session.totals.estimatedRequests > 0,
-					)}
-				</div>
+				<div className="w-20">{formatTokens(totalTokens(session.totals))}</div>
+				<div className="w-16">{formatCost(session.totals.costUsd)}</div>
 				<div className="w-10">{formatNumber(session.totals.requests)}</div>
 			</div>
 		</Link>
@@ -152,6 +124,7 @@ function ExpandedGroupRows({
 
 export function SessionList({
 	loading,
+	error,
 	filtered,
 	groups,
 	expandedGroups,
@@ -163,6 +136,7 @@ export function SessionList({
 	onClearFilters,
 }: {
 	loading: boolean;
+	error?: string | null;
 	filtered: SessionSummary[];
 	groups: Array<[string, SessionSummary[]]> | null;
 	expandedGroups: Set<string>;
@@ -184,6 +158,14 @@ export function SessionList({
 					// biome-ignore lint/suspicious/noArrayIndexKey: static placeholder list
 					<Skeleton key={index} className="h-16 rounded-md" />
 				))}
+			</div>
+		);
+	}
+
+	if (error) {
+		return (
+			<div className="mt-4 rounded-lg border border-destructive/30 bg-destructive-surface p-4 text-sm text-destructive">
+				{t("error.usageLoad")} {error}
 			</div>
 		);
 	}
@@ -239,7 +221,7 @@ export function SessionList({
 						0,
 					);
 					const tokens = rows.reduce(
-						(sum, session) => sum + sessionTotalTokens(session),
+						(sum, session) => sum + totalTokens(session.totals),
 						0,
 					);
 					return (
@@ -248,7 +230,7 @@ export function SessionList({
 								type="button"
 								onClick={() => onToggleGroup(cwd)}
 								aria-expanded={open}
-								className="sticky top-[96px] z-10 flex w-full items-center gap-2 border-b bg-background px-2 py-2 text-left transition-colors hover:bg-hover md:top-14"
+								className="sticky top-0 z-10 flex w-full items-center gap-2 border-b bg-background px-2 py-2 text-left transition-colors hover:bg-hover"
 							>
 								<ChevronRight
 									className={cn(
@@ -260,7 +242,7 @@ export function SessionList({
 									{localizeLabel(t, rows[0]?.projectName)}
 								</span>
 								<span className="truncate font-mono text-[10px] text-muted-foreground">
-									{cwd === "unknown" ? "" : cwd}
+									{cwd === UNKNOWN_PROJECT_KEY ? "" : cwd}
 								</span>
 								<span className="ml-auto flex items-center gap-3 text-[10px] text-muted-foreground tabular">
 									<span>
@@ -275,7 +257,7 @@ export function SessionList({
 											formatted: formatTokens(tokens),
 										})}
 									</span>
-									<span>{formatCost(cost, true)}</span>
+									<span>{formatCost(cost)}</span>
 								</span>
 							</button>
 							{open ? (

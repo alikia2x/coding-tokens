@@ -52,14 +52,34 @@ export function useSessionFind({
 	searchParams: URLSearchParams;
 	setSearchParams: SetURLSearchParams;
 }) {
-	const initialFind = searchParams.get("find")?.trim() ?? "";
-	const [open, setOpen] = useState(() => searchParams.has("find"));
-	const [draftQuery, setDraftQuery] = useState(initialFind);
-	const [committedQuery, setCommittedQuery] = useState(initialFind);
+	const urlFind = searchParams.get("find")?.trim() ?? "";
+	const hasFindParam = searchParams.has("find");
+	const [open, setOpen] = useState(hasFindParam);
+	const [draftQuery, setDraftQuery] = useState(urlFind);
+	const [committedQuery, setCommittedQuery] = useState(urlFind);
 	const [matchIndex, setMatchIndex] = useState(0);
 	const [matchCount, setMatchCount] = useState(0);
 	const inputRef = useRef<HTMLInputElement>(null);
-	const shouldScrollRef = useRef(Boolean(initialFind));
+	const shouldScrollRef = useRef(Boolean(urlFind));
+	const rangesRef = useRef<Range[]>([]);
+	const prevUrlRef = useRef({ has: hasFindParam, find: urlFind });
+
+	useEffect(() => {
+		if (
+			prevUrlRef.current.has === hasFindParam &&
+			prevUrlRef.current.find === urlFind
+		) {
+			return;
+		}
+		prevUrlRef.current = { has: hasFindParam, find: urlFind };
+		if (hasFindParam) {
+			setOpen(true);
+			setDraftQuery(urlFind);
+			setCommittedQuery(urlFind);
+			setMatchIndex(0);
+			shouldScrollRef.current = Boolean(urlFind);
+		}
+	}, [hasFindParam, urlFind]);
 
 	const close = useCallback(() => {
 		setOpen(false);
@@ -133,19 +153,42 @@ export function useSessionFind({
 		highlights?.delete("transcript-search-current");
 
 		if (!open || !root || !committedQuery || !contentVersion) {
+			rangesRef.current = [];
 			setMatchCount(0);
 			return;
 		}
 
 		const ranges = collectMatchRanges(root, committedQuery);
+		rangesRef.current = ranges;
 		setMatchCount(ranges.length);
 
-		if (!highlights || !HighlightCtor || !ranges.length) return;
+		if (highlights && HighlightCtor && ranges.length) {
+			highlights.set("transcript-search", new HighlightCtor(...ranges));
+		}
 
-		highlights.set("transcript-search", new HighlightCtor(...ranges));
+		return () => {
+			rangesRef.current = [];
+			highlights?.delete("transcript-search");
+			highlights?.delete("transcript-search-current");
+		};
+	}, [open, committedQuery, contentVersion, containerRef]);
+
+	useEffect(() => {
+		const highlights = getCssHighlights();
+		const HighlightCtor = (
+			window as unknown as { Highlight?: new (...ranges: Range[]) => unknown }
+		).Highlight;
+
+		highlights?.delete("transcript-search-current");
+
+		const ranges = rangesRef.current;
+		if (!open || !committedQuery || !contentVersion || !ranges.length) return;
+
 		const current = ranges[Math.min(matchIndex, ranges.length - 1)];
 		if (current) {
-			highlights.set("transcript-search-current", new HighlightCtor(current));
+			if (highlights && HighlightCtor) {
+				highlights.set("transcript-search-current", new HighlightCtor(current));
+			}
 			if (shouldScrollRef.current) {
 				shouldScrollRef.current = false;
 				current.startContainer.parentElement?.scrollIntoView({
@@ -156,10 +199,9 @@ export function useSessionFind({
 		}
 
 		return () => {
-			highlights.delete("transcript-search");
-			highlights.delete("transcript-search-current");
+			highlights?.delete("transcript-search-current");
 		};
-	}, [open, committedQuery, contentVersion, matchIndex, containerRef]);
+	}, [open, committedQuery, contentVersion, matchIndex]);
 
 	useEffect(() => {
 		const onFindShortcut = () => {

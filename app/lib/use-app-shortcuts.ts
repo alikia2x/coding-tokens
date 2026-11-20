@@ -1,7 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
+import { useResolvedRange } from "~/lib/hooks";
 import { useRefreshData } from "~/lib/queries";
+import { rangeQueryString } from "~/lib/time-range";
 import type { TranslationKey } from "./i18n";
+
+export function isMacOS(): boolean {
+	if (typeof navigator === "undefined") return true;
+	return /Mac|iPhone|iPad|iPod/iu.test(
+		navigator.platform || navigator.userAgent,
+	);
+}
 
 const routes = [
 	"/",
@@ -33,6 +42,10 @@ export function useAppShortcuts(): {
 } {
 	const navigate = useNavigate();
 	const refresh = useRefreshData();
+	const mutateRefresh = refresh.mutate;
+	const range = useResolvedRange();
+	const rangeQueryRef = useRef(rangeQueryString(range));
+	rangeQueryRef.current = rangeQueryString(range);
 	const [helpOpen, setHelpOpen] = useState(false);
 
 	useEffect(() => {
@@ -46,7 +59,7 @@ export function useAppShortcuts(): {
 			}
 			if (meta && key === "r") {
 				event.preventDefault();
-				refresh.mutate();
+				mutateRefresh();
 				return;
 			}
 			if (meta && key === "f") {
@@ -66,7 +79,8 @@ export function useAppShortcuts(): {
 				const route = routes[index];
 				if (route) {
 					event.preventDefault();
-					navigate(route);
+					const query = rangeQueryRef.current;
+					navigate(query ? `${route}?${query}` : route);
 				}
 				return;
 			}
@@ -88,7 +102,7 @@ export function useAppShortcuts(): {
 		}
 		window.addEventListener("keydown", onKeyDown);
 		return () => window.removeEventListener("keydown", onKeyDown);
-	}, [navigate, refresh]);
+	}, [navigate, mutateRefresh]);
 
 	return { helpOpen, setHelpOpen };
 }

@@ -8,9 +8,11 @@ export function Sparkline({
 	className?: string;
 }) {
 	const t = useT();
+	if (values.length === 0) return null;
 	const width = 96;
 	const height = 22;
-	const max = Math.max(1, ...values);
+	const rawMax = Math.max(0, ...values);
+	const max = rawMax > 0 ? rawMax : 1;
 	const step = values.length > 1 ? width / (values.length - 1) : width;
 	const points = values
 		.map(

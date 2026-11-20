@@ -5,6 +5,7 @@ import { useAppSettings, useUpdateAppSettings } from "~/lib/queries";
 interface SettingsContextValue {
 	settings: AppSettings;
 	loaded: boolean;
+	settled: boolean;
 	saving: boolean;
 	update: (partial: Partial<AppSettings>) => void;
 }
@@ -18,14 +19,16 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 		() => ({ ...DEFAULT_SETTINGS, ...(query.data ?? {}) }),
 		[query.data],
 	);
+	const settled = !query.isPending;
 	const value = useMemo(
 		() => ({
 			settings,
 			loaded: query.isSuccess,
+			settled,
 			saving: mutation.isPending,
 			update: (partial: Partial<AppSettings>) => mutation.mutate(partial),
 		}),
-		[settings, query.isSuccess, mutation],
+		[settings, query.isSuccess, settled, mutation],
 	);
 	return (
 		<SettingsContext.Provider value={value}>

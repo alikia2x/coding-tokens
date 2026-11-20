@@ -1,9 +1,38 @@
 import { dateLocaleFor, formatRangeDates } from "./date-locale";
 
-let activeLocale: string | undefined;
+export interface RangeTextFormatter {
+	all: string;
+	fromDate: (date: string) => string;
+	untilDate: (date: string) => string;
+}
 
-export function setFormatLocale(locale: string): void {
+let activeLocale: string | undefined;
+let activeRangeFormatter: RangeTextFormatter = {
+	all: "All time",
+	fromDate: (date) => `From ${date}`,
+	untilDate: (date) => `Until ${date}`,
+};
+
+export function setFormatLocale(
+	locale: string,
+	rangeFormatter?: RangeTextFormatter,
+): void {
 	activeLocale = locale;
+	if (rangeFormatter) activeRangeFormatter = rangeFormatter;
+}
+
+export function totalTokens(totals: {
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheWriteTokens: number;
+}): number {
+	return (
+		totals.inputTokens +
+		totals.outputTokens +
+		totals.cacheReadTokens +
+		totals.cacheWriteTokens
+	);
 }
 
 function numberFormat(): Intl.NumberFormat {
@@ -68,7 +97,7 @@ export function formatTokens(value: number): string {
 	return formatCompact(value);
 }
 
-export function formatCost(value: number, _estimated = false): string {
+export function formatCost(value: number): string {
 	return Math.abs(value) > 0 && Math.abs(value) < 0.01
 		? preciseCurrencyFormat().format(value)
 		: currencyFormat().format(value);
@@ -170,16 +199,22 @@ export function formatRangeLabel(
 	from: number | null,
 	until: number | null,
 ): string {
-	if (from === null && until === null) return "All time";
-	if (from === null || until === null) {
-		return from === null
-			? `Until ${formatDate(until)}`
-			: `From ${formatDate(from)}`;
-	}
+	if (from === null && until === null) return activeRangeFormatter.all;
 	const locale = dateLocaleFor(
 		activeLocale ??
 			(typeof navigator !== "undefined" ? navigator.language : "en"),
 	).code;
+	if (from === null) {
+		const end = Math.max(0, (until as number) - 1);
+		return activeRangeFormatter.untilDate(
+			formatRangeDates(end, end + 1, locale),
+		);
+	}
+	if (until === null) {
+		return activeRangeFormatter.fromDate(
+			formatRangeDates(from, from + 1, locale),
+		);
+	}
 	return formatRangeDates(from, until, locale);
 }
 

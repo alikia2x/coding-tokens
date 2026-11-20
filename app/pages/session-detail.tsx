@@ -11,9 +11,9 @@ import { EmptyState } from "~/components/empty-state";
 import { HarnessBadge } from "~/components/harness-badge";
 import { PageContainer } from "~/components/page-container";
 import { SessionFindBar } from "~/components/session-find-bar";
+import { SessionRoleBadge } from "~/components/session-role-badge";
 import { SessionTurn } from "~/components/session-turn";
 import { SessionUsagePanel } from "~/components/session-usage-panel";
-import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
 	Dialog,
@@ -24,37 +24,13 @@ import {
 import { Skeleton } from "~/components/ui/skeleton";
 import { api } from "~/lib/api";
 import { formatDateTime } from "~/lib/format";
-import { useProgressiveLimit } from "~/lib/hooks";
+import { useProgressiveLimit, useResolvedRange } from "~/lib/hooks";
 import { useT } from "~/lib/i18n";
 import { localizeLabel } from "~/lib/labels";
 import { useSessionDetail } from "~/lib/queries";
 import { useSettings } from "~/lib/settings";
+import { sessionsPath } from "~/lib/time-range";
 import { useSessionFind } from "~/lib/use-session-find";
-
-function SessionRoleBadge({
-	isReview,
-	isSubagent,
-}: {
-	isReview: boolean;
-	isSubagent: boolean;
-}) {
-	const t = useT();
-	if (isReview) {
-		return (
-			<Badge variant="outline" className="rounded text-[9px]">
-				{t("session.review")}
-			</Badge>
-		);
-	}
-	if (isSubagent) {
-		return (
-			<Badge variant="outline" className="rounded text-[9px]">
-				{t("session.subagent")}
-			</Badge>
-		);
-	}
-	return null;
-}
 
 function ExportResultDialog({
 	exportedPath,
@@ -120,8 +96,10 @@ function ExportResultDialog({
 export function SessionDetailPage() {
 	const { harness = "", sessionId = "" } = useParams();
 	const [searchParams, setSearchParams] = useSearchParams();
+	const range = useResolvedRange();
 	const { settings, update: updateSettings } = useSettings();
 	const t = useT();
+	const backToSessionsPath = sessionsPath(range);
 
 	const level = (searchParams.get("level") ??
 		settings.defaultDetailLevel) as SessionDetailLevel;
@@ -140,25 +118,38 @@ export function SessionDetailPage() {
 		searchParams,
 		setSearchParams,
 	});
-	const { itemsByTurn, orderedTurns } = useMemo(() => {
+	const { itemsByTurn, displayTurns } = useMemo(() => {
 		const map = new Map<string, DetailItem[]>();
 		const data = detail.data;
-		if (!data) return { itemsByTurn: map, orderedTurns: [] as TurnSummary[] };
+		if (!data) return { itemsByTurn: map, displayTurns: [] as TurnSummary[] };
 		for (const item of data.items) {
 			const list = map.get(item.turnId) ?? [];
 			list.push(item);
 			map.set(item.turnId, list);
 		}
+		const ordered = data.turns.filter((turn) => map.has(turn.id));
+		if (map.has("untracked")) {
+			ordered.push({
+				id: "untracked",
+				index: -1,
+				startedAt: null,
+				endedAt: null,
+				requests: 0,
+				totals: data.summary.totals,
+				models: [],
+			});
+		}
 		return {
 			itemsByTurn: map,
-			orderedTurns: data.turns.filter((turn) => map.has(turn.id)),
+			displayTurns: ordered,
 		};
 	}, [detail.data]);
 	const turnWindow = useProgressiveLimit(
-		orderedTurns.length,
+		displayTurns.length,
 		40,
 		40,
 		find.open || searchParams.has("find"),
+		`${harness}:${sessionId}`,
 	);
 
 	async function exportMarkdown(): Promise<void> {
@@ -213,7 +204,7 @@ export function SessionDetailPage() {
 					description={detail.error.message}
 					action={
 						<Button variant="outline" size="sm" asChild>
-							<Link to="/sessions">{t("nav.backToSessions")}</Link>
+							<Link to={backToSessionsPath}>{t("nav.backToSessions")}</Link>
 						</Button>
 					}
 				/>
@@ -225,23 +216,12 @@ export function SessionDetailPage() {
 	if (!data) return null;
 
 	const summary = data.summary;
-	const untracked = itemsByTurn.get("untracked");
-
-	const untrackedTurn: TurnSummary = {
-		id: "untracked",
-		index: -1,
-		startedAt: null,
-		endedAt: null,
-		requests: 0,
-		totals: summary.totals,
-		models: [],
-	};
 
 	return (
 		<PageContainer className="pt-5">
 			<div className="mx-auto w-full max-w-[1040px]">
 				<Link
-					to="/sessions"
+					to={backToSessionsPath}
 					className="inline-flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground"
 				>
 					<ChevronLeft className="size-3.5" />
@@ -309,9 +289,10 @@ export function SessionDetailPage() {
 					/>
 				</div>
 
-				{data.warnings.map((warning) => (
+				{data.warnings.map((warning, index) => (
 					<div
-						key={warning}
+						// biome-ignore lint/suspicious/noArrayIndexKey: warning strings may repeat across sources
+						key={`${index}:${warning}`}
 						className="mt-2 rounded-md bg-warning-surface px-3 py-2 text-[11px] text-warning"
 					>
 						{warning}
@@ -326,7 +307,7 @@ export function SessionDetailPage() {
 					/>
 				) : (
 					<div className="mt-2" ref={conversationRef}>
-						{orderedTurns.slice(0, turnWindow.limit).map((turn) => (
+						{displayTurns.slice(0, turnWindow.limit).map((turn) => (
 							<SessionTurn
 								key={turn.id}
 								turn={turn}
@@ -334,13 +315,6 @@ export function SessionDetailPage() {
 								level={level}
 							/>
 						))}
-						{untracked && !turnWindow.hasMore ? (
-							<SessionTurn
-								turn={untrackedTurn}
-								items={untracked}
-								level={level}
-							/>
-						) : null}
 						{turnWindow.hasMore ? (
 							<div ref={turnWindow.sentinelRef} className="h-px" />
 						) : null}

@@ -169,7 +169,7 @@ function customRange(
 	if (from !== null && until !== null) {
 		const toInput = toLocalInput(until - MINUTE_MS);
 		const untilStart = parseLocalInput(toInput);
-		if (untilStart === null || untilStart <= from) return null;
+		if (untilStart === null || untilStart < from) return null;
 		return {
 			key: "custom",
 			from,
@@ -234,7 +234,7 @@ export function parseRangeValues(
 		const from = parseLocalInput(fromValue ?? null);
 		const untilStart = parseLocalInput(toValue ?? null);
 		if (from === null && untilStart === null) return null;
-		if (from !== null && untilStart !== null && untilStart <= from) return null;
+		if (from !== null && untilStart !== null && untilStart < from) return null;
 		return customRange(
 			from,
 			untilStart !== null ? untilStart + MINUTE_MS : null,
@@ -266,6 +266,41 @@ export function resolveRange(
 	if (fallbackKey === "all") return allTimeRange(now);
 	if (fallbackKey === "custom") return presetResolvedRange("30d", now);
 	return presetResolvedRange(fallbackKey, now);
+}
+
+export const UNKNOWN_PROJECT_KEY = "__unknown__";
+
+export interface SessionsPathFilters {
+	harness?: string | null;
+	project?: string | null;
+	model?: string | null;
+}
+
+/** Build a `/sessions` URL preserving range params and optional facet filters. */
+export function sessionsPath(
+	range: ResolvedRange | URLSearchParams | string,
+	filters?: SessionsPathFilters,
+): string {
+	const params =
+		typeof range === "string"
+			? new URLSearchParams(range)
+			: range instanceof URLSearchParams
+				? (() => {
+						const next = new URLSearchParams();
+						for (const name of ["range", "from", "to"]) {
+							const value = range.get(name);
+							if (value) next.set(name, value);
+						}
+						return next;
+					})()
+				: new URLSearchParams(rangeQueryString(range));
+	if (filters?.harness) params.set("harness", filters.harness);
+	if (filters?.project !== undefined) {
+		params.set("project", filters.project || UNKNOWN_PROJECT_KEY);
+	}
+	if (filters?.model) params.set("model", filters.model);
+	const text = params.toString();
+	return `/sessions${text ? `?${text}` : ""}`;
 }
 
 /** Build the query string (without a leading `?`) for a resolved range. */

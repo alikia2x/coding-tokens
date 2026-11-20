@@ -23,6 +23,9 @@ export function RefreshButton({ status }: { status: StatusPayload }) {
 					aria-label={t("status.refresh")}
 					disabled={busy}
 					onClick={() => refresh.mutate()}
+					className={
+						refresh.isError && !busy ? "relative text-destructive" : undefined
+					}
 				>
 					<RotateCw className={busy ? "animate-spin" : undefined} />
 				</Button>
@@ -30,7 +33,9 @@ export function RefreshButton({ status }: { status: StatusPayload }) {
 			<TooltipContent>
 				{busy
 					? t("status.refreshing")
-					: `${t("status.lastIndexed")} ${formatRelativeTime(status.indexedAt)}`}
+					: refresh.isError
+						? refresh.error.message
+						: `${t("status.lastIndexed")} ${formatRelativeTime(status.indexedAt)}`}
 			</TooltipContent>
 		</Tooltip>
 	);

@@ -68,19 +68,40 @@ async function sendJson<T>(
 	return readJsonResponse<T>(response, fallbackMessage);
 }
 
+async function readErrorMessage(
+	response: Response,
+	fallbackMessage: string,
+): Promise<string> {
+	const text = await response.text().catch(() => "");
+	if (!text) return fallbackMessage;
+	try {
+		const body = JSON.parse(text) as { error?: string };
+		if (body.error) return body.error;
+	} catch {}
+	return text;
+}
+
 async function readJsonResponse<T>(
 	response: Response,
 	fallbackMessage?: string,
 ): Promise<T> {
 	if (!response.ok) {
-		let message = fallbackMessage ?? response.statusText;
-		try {
-			const body = (await response.json()) as { error?: string };
-			if (body.error) message = body.error;
-		} catch {}
+		const message = await readErrorMessage(
+			response,
+			fallbackMessage ?? response.statusText,
+		);
 		throw new ApiError(message, response.status);
 	}
 	return (await response.json()) as T;
+}
+
+export function triggerBlobDownload(blob: Blob, filename: string): void {
+	const url = URL.createObjectURL(blob);
+	const anchor = document.createElement("a");
+	anchor.href = url;
+	anchor.download = filename;
+	anchor.click();
+	window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function rangeQuery(range: { from: number | null; until: number | null }) {
@@ -102,7 +123,12 @@ export const api = {
 		),
 	refresh: async (): Promise<void> => {
 		const response = await fetch("/api/refresh", { method: "POST" });
-		if (!response.ok) throw new ApiError("Refresh failed", response.status);
+		if (!response.ok) {
+			throw new ApiError(
+				await readErrorMessage(response, "Refresh failed"),
+				response.status,
+			);
+		}
 	},
 	pricing: () => getJson<PricingPayload>("/api/pricing"),
 	searchPricingCatalog: (q: string, limit = 25) =>
@@ -158,8 +184,13 @@ export const api = {
 			"Could not delete model price rule",
 		);
 	},
-	overview: (range: ResolvedRange) =>
-		getJson<OverviewPayload>(`/api/overview${queryString(rangeQuery(range))}`),
+	overview: (
+		range: ResolvedRange,
+		bucket?: "hour" | "day" | "week" | "month",
+	) =>
+		getJson<OverviewPayload>(
+			`/api/overview${queryString({ ...rangeQuery(range), bucket })}`,
+		),
 	sessions: (range: ResolvedRange) =>
 		getJson<SessionsPayload>(`/api/sessions${queryString(rangeQuery(range))}`),
 	projects: (range: ResolvedRange) =>
@@ -247,18 +278,16 @@ export const api = {
 			},
 		);
 		if (!response.ok) {
-			throw new Error(`HTTP ${response.status}`);
+			throw new ApiError(
+				await readErrorMessage(response, `HTTP ${response.status}`),
+				response.status,
+			);
 		}
 		const disposition = response.headers.get("Content-Disposition") ?? "";
 		const match = disposition.match(/filename="([^"]+)"/u);
 		const filename = match?.[1] ?? "session.md";
 		const blob = await response.blob();
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement("a");
-		anchor.href = url;
-		anchor.download = filename;
-		anchor.click();
-		URL.revokeObjectURL(url);
+		triggerBlobDownload(blob, filename);
 		return filename;
 	},
 	exportSessionsBatch: (options: {
@@ -304,8 +333,10 @@ export const api = {
 			}),
 		});
 		if (!response.ok) {
-			const text = await response.text().catch(() => "");
-			throw new Error(text || `HTTP ${response.status}`);
+			throw new ApiError(
+				await readErrorMessage(response, `HTTP ${response.status}`),
+				response.status,
+			);
 		}
 		if (response.headers.get("Content-Type")?.includes("application/json")) {
 			return (await response.json()) as BatchSessionExportResult;
@@ -323,53 +354,59 @@ export const api = {
 		const decoder = new TextDecoder();
 		let buffer = "";
 		let finalResult: BatchSessionExportResult | null = null;
+		const processLine = (line: string): void => {
+			const trimmed = line.trim();
+			if (!trimmed) return;
+			const event = JSON.parse(trimmed) as
+				| {
+						type: "progress";
+						completed: number;
+						total: number;
+						currentTitle?: string;
+				  }
+				| {
+						type: "done";
+						result: BatchSessionExportResult;
+						zipBase64?: string;
+				  }
+				| { type: "error"; error: string };
+			if (event.type === "progress") {
+				options.onProgress?.({
+					completed: event.completed,
+					total: event.total,
+					currentTitle: event.currentTitle,
+				});
+			} else if (event.type === "error") {
+				throw new Error(event.error);
+			} else if (event.type === "done") {
+				if (event.zipBase64) {
+					const binary = atob(event.zipBase64);
+					const bytes = new Uint8Array(binary.length);
+					for (let i = 0; i < binary.length; i += 1) {
+						bytes[i] = binary.charCodeAt(i);
+					}
+					const blob = new Blob([bytes], { type: "application/zip" });
+					triggerBlobDownload(blob, event.result.filename);
+				}
+				finalResult = event.result;
+			}
+		};
 		while (true) {
 			const { done, value } = await reader.read();
-			if (done) break;
-			buffer += decoder.decode(value, { stream: true });
+			if (value) {
+				buffer += decoder.decode(value, { stream: !done });
+			}
+			if (done) {
+				buffer += decoder.decode();
+				for (const line of buffer.split("\n")) {
+					processLine(line);
+				}
+				break;
+			}
 			const lines = buffer.split("\n");
 			buffer = lines.pop() ?? "";
 			for (const line of lines) {
-				const trimmed = line.trim();
-				if (!trimmed) continue;
-				const event = JSON.parse(trimmed) as
-					| {
-							type: "progress";
-							completed: number;
-							total: number;
-							currentTitle?: string;
-					  }
-					| {
-							type: "done";
-							result: BatchSessionExportResult;
-							zipBase64?: string;
-					  }
-					| { type: "error"; error: string };
-				if (event.type === "progress") {
-					options.onProgress?.({
-						completed: event.completed,
-						total: event.total,
-						currentTitle: event.currentTitle,
-					});
-				} else if (event.type === "error") {
-					throw new Error(event.error);
-				} else if (event.type === "done") {
-					if (event.zipBase64) {
-						const binary = atob(event.zipBase64);
-						const bytes = new Uint8Array(binary.length);
-						for (let i = 0; i < binary.length; i += 1) {
-							bytes[i] = binary.charCodeAt(i);
-						}
-						const blob = new Blob([bytes], { type: "application/zip" });
-						const url = URL.createObjectURL(blob);
-						const anchor = document.createElement("a");
-						anchor.href = url;
-						anchor.download = event.result.filename;
-						anchor.click();
-						URL.revokeObjectURL(url);
-					}
-					finalResult = event.result;
-				}
+				processLine(line);
 			}
 		}
 		if (!finalResult) {

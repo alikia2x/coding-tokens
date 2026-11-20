@@ -8,6 +8,7 @@ import {
 	PopoverContent,
 	PopoverTrigger,
 } from "~/components/ui/popover";
+import { ScrollArea } from "~/components/ui/scroll-area";
 import { useT } from "~/lib/i18n";
 
 export interface FacetOption {
@@ -81,7 +82,11 @@ export function FacetFilter({
 						/>
 					</div>
 				) : null}
-				<div className="max-h-64 overflow-y-auto p-1">
+				<ScrollArea
+					className="max-h-64"
+					overflow="y"
+					contentClassName="p-1 pr-3"
+				>
 					{filtered.map((option) => {
 						const checked = values.includes(option.value);
 						return (
@@ -115,7 +120,7 @@ export function FacetFilter({
 							{t("empty.matches")}
 						</p>
 					) : null}
-				</div>
+				</ScrollArea>
 				<div className="flex items-center justify-between border-t px-2 py-1.5">
 					<Button
 						variant="ghost"

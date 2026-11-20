@@ -21,6 +21,8 @@ import {
 	Terminal,
 	Wrench,
 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ScrollArea } from "~/components/ui/scroll-area";
 import { formatLatency, formatNumber } from "~/lib/format";
 import { type TranslationKey, useT } from "~/lib/i18n";
 
@@ -208,7 +210,7 @@ function ToolRowLine({
 						</span>
 					) : null}
 					{op.errorBadge ? (
-						<span className="rounded bg-destructive/15 px-1.5 py-0.2 font-mono text-[10px] text-destructive">
+						<span className="rounded bg-destructive/15 px-1.5 py-0.5 font-mono text-[10px] text-destructive">
 							{op.errorBadge}
 						</span>
 					) : null}
@@ -233,9 +235,11 @@ function ToolPayloadDrawer({
 					<div className="mb-0.5 text-[10px] font-medium text-muted-foreground/80">
 						{t("tool.input")}
 					</div>
-					<pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-border/40 bg-background/70 p-2 font-mono text-[10px] leading-4 text-foreground/85">
-						{inputText}
-					</pre>
+					<ScrollArea className="max-h-56 rounded-md border border-border/40 bg-background/70">
+						<pre className="m-0 whitespace-pre-wrap p-2 pb-2.5 pr-3.5 font-mono text-[10px] leading-4 text-foreground/85">
+							{inputText}
+						</pre>
+					</ScrollArea>
 				</div>
 			) : null}
 			{outputText ? (
@@ -243,9 +247,11 @@ function ToolPayloadDrawer({
 					<div className="mb-0.5 text-[10px] font-medium text-muted-foreground/80">
 						{t("tool.output")}
 					</div>
-					<pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-border/40 bg-background/70 p-2 font-mono text-[10px] leading-4 text-muted-foreground">
-						{outputText}
-					</pre>
+					<ScrollArea className="max-h-64 rounded-md border border-border/40 bg-background/70">
+						<pre className="m-0 whitespace-pre-wrap p-2 pb-2.5 pr-3.5 font-mono text-[10px] leading-4 text-muted-foreground">
+							{outputText}
+						</pre>
+					</ScrollArea>
 				</div>
 			) : null}
 		</div>
@@ -297,6 +303,10 @@ export function ToolChain({
 	level: SessionDetailLevel;
 }) {
 	const t = useT();
+	const [isOpen, setIsOpen] = useState(level === "agent_full");
+	useEffect(() => {
+		setIsOpen(level === "agent_full");
+	}, [level]);
 	const pairs = pairChainItems(items);
 	const allOps = pairs.flatMap((pair) => pair.operations);
 	const summaryLabel = summarizeOperations(allOps, pairs.length, t);
@@ -309,7 +319,8 @@ export function ToolChain({
 	return (
 		<details
 			className="group py-1.5 outline-none"
-			open={level === "agent_full"}
+			open={isOpen}
+			onToggle={(event) => setIsOpen(event.currentTarget.open)}
 		>
 			<summary className="flex cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 py-1 text-[12px] text-muted-foreground outline-none transition-colors hover:bg-surface/60 hover:text-foreground focus-visible:outline-none">
 				<ChevronRight className="size-3.5 shrink-0 text-muted-foreground/70 transition-transform group-open:rotate-90" />
