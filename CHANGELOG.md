@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-20
+
+### Added
+
+- Unified global UI state management (`zustand`) persisting filters, search queries, sorting, grouping, expanded groups, progressive reveal limits, and per-route scroll positions across page navigation and tab switches.
+- Custom overlay scrollbars (`OverlayScrollbars`) across the app shell, modals, and scrollable panels without layout shift.
+
+### Changed
+
+- Redesigned the `TimeRangePicker` popover with presets, dual-month range calendar, editable time inputs, timezone indicator, and clean custom range labels.
+- Overhauled the Explore stacked area chart with smooth monotone curves, X-interval clipped active strokes, vibrant dark/light categorical palette contrast, active-only hover dots, and an ordered Tooltip with restored color swatches and totals.
+- Refined Overview usage chart metric/unit controls, weekly Monday-to-Sunday bucketing, week/month axis formatting, and Models page table readability.
+
+### Fixed
+
+- Hardened local API origin/CORS checks, worker serialization, FTS5 search sanitization, atomic SQLite source state sync, and hour/week bucketing edge cases.
+- Unified provider pricing enrichment, reasoning/streaming deduplication, empty-state handling, and UI/server test suite isolation.
+
 ## [0.4.0] - 2026-11-19
 
 ### Added
