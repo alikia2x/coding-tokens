@@ -1,4 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { UsageRecord } from "@shared/types";
 import {
 	buildSessionCatalog,
@@ -10,9 +13,58 @@ import {
 	DefaultSessionCatalogService,
 	defaultSessionCatalogService,
 } from "../../../server/services/catalog";
+import { MockOsEnvProvider } from "../../../src/platform/env";
+import { DefaultPlatformPathService } from "../../../src/platform/paths";
 import { DefaultHarnessRegistry } from "../../../src/providers/registry";
+import { createStorageService } from "../../../src/services/storage";
+import { DefaultTranscriptService } from "../../../src/services/transcripts";
 
 describe("Services: Session Catalog & Title Sanitization (Feature 9)", () => {
+	let tmpRoot = "";
+	let codexHome = "";
+	const originalEnv: Record<string, string | undefined> = {};
+	const envKeys = [
+		"HOME",
+		"CODEX_HOME",
+		"DSH_HOME",
+		"OPENCODE_DATA_DIR",
+		"OPENCODE_DB",
+		"COMMANDCODE_HOME",
+		"ANTIGRAVITY_HOME",
+		"T3_USER_DATA_DIR",
+	] as const;
+
+	beforeAll(() => {
+		tmpRoot = mkdtempSync(path.join(os.tmpdir(), "ct-catalog-test-"));
+		const emptyDir = path.join(tmpRoot, "empty");
+		codexHome = path.join(tmpRoot, "codex");
+		mkdirSync(emptyDir, { recursive: true });
+		mkdirSync(codexHome, { recursive: true });
+
+		for (const key of envKeys) {
+			originalEnv[key] = process.env[key];
+		}
+
+		process.env.HOME = tmpRoot;
+		process.env.CODEX_HOME = codexHome;
+		process.env.DSH_HOME = emptyDir;
+		process.env.OPENCODE_DATA_DIR = emptyDir;
+		process.env.OPENCODE_DB = path.join(emptyDir, "opencode.db");
+		process.env.COMMANDCODE_HOME = emptyDir;
+		process.env.ANTIGRAVITY_HOME = emptyDir;
+		process.env.T3_USER_DATA_DIR = emptyDir;
+	});
+
+	afterAll(() => {
+		for (const key of envKeys) {
+			const prev = originalEnv[key];
+			if (prev === undefined) delete process.env[key];
+			else process.env[key] = prev;
+		}
+		if (tmpRoot) {
+			rmSync(tmpRoot, { recursive: true, force: true });
+		}
+	});
 	// =========================================================================
 	// Tier 1: Happy Path Tests
 	// =========================================================================
@@ -106,9 +158,26 @@ describe("Services: Session Catalog & Title Sanitization (Feature 9)", () => {
 		);
 	});
 
-	test("F9-T1-03: Codex fallback source helper returns null or valid file source", () => {
-		const fallback = codexFallbackSource("non-existent-session-id-12345");
-		expect(fallback === null || fallback.kind === "file").toBe(true);
+	test("F9-T1-03: Codex fallback source helper returns null for missing and file source when present", () => {
+		expect(codexFallbackSource("non-existent-session-id-12345")).toBeNull();
+
+		const sessionsDir = path.join(codexHome, "sessions", "2026", "03", "01");
+		mkdirSync(sessionsDir, { recursive: true });
+		const rolloutPath = path.join(
+			sessionsDir,
+			"rollout-2026-03-01T10-00-00-fallback-sess-1.jsonl",
+		);
+		writeFileSync(
+			rolloutPath,
+			`${JSON.stringify({
+				type: "session_meta",
+				timestamp: "2026-03-01T10:00:00.000Z",
+				payload: { id: "fallback-sess-1" },
+			})}\n`,
+			"utf8",
+		);
+		const found = codexFallbackSource("fallback-sess-1");
+		expect(found).toEqual({ kind: "file", path: rolloutPath });
 	});
 
 	// =========================================================================
@@ -186,43 +255,116 @@ describe("Services: Session Catalog & Title Sanitization (Feature 9)", () => {
 });
 
 describe("Services: DefaultSessionCatalogService (Feature 9)", () => {
-	test("F9-T1-04: SessionCatalogService initialization and query APIs", async () => {
+	let serviceTmpRoot = "";
+	const originalEnv: Record<string, string | undefined> = {};
+	const envKeys = [
+		"HOME",
+		"CODEX_HOME",
+		"DSH_HOME",
+		"OPENCODE_DATA_DIR",
+		"OPENCODE_DB",
+		"COMMANDCODE_HOME",
+		"ANTIGRAVITY_HOME",
+		"T3_USER_DATA_DIR",
+	] as const;
+
+	beforeAll(() => {
+		serviceTmpRoot = mkdtempSync(
+			path.join(os.tmpdir(), "ct-catalog-service-test-"),
+		);
+		const emptyDir = path.join(serviceTmpRoot, "empty");
+		mkdirSync(emptyDir, { recursive: true });
+		for (const key of envKeys) {
+			originalEnv[key] = process.env[key];
+		}
+		process.env.HOME = serviceTmpRoot;
+		process.env.CODEX_HOME = emptyDir;
+		process.env.DSH_HOME = emptyDir;
+		process.env.OPENCODE_DATA_DIR = emptyDir;
+		process.env.OPENCODE_DB = path.join(emptyDir, "opencode.db");
+		process.env.COMMANDCODE_HOME = emptyDir;
+		process.env.ANTIGRAVITY_HOME = emptyDir;
+		process.env.T3_USER_DATA_DIR = emptyDir;
+	});
+
+	afterAll(() => {
+		for (const key of envKeys) {
+			const prev = originalEnv[key];
+			if (prev === undefined) delete process.env[key];
+			else process.env[key] = prev;
+		}
+		if (serviceTmpRoot) {
+			rmSync(serviceTmpRoot, { recursive: true, force: true });
+		}
+	});
+
+	function createIsolatedCatalogDeps() {
+		const mockPaths = new DefaultPlatformPathService(
+			new MockOsEnvProvider({ platform: "darwin", home: serviceTmpRoot }),
+		);
 		const emptyRegistry = new DefaultHarnessRegistry();
 		emptyRegistry.clear();
-		const catalogService = createCatalogService(undefined, emptyRegistry);
-		expect(catalogService).toBeInstanceOf(DefaultSessionCatalogService);
-
-		await catalogService.init();
-
-		const catalog = await catalogService.getCatalog();
-		expect(Array.isArray(catalog)).toBe(true);
-
-		const summaries = await catalogService.getSessionSummaries({
-			from: null,
-			until: null,
+		const storage = createStorageService({
+			dbPath: path.join(
+				serviceTmpRoot,
+				`catalog-${Math.random().toString(36).slice(2, 8)}.db`,
+			),
 		});
-		expect(Array.isArray(summaries)).toBe(true);
+		const transcripts = new DefaultTranscriptService(mockPaths, emptyRegistry);
+		return { mockPaths, emptyRegistry, storage, transcripts };
+	}
 
-		const searchResult = await catalogService.search(
-			"nonexistent_unique_term_9999",
-		);
-		expect(searchResult).toBeDefined();
-		expect(searchResult.sessions).toHaveLength(0);
-	}, 15000);
+	test("F9-T1-04: SessionCatalogService initialization and query APIs", async () => {
+		const { mockPaths, emptyRegistry, storage, transcripts } =
+			createIsolatedCatalogDeps();
+		try {
+			const catalogService = createCatalogService(
+				storage,
+				emptyRegistry,
+				transcripts,
+				mockPaths,
+			);
+			expect(catalogService).toBeInstanceOf(DefaultSessionCatalogService);
+
+			await catalogService.init();
+
+			const catalog = await catalogService.getCatalog();
+			expect(catalog).toEqual([]);
+
+			const summaries = await catalogService.getSessionSummaries({
+				from: null,
+				until: null,
+			});
+			expect(summaries).toEqual([]);
+
+			const searchResult = await catalogService.search(
+				"nonexistent_unique_term_9999",
+			);
+			expect(searchResult.sessions).toHaveLength(0);
+		} finally {
+			await storage.close();
+		}
+	});
 
 	test("F9-T1-05: SessionCatalogService detail lookup for non-existent session returns null", async () => {
-		const emptyRegistry = new DefaultHarnessRegistry();
-		emptyRegistry.clear();
-		const catalogService = new DefaultSessionCatalogService(
-			undefined,
-			emptyRegistry,
-		);
-		const detail = await catalogService.getSessionDetail(
-			"codex",
-			"missing-id-999",
-		);
-		expect(detail).toBeNull();
-	}, 15000);
+		const { mockPaths, emptyRegistry, storage, transcripts } =
+			createIsolatedCatalogDeps();
+		try {
+			const catalogService = new DefaultSessionCatalogService(
+				storage,
+				emptyRegistry,
+				transcripts,
+				mockPaths,
+			);
+			const detail = await catalogService.getSessionDetail(
+				"codex",
+				"missing-id-999",
+			);
+			expect(detail).toBeNull();
+		} finally {
+			await storage.close();
+		}
+	});
 
 	test("F9-T1-06: defaultSessionCatalogService singleton export", () => {
 		expect(defaultSessionCatalogService).toBeDefined();

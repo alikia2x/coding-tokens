@@ -42,9 +42,9 @@ export class MockOsEnvProvider implements OsEnvProvider {
 					return v;
 				}
 			}
-			return process.env[name];
+			return undefined;
 		}
-		return this.envVars.get(name) ?? process.env[name];
+		return this.envVars.get(name);
 	}
 
 	set(name: string, value: string): void {

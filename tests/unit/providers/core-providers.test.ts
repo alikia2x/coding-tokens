@@ -3,10 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { MockOsEnvProvider } from "../../../src/platform/env";
-import {
-	DefaultPlatformPathService,
-	defaultPlatformPathService,
-} from "../../../src/platform/paths";
+import { DefaultPlatformPathService } from "../../../src/platform/paths";
 import { AntigravityProvider } from "../../../src/providers/antigravity";
 import { CodexProvider } from "../../../src/providers/codex";
 import { CommandCodeProvider } from "../../../src/providers/commandcode";
@@ -1869,7 +1866,7 @@ describe("Core Provider: Antigravity (Feature 10)", () => {
 					expect(result.records[0]?.model).toBe("gemini-2.5-pro");
 					expect(result.records[0]?.messageId).toBe("req-ag-1");
 					expect(result.records[0]?.inputTokens).toBe(2500);
-					expect(result.records[0]?.outputTokens).toBe(450);
+					expect(result.records[0]?.outputTokens).toBe(500);
 					expect(result.records[0]?.cacheReadTokens).toBe(1800);
 					expect(result.records[0]?.reasoningTokens).toBe(50);
 					expect(result.messages.get("ag-sess-1")).toBe(1);
@@ -1923,7 +1920,7 @@ describe("Core Provider: Antigravity (Feature 10)", () => {
 					const result = await provider.readUsage(mockPaths, items[0]);
 					expect(result.records.length).toBe(1);
 					expect(result.records[0]?.inputTokens).toBe(1500);
-					expect(result.records[0]?.outputTokens).toBe(300);
+					expect(result.records[0]?.outputTokens).toBe(325);
 					expect(result.records[0]?.reasoningTokens).toBe(25);
 				},
 			);
@@ -2214,40 +2211,41 @@ describe("Providers: Built-in Harness Providers Shared Utilities & Smoke (Featur
 		rmSync(tmpDir, { recursive: true, force: true });
 	});
 
-	test("F10-T1-03: Provider methods execute cleanly against host paths", async () => {
-		const providers = [
-			new CodexProvider(),
-			new DshProvider(),
-			new OpenCodeProvider(),
-			new CommandCodeProvider(),
-			new AntigravityProvider(),
-		];
+	test("F10-T1-03: Provider methods execute cleanly against isolated empty home paths", async () => {
+		await withSandboxEnvironment("darwin", async (sandbox) => {
+			const emptyHome = sandbox.homeDir;
+			const emptyPaths = new DefaultPlatformPathService(
+				new MockOsEnvProvider({ platform: "darwin", home: emptyHome }),
+			);
+			const providers = [
+				new CodexProvider(),
+				new DshProvider(),
+				new OpenCodeProvider(),
+				new CommandCodeProvider(),
+				new AntigravityProvider(),
+			];
 
-		for (const provider of providers) {
-			const isAvail = await provider.isAvailable(defaultPlatformPathService);
-			expect(typeof isAvail).toBe("boolean");
+			for (const provider of providers) {
+				const isAvail = await provider.isAvailable(emptyPaths);
+				expect(isAvail).toBe(false);
 
-			const watchPaths = provider.getWatchPaths(defaultPlatformPathService);
-			expect(Array.isArray(watchPaths)).toBe(true);
-			if (isAvail) {
-				expect(watchPaths.length).toBeGreaterThan(0);
+				const watchPaths = provider.getWatchPaths(emptyPaths);
+				expect(Array.isArray(watchPaths)).toBe(true);
+
+				const sessions = await provider.discoverSessions(emptyPaths);
+				expect(sessions).toEqual([]);
+
+				const fp = await provider.computeFingerprint(emptyPaths);
+				expect(fp).toMatch(/^v12:0:[0-9a-f]{64}$/);
+
+				const transcriptNull = await provider.readTranscript(
+					emptyPaths,
+					"non-existent-session-id-12345",
+				);
+				expect(transcriptNull).toBeNull();
 			}
-
-			const sessions = await provider.discoverSessions(
-				defaultPlatformPathService,
-			);
-			expect(Array.isArray(sessions)).toBe(true);
-
-			const fp = await provider.computeFingerprint(defaultPlatformPathService);
-			expect(fp).toMatch(/^v12:\d+:[0-9a-f]{64}$/);
-
-			const transcriptNull = await provider.readTranscript(
-				defaultPlatformPathService,
-				"non-existent-session-id-12345",
-			);
-			expect(transcriptNull).toBeNull();
-		}
-	}, 20000);
+		});
+	});
 
 	test("F10-T1-04: Isolated Mock PlatformPathService session discovery and usage", async () => {
 		const mockRoot = path.join(

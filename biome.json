@@ -16,7 +16,6 @@
 			"!build",
 			"!dist",
 			"!node_modules",
-			"!app/components/ui",
 			"!coverage"
 		]
 	},

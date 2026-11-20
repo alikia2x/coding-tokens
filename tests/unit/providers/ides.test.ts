@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { MockOsEnvProvider } from "../../../src/platform/env";
 import { DefaultPlatformPathService } from "../../../src/platform/paths";
 import { openSafeReadonlyDatabase } from "../../../src/platform/sqlite";
 import { CopilotProvider } from "../../../src/providers/copilot";
@@ -19,6 +20,37 @@ const FIXTURES_DIR = path.resolve(__dirname, "../../fixtures");
 const HARNESSES_DIR = path.join(FIXTURES_DIR, "harnesses");
 
 describe("Milestone 3 Batch 3: AI IDEs & Copilots Providers", () => {
+	const suiteTmp = mkdtempSync(path.join(os.tmpdir(), "ct-ides-test-"));
+
+	afterAll(() => {
+		rmSync(suiteTmp, { recursive: true, force: true });
+	});
+
+	function createIsolatedPaths(homeDir: string) {
+		return new DefaultPlatformPathService(
+			new MockOsEnvProvider({ platform: "darwin", home: homeDir }),
+		);
+	}
+
+	function createStagedIdePaths(
+		harness: "cursor" | "windsurf" | "copilot",
+		sourceDir: string,
+	) {
+		const homeDir = path.join(
+			suiteTmp,
+			`${harness}-${Math.random().toString(36).slice(2, 8)}`,
+		);
+		const paths = createIsolatedPaths(homeDir);
+		const resolved = paths.resolveHarnessPaths(harness);
+		const targetRoot =
+			harness === "cursor"
+				? path.dirname(resolved[0] ?? "")
+				: (resolved[0] ?? "");
+		if (!targetRoot) throw new Error(`No resolved path for ${harness}`);
+		mkdirSync(path.dirname(targetRoot), { recursive: true });
+		cpSync(sourceDir, targetRoot, { recursive: true });
+		return paths;
+	}
 	// =========================================================================
 	// 1. Metadata Conformance
 	// =========================================================================
@@ -56,19 +88,7 @@ describe("Milestone 3 Batch 3: AI IDEs & Copilots Providers", () => {
 	// =========================================================================
 	describe("2. Cursor IDE Provider", () => {
 		const cursorFixtureDir = path.join(HARNESSES_DIR, "cursor");
-		const mockCursorPaths = {
-			getHomeDir: () => cursorFixtureDir,
-			getConfigDir: () => cursorFixtureDir,
-			getDataDir: () => cursorFixtureDir,
-			getCacheDir: () => cursorFixtureDir,
-			expandPath: (p: string) => p,
-			normalize: (p: string) => p,
-			safeBasename: (p: string) => path.basename(p),
-			resolveHarnessPaths: () => [
-				path.join(cursorFixtureDir, "globalStorage"),
-				path.join(cursorFixtureDir, "workspaceStorage"),
-			],
-		};
+		const mockCursorPaths = createStagedIdePaths("cursor", cursorFixtureDir);
 
 		test("isAvailable returns true when fixture databases exist", async () => {
 			const provider = new CursorProvider();
@@ -78,18 +98,12 @@ describe("Milestone 3 Batch 3: AI IDEs & Copilots Providers", () => {
 
 		test("isAvailable returns false when directory is empty", async () => {
 			const emptyDir = path.join(
-				os.tmpdir(),
+				suiteTmp,
 				`empty-cursor-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
 			);
 			mkdirSync(emptyDir, { recursive: true });
 
-			const emptyPaths = {
-				...mockCursorPaths,
-				resolveHarnessPaths: () => [
-					path.join(emptyDir, "globalStorage"),
-					path.join(emptyDir, "workspaceStorage"),
-				],
-			};
+			const emptyPaths = createIsolatedPaths(emptyDir);
 
 			const provider = new CursorProvider();
 			const isAvail = await provider.isAvailable(emptyPaths);
@@ -165,21 +179,10 @@ describe("Milestone 3 Batch 3: AI IDEs & Copilots Providers", () => {
 	// =========================================================================
 	describe("3. Windsurf / Codeium Cascade Provider", () => {
 		const windsurfFixtureDir = path.join(HARNESSES_DIR, "windsurf");
-		const mockWindsurfPaths = {
-			getHomeDir: () => windsurfFixtureDir,
-			getConfigDir: () => windsurfFixtureDir,
-			getDataDir: () => windsurfFixtureDir,
-			getCacheDir: () => windsurfFixtureDir,
-			expandPath: (p: string) => p,
-			normalize: (p: string) => p,
-			safeBasename: (p: string) => path.basename(p),
-			resolveHarnessPaths: () => [
-				windsurfFixtureDir,
-				path.join(windsurfFixtureDir, "cascade"),
-				path.join(windsurfFixtureDir, "globalStorage"),
-				path.join(windsurfFixtureDir, "workspaceStorage"),
-			],
-		};
+		const mockWindsurfPaths = createStagedIdePaths(
+			"windsurf",
+			windsurfFixtureDir,
+		);
 
 		test("isAvailable returns true when .pb files exist", async () => {
 			const provider = new WindsurfProvider();
@@ -253,16 +256,7 @@ describe("Milestone 3 Batch 3: AI IDEs & Copilots Providers", () => {
 	// =========================================================================
 	describe("4. GitHub Copilot Provider", () => {
 		const copilotFixtureDir = path.join(HARNESSES_DIR, "copilot");
-		const mockCopilotPaths = {
-			getHomeDir: () => copilotFixtureDir,
-			getConfigDir: () => copilotFixtureDir,
-			getDataDir: () => copilotFixtureDir,
-			getCacheDir: () => copilotFixtureDir,
-			expandPath: (p: string) => p,
-			normalize: (p: string) => p,
-			safeBasename: (p: string) => path.basename(p),
-			resolveHarnessPaths: () => [copilotFixtureDir],
-		};
+		const mockCopilotPaths = createStagedIdePaths("copilot", copilotFixtureDir);
 
 		test("isAvailable returns true when fixture files exist", async () => {
 			const provider = new CopilotProvider();
@@ -293,7 +287,8 @@ describe("Milestone 3 Batch 3: AI IDEs & Copilots Providers", () => {
 			expect(rec?.model).toBe("copilot/gpt-4o");
 			expect(rec?.inputTokens).toBeGreaterThan(0);
 			expect(rec?.outputTokens).toBeGreaterThan(0);
-			expect(rec?.costEstimated).toBe(true); // Copilot is flat subscription, estimated
+			expect(rec?.costUsd).toBeNull();
+			expect(rec?.costEstimated).toBe(false);
 			expect(usage.messages.get("copilot-sess-1")).toBe(1);
 		});
 
@@ -516,10 +511,12 @@ describe("Milestone 3 Batch 3: AI IDEs & Copilots Providers", () => {
 	describe("8. Edge Cases, Resiliency & Hardening", () => {
 		test("CursorProvider handles corrupted or empty JSON in composerData gracefully", async () => {
 			const tmpDir = path.join(
-				os.tmpdir(),
+				suiteTmp,
 				`cursor-corrupt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
 			);
-			const gStorage = path.join(tmpDir, "globalStorage");
+			const mockPaths = createIsolatedPaths(tmpDir);
+			const gStorage = mockPaths.resolveHarnessPaths("cursor")[0];
+			if (!gStorage) throw new Error("Missing cursor globalStorage path");
 			mkdirSync(gStorage, { recursive: true });
 
 			const db = seedCursorDb(path.join(gStorage, "state.vscdb"), {
@@ -529,20 +526,6 @@ describe("Milestone 3 Batch 3: AI IDEs & Copilots Providers", () => {
 				"INSERT INTO cursorDiskKV (key, value) VALUES ('composerData:bad-1', 'not valid json');",
 			);
 			db.close();
-
-			const mockPaths = {
-				getHomeDir: () => tmpDir,
-				getConfigDir: () => tmpDir,
-				getDataDir: () => tmpDir,
-				getCacheDir: () => tmpDir,
-				expandPath: (p: string) => p,
-				normalize: (p: string) => p,
-				safeBasename: (p: string) => path.basename(p),
-				resolveHarnessPaths: () => [
-					gStorage,
-					path.join(tmpDir, "workspaceStorage"),
-				],
-			};
 
 			const provider = new CursorProvider();
 			const usage = await provider.readUsage(mockPaths);
@@ -554,27 +537,20 @@ describe("Milestone 3 Batch 3: AI IDEs & Copilots Providers", () => {
 
 		test("WindsurfProvider handles truncated or corrupted Protobuf safely", async () => {
 			const tmpDir = path.join(
-				os.tmpdir(),
+				suiteTmp,
 				`windsurf-corrupt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
 			);
-			const chatDir = path.join(tmpDir, "chat_state");
+			const mockPaths = createIsolatedPaths(tmpDir);
+			const chatDir = path.join(
+				mockPaths.resolveHarnessPaths("windsurf")[0] ?? "",
+				"chat_state",
+			);
 			mkdirSync(chatDir, { recursive: true });
 
 			writeFileSync(
 				path.join(chatDir, "codeium_chat_state_file_corrupt.pb"),
 				Buffer.from([0x08, 0xff, 0xff]), // Malformed varint/wire
 			);
-
-			const mockPaths = {
-				getHomeDir: () => tmpDir,
-				getConfigDir: () => tmpDir,
-				getDataDir: () => tmpDir,
-				getCacheDir: () => tmpDir,
-				expandPath: (p: string) => p,
-				normalize: (p: string) => p,
-				safeBasename: (p: string) => path.basename(p),
-				resolveHarnessPaths: () => [tmpDir],
-			};
 
 			const provider = new WindsurfProvider();
 			const usage = await provider.readUsage(mockPaths);
@@ -585,11 +561,14 @@ describe("Milestone 3 Batch 3: AI IDEs & Copilots Providers", () => {
 
 		test("CopilotProvider parses standalone CLI logs and toolCallRounds in chat", async () => {
 			const tmpDir = path.join(
-				os.tmpdir(),
+				suiteTmp,
 				`copilot-tools-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
 			);
-			const chatDir = path.join(tmpDir, "chatSessions");
-			const logsDir = path.join(tmpDir, "logs");
+			const mockPaths = createIsolatedPaths(tmpDir);
+			const wsRoot = mockPaths.resolveHarnessPaths("copilot")[0];
+			if (!wsRoot) throw new Error("Missing copilot workspaceStorage path");
+			const chatDir = path.join(wsRoot, "chatSessions");
+			const logsDir = path.join(wsRoot, "logs");
 			mkdirSync(chatDir, { recursive: true });
 			mkdirSync(logsDir, { recursive: true });
 
@@ -632,17 +611,6 @@ describe("Milestone 3 Batch 3: AI IDEs & Copilots Providers", () => {
 				"2026-03-15T12:00:00.000Z [INFO] Copilot agent started\n2026-03-15T12:00:05.000Z [INFO] Request completed\n",
 			);
 
-			const mockPaths = {
-				getHomeDir: () => tmpDir,
-				getConfigDir: () => tmpDir,
-				getDataDir: () => tmpDir,
-				getCacheDir: () => tmpDir,
-				expandPath: (p: string) => p,
-				normalize: (p: string) => p,
-				safeBasename: (p: string) => path.basename(p),
-				resolveHarnessPaths: () => [tmpDir],
-			};
-
 			const provider = new CopilotProvider();
 			const usage = await provider.readUsage(mockPaths);
 			expect(usage.records.length).toBe(2);
@@ -661,10 +629,14 @@ describe("Milestone 3 Batch 3: AI IDEs & Copilots Providers", () => {
 
 		test("WindsurfProvider decodes multi-turn interaction with cache tokens and reasoning", async () => {
 			const tmpDir = path.join(
-				os.tmpdir(),
+				suiteTmp,
 				`windsurf-multiturn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
 			);
-			const chatDir = path.join(tmpDir, "chat_state");
+			const mockPaths = createIsolatedPaths(tmpDir);
+			const chatDir = path.join(
+				mockPaths.resolveHarnessPaths("windsurf")[0] ?? "",
+				"chat_state",
+			);
 			mkdirSync(chatDir, { recursive: true });
 
 			const blob = buildWindsurfChatStateBlob({
@@ -681,17 +653,6 @@ describe("Milestone 3 Batch 3: AI IDEs & Copilots Providers", () => {
 				path.join(chatDir, "codeium_chat_state_file_Users_alice_project.pb"),
 				blob,
 			);
-
-			const mockPaths = {
-				getHomeDir: () => tmpDir,
-				getConfigDir: () => tmpDir,
-				getDataDir: () => tmpDir,
-				getCacheDir: () => tmpDir,
-				expandPath: (p: string) => p,
-				normalize: (p: string) => p,
-				safeBasename: (p: string) => path.basename(p),
-				resolveHarnessPaths: () => [tmpDir],
-			};
 
 			const provider = new WindsurfProvider();
 			const sessions = await provider.discoverSessions(mockPaths);

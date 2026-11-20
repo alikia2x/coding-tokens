@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { store } from "../../server/data/store";
 import { startServer } from "../../server/start";
-import { defaultPlatformPathService } from "../../src/platform/paths";
+import { MockOsEnvProvider } from "../../src/platform/env";
+import { DefaultPlatformPathService } from "../../src/platform/paths";
 import {
 	defaultHarnessRegistry,
 	getAllProviders,
@@ -38,34 +39,65 @@ describe("Milestone 4: CLI and Server Full Integration", () => {
 	);
 
 	const originalEnv: Record<string, string | undefined> = {};
+	const envKeys = [
+		"HOME",
+		"CODEX_HOME",
+		"DSH_HOME",
+		"OPENCODE_DATA_DIR",
+		"OPENCODE_DB",
+		"COMMANDCODE_HOME",
+		"ANTIGRAVITY_HOME",
+		"T3_USER_DATA_DIR",
+		"CLAUDE_CONFIG_DIR",
+		"AIDER_HOME",
+		"GOOSE_PATH_ROOT",
+		"OPENHANDS_DIR",
+		"OPENHANDS_CONVERSATIONS_DIR",
+		"XDG_CONFIG_HOME",
+		"XDG_DATA_HOME",
+		"XDG_CACHE_HOME",
+	] as const;
 
 	beforeAll(() => {
-		originalEnv.CODEX_HOME = process.env.CODEX_HOME;
-		originalEnv.DSH_HOME = process.env.DSH_HOME;
-		originalEnv.OPENCODE_DATA_DIR = process.env.OPENCODE_DATA_DIR;
-		originalEnv.OPENCODE_DB = process.env.OPENCODE_DB;
-		originalEnv.COMMANDCODE_HOME = process.env.COMMANDCODE_HOME;
-		originalEnv.ANTIGRAVITY_HOME = process.env.ANTIGRAVITY_HOME;
-		originalEnv.CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR;
+		for (const key of envKeys) {
+			originalEnv[key] = process.env[key];
+		}
 
+		const mockHome = path.join(suiteTmp, "home");
 		mkdirSync(suiteTmp, { recursive: true });
+		mkdirSync(mockHome, { recursive: true });
+
+		process.env.HOME = mockHome;
 		process.env.CODEX_HOME = path.join(suiteTmp, "codex");
 		process.env.DSH_HOME = path.join(suiteTmp, "dsh");
 		process.env.OPENCODE_DATA_DIR = path.join(suiteTmp, "opencode");
 		process.env.OPENCODE_DB = path.join(suiteTmp, "opencode.db");
 		process.env.COMMANDCODE_HOME = path.join(suiteTmp, "commandcode");
 		process.env.ANTIGRAVITY_HOME = path.join(suiteTmp, "antigravity");
+		process.env.T3_USER_DATA_DIR = path.join(suiteTmp, "t3");
 		process.env.CLAUDE_CONFIG_DIR = path.join(suiteTmp, "claude");
+		process.env.AIDER_HOME = path.join(suiteTmp, "aider");
+		process.env.GOOSE_PATH_ROOT = path.join(suiteTmp, "goose");
+		process.env.OPENHANDS_DIR = path.join(suiteTmp, "openhands");
+		process.env.OPENHANDS_CONVERSATIONS_DIR = path.join(
+			suiteTmp,
+			"openhands",
+			"conversations",
+		);
+		process.env.XDG_CONFIG_HOME = path.join(suiteTmp, "xdg-config");
+		process.env.XDG_DATA_HOME = path.join(suiteTmp, "xdg-data");
+		process.env.XDG_CACHE_HOME = path.join(suiteTmp, "xdg-cache");
 
-		mkdirSync(process.env.CODEX_HOME, { recursive: true });
-		mkdirSync(process.env.DSH_HOME, { recursive: true });
-		mkdirSync(process.env.OPENCODE_DATA_DIR, { recursive: true });
-		mkdirSync(process.env.COMMANDCODE_HOME, { recursive: true });
-		mkdirSync(process.env.ANTIGRAVITY_HOME, { recursive: true });
-		mkdirSync(process.env.CLAUDE_CONFIG_DIR, { recursive: true });
+		for (const key of envKeys) {
+			if (key !== "OPENCODE_DB") {
+				const dir = process.env[key];
+				if (dir) mkdirSync(dir, { recursive: true });
+			}
+		}
 	});
 
 	afterAll(() => {
+		store.close();
 		for (const [key, val] of Object.entries(originalEnv)) {
 			if (val === undefined) {
 				delete process.env[key];
@@ -113,7 +145,13 @@ describe("Milestone 4: CLI and Server Full Integration", () => {
 		});
 
 		test("getAvailableProviders discovers available harnesses without throwing", async () => {
-			const available = await getAvailableProviders(defaultPlatformPathService);
+			const isolatedPaths = new DefaultPlatformPathService(
+				new MockOsEnvProvider({
+					platform: "darwin",
+					home: path.join(suiteTmp, "home"),
+				}),
+			);
+			const available = await getAvailableProviders(isolatedPaths);
 			expect(Array.isArray(available)).toBe(true);
 		});
 	});
@@ -201,6 +239,7 @@ describe("Milestone 4: CLI and Server Full Integration", () => {
 
 		afterAll(() => {
 			serverInstance?.server?.stop(true);
+			store.close();
 		});
 
 		test("GET /api/harnesses returns metadata, labels, and colors for all 15 harnesses", async () => {
@@ -265,10 +304,10 @@ describe("Milestone 4: CLI and Server Full Integration", () => {
 			const res = await fetch(
 				`${baseUrl}/api/sessions/claude/non-existent-session-id`,
 			);
-			// Should return 200 with empty items or valid structure, not 400 "Unknown harness"
-			expect(res.status).toBe(200);
-			const data = (await res.json()) as { items: unknown[] };
-			expect(Array.isArray(data.items)).toBe(true);
+			// Should return 404 "Session not found", not 400 "Unknown harness"
+			expect(res.status).toBe(404);
+			const data = (await res.json()) as { error: string };
+			expect(data.error).toBe("Session not found");
 		});
 
 		test("POST /api/sessions/:harness/:sessionId/export rejects invalid harness", async () => {

@@ -1,5 +1,12 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { matchesTextQuery, parseSearchQuery } from "@shared/search";
@@ -122,8 +129,90 @@ describe("Services: Transcript Services, Snippets & Search (Feature 9)", () => {
 	});
 
 	test("F9-T1-02: extractHarnessSearchTexts aggregates searchable text map from harness sources", () => {
-		const searchMap = extractHarnessSearchTexts("codex");
-		expect(searchMap).toBeInstanceOf(Map);
+		const isolatedHome = mkdtempSync(
+			path.join(os.tmpdir(), "ct-search-texts-"),
+		);
+		try {
+			const codexSessionsDir = path.join(
+				isolatedHome,
+				".codex",
+				"sessions",
+				"2026",
+				"03",
+				"01",
+			);
+			mkdirSync(codexSessionsDir, { recursive: true });
+			writeFileSync(
+				path.join(
+					codexSessionsDir,
+					"rollout-2026-03-01T10-00-00-codex-search-1.jsonl",
+				),
+				[
+					JSON.stringify({
+						type: "session_meta",
+						timestamp: "2026-03-01T10:00:00.000Z",
+						payload: {
+							id: "codex-search-1",
+							timestamp: "2026-03-01T10:00:00.000Z",
+							cwd: "/workspace/search-test",
+						},
+					}),
+					JSON.stringify({
+						type: "response_item",
+						timestamp: "2026-03-01T10:00:01.000Z",
+						payload: {
+							type: "message",
+							role: "user",
+							content: [
+								{
+									type: "input_text",
+									text: "Verify hermetic search indexing.",
+								},
+							],
+						},
+					}),
+					JSON.stringify({
+						type: "response_item",
+						timestamp: "2026-03-01T10:00:02.000Z",
+						payload: {
+							type: "message",
+							role: "assistant",
+							content: [
+								{
+									type: "output_text",
+									text: "Search indexing uses isolated fixture data.",
+								},
+							],
+						},
+					}),
+				].join("\n"),
+				"utf8",
+			);
+
+			const mockPaths = new DefaultPlatformPathService(
+				new MockOsEnvProvider({ platform: "darwin", home: isolatedHome }),
+			);
+			const searchMap = extractHarnessSearchTexts("codex", mockPaths);
+			expect(searchMap).toBeInstanceOf(Map);
+			expect(searchMap.get("codex-search-1")).toContain(
+				"Verify hermetic search indexing.",
+			);
+			expect(searchMap.get("codex-search-1")).toContain(
+				"Search indexing uses isolated fixture data.",
+			);
+
+			const emptyHome = mkdtempSync(path.join(os.tmpdir(), "ct-search-empty-"));
+			try {
+				const emptyPaths = new DefaultPlatformPathService(
+					new MockOsEnvProvider({ platform: "darwin", home: emptyHome }),
+				);
+				expect(extractHarnessSearchTexts("codex", emptyPaths).size).toBe(0);
+			} finally {
+				rmSync(emptyHome, { recursive: true, force: true });
+			}
+		} finally {
+			rmSync(isolatedHome, { recursive: true, force: true });
+		}
 	});
 
 	test("F9-T1-03: filterTranscriptSessions filters by harness, cwd and date ranges", () => {
@@ -534,7 +623,13 @@ describe("Services: DefaultTranscriptService & Markdown Export (Feature 9)", () 
 
 		registry.register(mockProvider);
 
-		const service = new DefaultTranscriptService(undefined, registry);
+		const mockPaths = new DefaultPlatformPathService(
+			new MockOsEnvProvider({
+				platform: "darwin",
+				home: path.join(tmpRoot, "lookup-home"),
+			}),
+		);
+		const service = new DefaultTranscriptService(mockPaths, registry);
 
 		// Hit
 		const found = await service.getTranscript("codex", sampleSession.sessionId);

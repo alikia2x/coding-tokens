@@ -440,7 +440,8 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 				sizeBytes: 100,
 				cwd: "/workspace",
 			});
-			expect(usage).toBeDefined();
+			expect(usage.available).toBe(true);
+			expect(usage.records).toEqual([]);
 		});
 
 		test("F12-T2-02: Missing ui_messages.json Fallback", async () => {
@@ -501,7 +502,9 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 				sizeBytes: 100,
 				cwd: "/workspace",
 			});
-			expect(usage).toBeDefined();
+			expect(usage.available).toBe(true);
+			expect(usage.records).toEqual([]);
+			expect(usage.warnings.length).toBeGreaterThanOrEqual(0);
 		});
 
 		test("F12-T2-04: Orphaned Task Directories", async () => {
@@ -1442,7 +1445,10 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 				cwd: "/workspace",
 			});
 			expect(usage.records.length).toBeGreaterThan(0);
-			expect(usage.records[0]?.costEstimated).toBe(true);
+			expect(usage.records[0]?.inputTokens).toBeGreaterThan(0);
+			expect(usage.records[0]?.outputTokens).toBeGreaterThan(0);
+			expect(usage.records[0]?.costUsd).toBeNull();
+			expect(usage.records[0]?.costEstimated).toBe(false);
 		});
 
 		test("F16-T2-04: Multi-Fragment Responses", async () => {
@@ -1800,7 +1806,8 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 			const sessions = await provider.discoverSessions(paths);
 			expect(sessions.length).toBeGreaterThan(0);
 			const usage = await provider.readUsage(paths, sessions[0]);
-			expect(usage).toBeDefined();
+			expect(usage.available).toBe(true);
+			expect(usage.records).toEqual([]);
 		});
 
 		test("F18-T2-02: Unknown Field Tags", async () => {
@@ -1846,7 +1853,8 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 
 			const paths = makePaths(mockHome);
 			const sessions = await provider.discoverSessions(paths);
-			expect(sessions[0]?.cwd).toBeDefined();
+			expect(sessions).toHaveLength(1);
+			expect(sessions[0]?.cwd).toBe("/workspace/my/20project/app");
 		});
 
 		test("F18-T2-05: Dual Directory Coexistence", async () => {
@@ -2411,7 +2419,10 @@ describe("Milestone 3 Mainstream Providers Suite (100 Tests: Features 11-20)", (
 
 			const paths = makePaths(mockHome);
 			const sessions = await provider.discoverSessions(paths);
-			expect(sessions).toBeDefined();
+			expect(sessions).toHaveLength(1);
+			expect(sessions[0]?.sessionId).toBe("conv-corrupt");
+			const usage = await provider.readUsage(paths, sessions[0]);
+			expect(usage.records).toEqual([]);
 		});
 	});
 });

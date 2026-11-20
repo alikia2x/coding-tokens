@@ -1,12 +1,9 @@
-import { describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { MockOsEnvProvider } from "../../../src/platform/env";
-import {
-	DefaultPlatformPathService,
-	defaultPlatformPathService,
-} from "../../../src/platform/paths";
+import { DefaultPlatformPathService } from "../../../src/platform/paths";
 import { ClineProvider } from "../../../src/providers/cline";
 import { ContinueProvider } from "../../../src/providers/continue";
 import { decodeWorkspaceUri } from "../../../src/providers/continue/discovery";
@@ -17,6 +14,37 @@ const HARNESSES_FIXTURES = path.join(FIXTURES_DIR, "harnesses");
 const PLATFORMS_FIXTURES = path.join(FIXTURES_DIR, "platforms");
 
 describe("Providers: VS Code Extension Ecosystem (Milestone 3 Batch 2)", () => {
+	const suiteTmp = mkdtempSync(path.join(os.tmpdir(), "ct-extensions-test-"));
+
+	afterAll(() => {
+		rmSync(suiteTmp, { recursive: true, force: true });
+	});
+
+	function createIsolatedPaths(
+		homeDir: string,
+		platform: "darwin" | "linux" = "darwin",
+		env?: Record<string, string>,
+	) {
+		return new DefaultPlatformPathService(
+			new MockOsEnvProvider({ platform, home: homeDir, env }),
+		);
+	}
+
+	function createStagedPaths(
+		harness: "cline" | "roo" | "continue",
+		sourceDir: string,
+	) {
+		const homeDir = path.join(
+			suiteTmp,
+			`${harness}-${Math.random().toString(36).slice(2, 8)}`,
+		);
+		const paths = createIsolatedPaths(homeDir);
+		const targetRoot = paths.resolveHarnessPaths(harness)[0];
+		if (!targetRoot) throw new Error(`No resolved path for ${harness}`);
+		mkdirSync(path.dirname(targetRoot), { recursive: true });
+		cpSync(sourceDir, targetRoot, { recursive: true });
+		return paths;
+	}
 	// =========================================================================
 	// 1. CLINE PROVIDER
 	// =========================================================================
@@ -36,13 +64,7 @@ describe("Providers: VS Code Extension Ecosystem (Milestone 3 Batch 2)", () => {
 
 		test("M3-B2-02: Session discovery against fixture storage", async () => {
 			const clineDir = path.join(HARNESSES_FIXTURES, "cline");
-			const mockEnv = new MockOsEnvProvider({
-				platform: "darwin",
-				home: path.dirname(clineDir),
-			});
-			// Point cline path resolution to our fixture root
-			const mockPaths = new DefaultPlatformPathService(mockEnv);
-			mockPaths.resolveHarnessPaths = () => [clineDir];
+			const mockPaths = createStagedPaths("cline", clineDir);
 
 			const provider = new ClineProvider();
 			const isAvail = await provider.isAvailable(mockPaths);
@@ -60,8 +82,7 @@ describe("Providers: VS Code Extension Ecosystem (Milestone 3 Batch 2)", () => {
 
 		test("M3-B2-03: Usage extraction from taskHistory.json and ui_messages.json telemetry", async () => {
 			const clineDir = path.join(HARNESSES_FIXTURES, "cline");
-			const mockPaths = new DefaultPlatformPathService();
-			mockPaths.resolveHarnessPaths = () => [clineDir];
+			const mockPaths = createStagedPaths("cline", clineDir);
 
 			const provider = new ClineProvider();
 			const usage = await provider.readUsage(mockPaths);
@@ -97,8 +118,7 @@ describe("Providers: VS Code Extension Ecosystem (Milestone 3 Batch 2)", () => {
 
 		test("M3-B2-04: Transcript extraction with user, assistant, and tool executions", async () => {
 			const clineDir = path.join(HARNESSES_FIXTURES, "cline");
-			const mockPaths = new DefaultPlatformPathService();
-			mockPaths.resolveHarnessPaths = () => [clineDir];
+			const mockPaths = createStagedPaths("cline", clineDir);
 
 			const provider = new ClineProvider();
 			const transcript = await provider.readTranscript(
@@ -162,11 +182,12 @@ describe("Providers: VS Code Extension Ecosystem (Milestone 3 Batch 2)", () => {
 		});
 
 		test("M3-B2-06: Task history summary fallback when ui_messages.json is missing", async () => {
-			const tmpDir = path.join(
-				os.tmpdir(),
+			const mockHome = path.join(
+				suiteTmp,
 				`ct-cline-summary-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
 			);
-			mkdirSync(path.join(tmpDir, "state"), { recursive: true });
+			const clineRoot = path.join(mockHome, ".cline");
+			mkdirSync(path.join(clineRoot, "state"), { recursive: true });
 
 			const taskHistory = [
 				{
@@ -183,12 +204,11 @@ describe("Providers: VS Code Extension Ecosystem (Milestone 3 Batch 2)", () => {
 				},
 			];
 			writeFileSync(
-				path.join(tmpDir, "state", "taskHistory.json"),
+				path.join(clineRoot, "state", "taskHistory.json"),
 				JSON.stringify(taskHistory),
 			);
 
-			const mockPaths = new DefaultPlatformPathService();
-			mockPaths.resolveHarnessPaths = () => [tmpDir];
+			const mockPaths = createIsolatedPaths(mockHome);
 
 			const provider = new ClineProvider();
 			const usage = await provider.readUsage(mockPaths);
@@ -198,7 +218,7 @@ describe("Providers: VS Code Extension Ecosystem (Milestone 3 Batch 2)", () => {
 			expect(usage.records[0]?.outputTokens).toBe(600);
 			expect(usage.records[0]?.costUsd).toBe(0.05);
 
-			rmSync(tmpDir, { recursive: true, force: true });
+			rmSync(mockHome, { recursive: true, force: true });
 		});
 	});
 
@@ -219,8 +239,7 @@ describe("Providers: VS Code Extension Ecosystem (Milestone 3 Batch 2)", () => {
 
 		test("M3-B2-08: Mode-aware session discovery and task history parsing", async () => {
 			const rooDir = path.join(HARNESSES_FIXTURES, "roo");
-			const mockPaths = new DefaultPlatformPathService();
-			mockPaths.resolveHarnessPaths = () => [rooDir];
+			const mockPaths = createStagedPaths("roo", rooDir);
 
 			const provider = new RooProvider();
 			const isAvail = await provider.isAvailable(mockPaths);
@@ -241,8 +260,7 @@ describe("Providers: VS Code Extension Ecosystem (Milestone 3 Batch 2)", () => {
 
 		test("M3-B2-09: Mode-aware telemetry usage extraction (Architect & Code modes)", async () => {
 			const rooDir = path.join(HARNESSES_FIXTURES, "roo");
-			const mockPaths = new DefaultPlatformPathService();
-			mockPaths.resolveHarnessPaths = () => [rooDir];
+			const mockPaths = createStagedPaths("roo", rooDir);
 
 			const provider = new RooProvider();
 			const usage = await provider.readUsage(mockPaths);
@@ -270,8 +288,7 @@ describe("Providers: VS Code Extension Ecosystem (Milestone 3 Batch 2)", () => {
 
 		test("M3-B2-10: Mode-aware transcript parsing with status and turn attribution", async () => {
 			const rooDir = path.join(HARNESSES_FIXTURES, "roo");
-			const mockPaths = new DefaultPlatformPathService();
-			mockPaths.resolveHarnessPaths = () => [rooDir];
+			const mockPaths = createStagedPaths("roo", rooDir);
 
 			const provider = new RooProvider();
 			const transcript = await provider.readTranscript(
@@ -292,22 +309,10 @@ describe("Providers: VS Code Extension Ecosystem (Milestone 3 Batch 2)", () => {
 		});
 
 		test("M3-B2-11: Platform fixture discovery on Linux", async () => {
-			const linuxRooStorage = path.join(
-				PLATFORMS_FIXTURES,
-				"linux",
-				".config",
-				"Code",
-				"User",
-				"globalStorage",
-				"rooveterinaryinc.roo-cline",
-			);
-			const mockEnv = new MockOsEnvProvider({
-				platform: "linux",
-				home: "/home/testuser",
-				env: { XDG_CONFIG_HOME: "/home/testuser/.config" },
+			const linuxHome = path.join(PLATFORMS_FIXTURES, "linux");
+			const mockPaths = createIsolatedPaths(linuxHome, "linux", {
+				XDG_CONFIG_HOME: path.join(linuxHome, ".config"),
 			});
-			const mockPaths = new DefaultPlatformPathService(mockEnv);
-			mockPaths.resolveHarnessPaths = () => [linuxRooStorage];
 
 			const provider = new RooProvider();
 			const isAvail = await provider.isAvailable(mockPaths);
@@ -349,8 +354,7 @@ describe("Providers: VS Code Extension Ecosystem (Milestone 3 Batch 2)", () => {
 
 		test("M3-B2-14: Session discovery from sessions.json catalog and session files", async () => {
 			const continueDir = path.join(HARNESSES_FIXTURES, "continue");
-			const mockPaths = new DefaultPlatformPathService();
-			mockPaths.resolveHarnessPaths = () => [continueDir];
+			const mockPaths = createStagedPaths("continue", continueDir);
 
 			const provider = new ContinueProvider();
 			const isAvail = await provider.isAvailable(mockPaths);
@@ -367,8 +371,7 @@ describe("Providers: VS Code Extension Ecosystem (Milestone 3 Batch 2)", () => {
 
 		test("M3-B2-15: Usage extraction from devdata.sqlite and tokensGenerated.jsonl", async () => {
 			const continueDir = path.join(HARNESSES_FIXTURES, "continue");
-			const mockPaths = new DefaultPlatformPathService();
-			mockPaths.resolveHarnessPaths = () => [continueDir];
+			const mockPaths = createStagedPaths("continue", continueDir);
 
 			const provider = new ContinueProvider();
 			const usage = await provider.readUsage(mockPaths);
@@ -394,8 +397,7 @@ describe("Providers: VS Code Extension Ecosystem (Milestone 3 Batch 2)", () => {
 
 		test("M3-B2-16: Transcript extraction from session JSON with tool calls from chatInteraction.jsonl", async () => {
 			const continueDir = path.join(HARNESSES_FIXTURES, "continue");
-			const mockPaths = new DefaultPlatformPathService();
-			mockPaths.resolveHarnessPaths = () => [continueDir];
+			const mockPaths = createStagedPaths("continue", continueDir);
 
 			const provider = new ContinueProvider();
 			const transcript = await provider.readTranscript(
@@ -463,40 +465,44 @@ describe("Providers: VS Code Extension Ecosystem (Milestone 3 Batch 2)", () => {
 	// =========================================================================
 	describe("Determinism, WatchPaths and Fingerprinting", () => {
 		test("M3-B2-18: Deterministic fingerprint format v12:count:hash for all Batch 2 providers", async () => {
-			const clineDir = path.join(HARNESSES_FIXTURES, "cline");
-			const rooDir = path.join(HARNESSES_FIXTURES, "roo");
-			const continueDir = path.join(HARNESSES_FIXTURES, "continue");
-
-			const clinePaths = new DefaultPlatformPathService();
-			clinePaths.resolveHarnessPaths = () => [clineDir];
+			const clinePaths = createStagedPaths(
+				"cline",
+				path.join(HARNESSES_FIXTURES, "cline"),
+			);
 			const clineProvider = new ClineProvider();
 			const clineFp = await clineProvider.computeFingerprint(clinePaths);
 			expect(clineFp).toMatch(/^v12:\d+:[0-9a-f]{64}$/);
 
-			const rooPaths = new DefaultPlatformPathService();
-			rooPaths.resolveHarnessPaths = () => [rooDir];
+			const rooPaths = createStagedPaths(
+				"roo",
+				path.join(HARNESSES_FIXTURES, "roo"),
+			);
 			const rooProvider = new RooProvider();
 			const rooFp = await rooProvider.computeFingerprint(rooPaths);
 			expect(rooFp).toMatch(/^v12:\d+:[0-9a-f]{64}$/);
 
-			const contPaths = new DefaultPlatformPathService();
-			contPaths.resolveHarnessPaths = () => [continueDir];
+			const contPaths = createStagedPaths(
+				"continue",
+				path.join(HARNESSES_FIXTURES, "continue"),
+			);
 			const contProvider = new ContinueProvider();
 			const contFp = await contProvider.computeFingerprint(contPaths);
 			expect(contFp).toMatch(/^v12:\d+:[0-9a-f]{64}$/);
 		});
 
 		test("M3-B2-19: WatchPaths return existing directories for file watching", () => {
-			const clineDir = path.join(HARNESSES_FIXTURES, "cline");
-			const clinePaths = new DefaultPlatformPathService();
-			clinePaths.resolveHarnessPaths = () => [clineDir];
+			const clinePaths = createStagedPaths(
+				"cline",
+				path.join(HARNESSES_FIXTURES, "cline"),
+			);
 			const clineProvider = new ClineProvider();
 			const clineWatch = clineProvider.getWatchPaths(clinePaths);
 			expect(clineWatch.length).toBeGreaterThan(0);
 
-			const continueDir = path.join(HARNESSES_FIXTURES, "continue");
-			const contPaths = new DefaultPlatformPathService();
-			contPaths.resolveHarnessPaths = () => [continueDir];
+			const contPaths = createStagedPaths(
+				"continue",
+				path.join(HARNESSES_FIXTURES, "continue"),
+			);
 			const contProvider = new ContinueProvider();
 			const contWatch = contProvider.getWatchPaths(contPaths);
 			expect(contWatch.length).toBeGreaterThan(0);
@@ -504,54 +510,49 @@ describe("Providers: VS Code Extension Ecosystem (Milestone 3 Batch 2)", () => {
 	});
 
 	// =========================================================================
-	// 5. REAL HOST DOGFOODING (Conditional & Graceful)
+	// 5. ISOLATED EMPTY & STAGED SANDBOX VERIFICATION
 	// =========================================================================
-	describe("Host Dogfooding Verification", () => {
-		test("M3-B2-20: Host discovery executes gracefully against live host environment", async () => {
+	describe("Isolated Sandbox Verification", () => {
+		test("M3-B2-20: Extension discovery executes cleanly against isolated empty and staged homes", async () => {
+			const emptyHome = path.join(suiteTmp, "empty-ext-home");
+			mkdirSync(emptyHome, { recursive: true });
+			const emptyPaths = createIsolatedPaths(emptyHome);
+
 			const clineProvider = new ClineProvider();
 			const rooProvider = new RooProvider();
 			const contProvider = new ContinueProvider();
 
-			// Test Cline against live host
-			const clineAvail = await clineProvider.isAvailable(
-				defaultPlatformPathService,
-			);
-			expect(typeof clineAvail).toBe("boolean");
-			if (clineAvail) {
-				const sessions = await clineProvider.discoverSessions(
-					defaultPlatformPathService,
-				);
-				expect(Array.isArray(sessions)).toBe(true);
-				const usage = await clineProvider.readUsage(defaultPlatformPathService);
-				expect(usage.harness).toBe("cline");
-			}
+			expect(await clineProvider.isAvailable(emptyPaths)).toBe(false);
+			expect(await clineProvider.discoverSessions(emptyPaths)).toEqual([]);
+			expect(await rooProvider.isAvailable(emptyPaths)).toBe(false);
+			expect(await rooProvider.discoverSessions(emptyPaths)).toEqual([]);
+			expect(await contProvider.isAvailable(emptyPaths)).toBe(false);
+			expect(await contProvider.discoverSessions(emptyPaths)).toEqual([]);
 
-			// Test Roo against live host
-			const rooAvail = await rooProvider.isAvailable(
-				defaultPlatformPathService,
+			const clinePaths = createStagedPaths(
+				"cline",
+				path.join(HARNESSES_FIXTURES, "cline"),
 			);
-			expect(typeof rooAvail).toBe("boolean");
-			if (rooAvail) {
-				const sessions = await rooProvider.discoverSessions(
-					defaultPlatformPathService,
-				);
-				expect(Array.isArray(sessions)).toBe(true);
-			}
+			const clineUsage = await clineProvider.readUsage(clinePaths);
+			expect(clineUsage.available).toBe(true);
+			expect(clineUsage.harness).toBe("cline");
+			expect(clineUsage.records.length).toBeGreaterThan(0);
 
-			// Test Continue against live host
-			const contAvail = await contProvider.isAvailable(
-				defaultPlatformPathService,
+			const rooPaths = createStagedPaths(
+				"roo",
+				path.join(HARNESSES_FIXTURES, "roo"),
 			);
-			expect(typeof contAvail).toBe("boolean");
-			if (contAvail) {
-				const sessions = await contProvider.discoverSessions(
-					defaultPlatformPathService,
-				);
-				expect(Array.isArray(sessions)).toBe(true);
-				const usage = await contProvider.readUsage(defaultPlatformPathService);
-				expect(usage.harness).toBe("continue");
-				expect(usage.records.length).toBeGreaterThan(0);
-			}
+			const rooSessions = await rooProvider.discoverSessions(rooPaths);
+			expect(rooSessions.length).toBeGreaterThan(0);
+
+			const contPaths = createStagedPaths(
+				"continue",
+				path.join(HARNESSES_FIXTURES, "continue"),
+			);
+			const contUsage = await contProvider.readUsage(contPaths);
+			expect(contUsage.available).toBe(true);
+			expect(contUsage.harness).toBe("continue");
+			expect(contUsage.records.length).toBeGreaterThan(0);
 		});
 	});
 });

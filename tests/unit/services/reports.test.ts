@@ -105,16 +105,40 @@ describe("Services: Reporting & Multi-Dimensional Aggregations (Feature 9)", () 
 		const hourSpan = 24 * 60 * 60 * 1000;
 		expect(chooseBucketUnit(1000, 1000 + hourSpan)).toBe("hour");
 
-		// <= 180 days -> day
+		// < 89 days -> day
 		const daySpan = 30 * 24 * 60 * 60 * 1000;
 		expect(chooseBucketUnit(1000, 1000 + daySpan)).toBe("day");
 
-		// > 180 days -> week
-		const weekSpan = 200 * 24 * 60 * 60 * 1000;
-		expect(chooseBucketUnit(1000, 1000 + weekSpan)).toBe("week");
+		// >= 89 days (e.g. 90d / 200d) -> month
+		const ninetyDaySpan = 89 * 24 * 60 * 60 * 1000;
+		expect(chooseBucketUnit(1000, 1000 + ninetyDaySpan)).toBe("month");
+		const longSpan = 200 * 24 * 60 * 60 * 1000;
+		expect(chooseBucketUnit(1000, 1000 + longSpan)).toBe("month");
 
-		// null bounds default to day
+		// null bounds default to day when no records provided
 		expect(chooseBucketUnit(null, null)).toBe("day");
+
+		// null or single-sided bounds resolve from actual record timestamps
+		const baseRecord = sampleRecords[0];
+		if (!baseRecord) throw new Error("expected sampleRecord");
+		const oldRecord = {
+			...baseRecord,
+			timestamp: new Date(2026, 0, 1).getTime(),
+		};
+		const newRecord = {
+			...baseRecord,
+			timestamp: new Date(2026, 5, 1).getTime(),
+		};
+		expect(chooseBucketUnit(null, null, [oldRecord, newRecord])).toBe("month");
+		expect(
+			chooseBucketUnit(new Date(2026, 0, 1).getTime(), null, [
+				oldRecord,
+				newRecord,
+			]),
+		).toBe("month");
+		expect(
+			chooseBucketUnit(null, new Date(2026, 0, 2).getTime(), [oldRecord]),
+		).toBe("hour");
 	});
 
 	test("F9-T1-03: bucketize groups records into temporal intervals with totals", () => {
@@ -123,12 +147,16 @@ describe("Services: Reporting & Multi-Dimensional Aggregations (Feature 9)", () 
 		const buckets = bucketize(sampleRecords, from, until, "day");
 
 		expect(buckets.length).toBeGreaterThan(0);
+		let bucketRequestSum = 0;
 		for (const bucket of buckets) {
 			expect(typeof bucket.key).toBe("string");
 			expect(typeof bucket.label).toBe("string");
 			expect(bucket.start).toBeLessThan(bucket.end);
-			expect(bucket.totals).toBeDefined();
+			expect(bucket.totals.requests).toBeGreaterThanOrEqual(0);
+			expect(bucket.totals.costUsd).toBeGreaterThanOrEqual(0);
+			bucketRequestSum += bucket.totals.requests;
 		}
+		expect(bucketRequestSum).toBe(3);
 	});
 
 	test("F9-T1-04: sparkline generates fixed-length normalized cost series", () => {
@@ -154,7 +182,9 @@ describe("Services: Reporting & Multi-Dimensional Aggregations (Feature 9)", () 
 	test("F9-T1-05: Overview, Project, Model and Harness report payloads return valid structures", () => {
 		// Overview payload
 		const overview = overviewPayload({});
-		expect(overview.totals).toBeDefined();
+		expect(overview.totals.sessions).toBeGreaterThanOrEqual(0);
+		expect(overview.totals.requests).toBeGreaterThanOrEqual(0);
+		expect(overview.totals.costUsd).toBeGreaterThanOrEqual(0);
 		expect(Array.isArray(overview.buckets)).toBe(true);
 		expect(Array.isArray(overview.harnesses)).toBe(true);
 		expect(Array.isArray(overview.models)).toBe(true);
@@ -168,18 +198,18 @@ describe("Services: Reporting & Multi-Dimensional Aggregations (Feature 9)", () 
 
 		// Project report payload
 		const projectRep = projectReportPayload({});
-		expect(projectRep.totals).toBeDefined();
+		expect(projectRep.totals.sessions).toBe(overview.totals.sessions);
 		expect(Array.isArray(projectRep.rows)).toBe(true);
 
 		// Model report payload
 		const modelRep = modelReportPayload({});
-		expect(modelRep.totals).toBeDefined();
+		expect(modelRep.totals.requests).toBe(overview.totals.requests);
 		expect(Array.isArray(modelRep.rows)).toBe(true);
 
 		// Harness report payload
 		const harnessRep = harnessReportPayload({}, harnessPaths());
-		expect(harnessRep.totals).toBeDefined();
-		expect(Array.isArray(harnessRep.rows)).toBe(true);
+		expect(harnessRep.totals.costUsd).toBe(overview.totals.costUsd);
+		expect(harnessRep.rows.length).toBe(15);
 	});
 
 	// =========================================================================
@@ -427,8 +457,9 @@ describe("Services: DefaultReportingService (Feature 9)", () => {
 
 		// Heatmap report
 		const heatmap = customReporting.getHeatmapReport(4);
-		expect(heatmap).toBeDefined();
-		expect(Array.isArray(heatmap.days)).toBe(true);
+		expect(heatmap.from).toBeLessThan(heatmap.until);
+		expect(heatmap.days.length).toBeGreaterThanOrEqual(21);
+		expect(heatmap.totals.requests).toBeGreaterThanOrEqual(0);
 
 		// Explore report
 		const explore = customReporting.getExploreReport({
@@ -439,12 +470,14 @@ describe("Services: DefaultReportingService (Feature 9)", () => {
 			bucket: "day",
 			breakdown: "none",
 		});
-		expect(explore).toBeDefined();
 		expect(explore.dimension).toBe("model");
+		expect(explore.totals.requests).toBe(3);
+		expect(explore.totals.inputTokens).toBe(6000);
+		expect(explore.rows.length).toBeGreaterThan(0);
 	});
 
 	test("F9-T1-03: defaultReportingService singleton conforms to ReportingService interface", () => {
-		expect(defaultReportingService).toBeDefined();
+		expect(defaultReportingService).toBeInstanceOf(DefaultReportingService);
 		expect(typeof defaultReportingService.getOverview).toBe("function");
 		expect(typeof defaultReportingService.getProjectReport).toBe("function");
 		expect(typeof defaultReportingService.getModelReport).toBe("function");

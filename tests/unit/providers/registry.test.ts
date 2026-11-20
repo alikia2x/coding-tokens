@@ -1,5 +1,9 @@
-import { beforeEach, describe, expect, test } from "bun:test";
-import { defaultPlatformPathService } from "../../../src/platform/paths";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { MockOsEnvProvider } from "../../../src/platform/env";
+import { DefaultPlatformPathService } from "../../../src/platform/paths";
 import {
 	DefaultHarnessRegistry,
 	defaultHarnessRegistry,
@@ -55,6 +59,16 @@ function createMockProvider(
 }
 
 describe("Providers: HarnessRegistry & Dynamic Registration (Feature 6)", () => {
+	const isolatedHome = mkdtempSync(path.join(os.tmpdir(), "ct-registry-test-"));
+	const isolatedPaths = new DefaultPlatformPathService(
+		new MockOsEnvProvider({ platform: "darwin", home: isolatedHome }),
+	);
+
+	afterAll(() => {
+		defaultHarnessRegistry.reset();
+		rmSync(isolatedHome, { recursive: true, force: true });
+	});
+
 	beforeEach(() => {
 		defaultHarnessRegistry.reset();
 	});
@@ -179,7 +193,7 @@ describe("Providers: HarnessRegistry & Dynamic Registration (Feature 6)", () => 
 		registry.register(inactiveProvider);
 		registry.register(throwingProvider);
 
-		const available = await registry.getAvailable(defaultPlatformPathService);
+		const available = await registry.getAvailable(isolatedPaths);
 		expect(available).toHaveLength(1);
 		expect(available[0]?.metadata.id).toBe("active");
 	});
@@ -198,9 +212,9 @@ describe("Providers: HarnessRegistry & Dynamic Registration (Feature 6)", () => 
 			"Helper Test",
 		);
 
-		const available = await getAvailableHarnesses();
-		expect(Array.isArray(available)).toBe(true);
-		const availableProv = await getAvailableProviders();
+		const available = await getAvailableHarnesses(isolatedPaths);
+		expect(available.map((p) => p.metadata.id)).toEqual(["helper-test"]);
+		const availableProv = await getAvailableProviders(isolatedPaths);
 		expect(availableProv.length).toBe(available.length);
 
 		expect(unregisterHarness("helper-test")).toBe(true);
@@ -253,7 +267,7 @@ describe("Providers: HarnessRegistry & Dynamic Registration (Feature 6)", () => 
 		registry.register(healthyProvider);
 
 		// Must not throw or crash unhandled
-		const available = await registry.getAvailable(defaultPlatformPathService);
+		const available = await registry.getAvailable(isolatedPaths);
 		expect(available).toHaveLength(1);
 		expect(available[0]?.metadata.id).toBe("healthy");
 	});
@@ -307,7 +321,7 @@ describe("Providers: HarnessRegistry & Dynamic Registration (Feature 6)", () => 
 		registry.register(fastProvider);
 
 		// Start availability check
-		const availPromise = registry.getAvailable(defaultPlatformPathService);
+		const availPromise = registry.getAvailable(isolatedPaths);
 
 		// Concurrently mutate registry during the wait
 		registry.register(createMockProvider("concurrent-1", "Concurrent 1", true));
@@ -379,7 +393,7 @@ describe("Providers: HarnessRegistry & Dynamic Registration (Feature 6)", () => 
 		expect(registry.get("codex")).toBeUndefined();
 		expect(registry.get("extra-1")).toBeUndefined();
 		expect(registry.has("dsh")).toBe(false);
-		expect(await registry.getAvailable(defaultPlatformPathService)).toEqual([]);
+		expect(await registry.getAvailable(isolatedPaths)).toEqual([]);
 	});
 
 	test("F6-T2-06: Multiple instances of DefaultHarnessRegistry remain isolated", () => {

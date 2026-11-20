@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { defaultPlatformPathService } from "../../../src/platform/paths";
+import { MockOsEnvProvider } from "../../../src/platform/env";
+import { DefaultPlatformPathService } from "../../../src/platform/paths";
+import { CodexProvider } from "../../../src/providers/codex";
 import type {
 	HarnessProvider,
 	SessionDiscoveryItem,
@@ -129,14 +131,17 @@ describe("Providers: Provider Types & Interface Contract (Feature 5)", () => {
 				return {
 					harness: "codex",
 					available: true,
-					sessions: [mockTranscript],
+					sessions: targetFiles?.has("/path/to/empty.jsonl")
+						? []
+						: [mockTranscript],
 					warnings: [],
-					indexedFiles: targetFiles
-						? Array.from(targetFiles)
-						: ["/path/to/sess-1.jsonl"],
 				};
 			},
 		};
+
+		const mockPaths = new DefaultPlatformPathService(
+			new MockOsEnvProvider({ platform: "darwin", home: "/mock/home" }),
+		);
 
 		// Test metadata
 		expect(mockProvider.metadata.id).toBe("codex");
@@ -144,58 +149,65 @@ describe("Providers: Provider Types & Interface Contract (Feature 5)", () => {
 		expect(mockProvider.metadata.color).toBe("#10a37f");
 
 		// Test isAvailable
-		const available = await mockProvider.isAvailable(
-			defaultPlatformPathService,
-		);
-		expect(typeof available).toBe("boolean");
+		const available = await mockProvider.isAvailable(mockPaths);
+		expect(available).toBe(true);
 
 		// Test discoverSessions
-		const discovered = await mockProvider.discoverSessions(
-			defaultPlatformPathService,
-		);
+		const discovered = await mockProvider.discoverSessions(mockPaths);
 		expect(discovered).toHaveLength(1);
 		expect(discovered[0]?.sessionId).toBe("sess-1");
 
 		// Test readUsage with item
-		const singleUsage = await mockProvider.readUsage(
-			defaultPlatformPathService,
-			mockSession,
-		);
+		const singleUsage = await mockProvider.readUsage(mockPaths, mockSession);
 		expect(singleUsage.records).toHaveLength(1);
 		expect(singleUsage.records[0]?.messageId).toBe("msg-1");
+		expect(singleUsage.records[0]?.costUsd).toBe(0.001);
 
 		// Test readUsage without item
-		const fullUsage = await mockProvider.readUsage(defaultPlatformPathService);
+		const fullUsage = await mockProvider.readUsage(mockPaths);
 		expect(fullUsage.records).toHaveLength(1);
 		expect(fullUsage.available).toBe(true);
+		expect(fullUsage.messages.get("sess-1")).toBe(1);
 
 		// Test readTranscript hit & miss
 		const transcriptHit = await mockProvider.readTranscript(
-			defaultPlatformPathService,
+			mockPaths,
 			"sess-1",
 		);
 		expect(transcriptHit?.sessionId).toBe("sess-1");
 		const transcriptMiss = await mockProvider.readTranscript(
-			defaultPlatformPathService,
+			mockPaths,
 			"non-existent",
 		);
 		expect(transcriptMiss).toBeNull();
 
 		// Test computeFingerprint
-		const fp = await mockProvider.computeFingerprint(
-			defaultPlatformPathService,
-		);
+		const fp = await mockProvider.computeFingerprint(mockPaths);
 		expect(fp).toBe("v12:1:mockhash");
 
 		// Test getWatchPaths
-		const watchPaths = mockProvider.getWatchPaths(defaultPlatformPathService);
+		const watchPaths = mockProvider.getWatchPaths(mockPaths);
 		expect(watchPaths).toEqual(["/mock/watch/path"]);
 
 		// Test optional readTranscripts
-		expect(mockProvider.readTranscripts).toBeDefined();
 		const batch = await mockProvider.readTranscripts?.(
-			defaultPlatformPathService,
+			mockPaths,
+			new Set(["/path/to/sess-1.jsonl"]),
 		);
+		expect(batch?.available).toBe(true);
 		expect(batch?.sessions).toHaveLength(1);
+		const emptyBatch = await mockProvider.readTranscripts?.(
+			mockPaths,
+			new Set(["/path/to/empty.jsonl"]),
+		);
+		expect(emptyBatch?.sessions).toHaveLength(0);
+
+		// Test real builtin provider contract against isolated empty paths
+		const realProvider = new CodexProvider();
+		expect(await realProvider.isAvailable(mockPaths)).toBe(false);
+		expect(await realProvider.discoverSessions(mockPaths)).toEqual([]);
+		expect(await realProvider.computeFingerprint(mockPaths)).toMatch(
+			/^v12:0:[0-9a-f]{64}$/,
+		);
 	});
 });

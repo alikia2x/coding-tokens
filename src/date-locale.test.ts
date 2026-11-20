@@ -76,3 +76,66 @@ describe("hourly chart bucket keys and tooltip labels", () => {
 		}
 	});
 });
+
+describe("weekly and monthly bucket aggregation and axis labels", () => {
+	test("weekly bucketize aggregates records from Monday through Sunday into the same week bucket", () => {
+		const from = new Date(2026, 2, 16, 0, 0, 0, 0).getTime(); // Mon Mar 16, 2026
+		const until = new Date(2026, 2, 23, 0, 0, 0, 0).getTime(); // Mon Mar 23, 2026
+		const wednesday = new Date(2026, 2, 18, 14, 0, 0, 0).getTime();
+		const sunday = new Date(2026, 2, 22, 20, 0, 0, 0).getTime();
+
+		const buckets = bucketize(
+			[
+				usageRecord(
+					{
+						harness: "codex",
+						sessionId: "s1",
+						messageId: "m1",
+						cwd: "/repo",
+						model: "gpt-5",
+						timestamp: wednesday,
+					},
+					{ input: 100, output: 50, cost: 1.25 },
+				),
+				usageRecord(
+					{
+						harness: "codex",
+						sessionId: "s2",
+						messageId: "m2",
+						cwd: "/repo",
+						model: "gpt-5",
+						timestamp: sunday,
+					},
+					{ input: 200, output: 100, cost: 2.5 },
+				),
+			],
+			from,
+			until,
+			"week",
+		);
+
+		expect(buckets).toHaveLength(1);
+		expect(buckets[0]?.totals.requests).toBe(2);
+		expect(buckets[0]?.totals.sessions).toBe(2);
+		expect(buckets[0]?.totals.inputTokens).toBe(300);
+		expect(buckets[0]?.totals.costUsd).toBeCloseTo(3.75, 4);
+	});
+
+	test("formats week buckets as date ranges and month buckets without day numbers", () => {
+		const weekStart = new Date(2026, 2, 16, 0, 0, 0, 0).getTime(); // Mar 16 - 22
+		const crossMonthWeek = new Date(2026, 2, 30, 0, 0, 0, 0).getTime(); // Mar 30 - Apr 5
+		const monthStart = new Date(2026, 2, 1, 0, 0, 0, 0).getTime(); // Mar 2026
+
+		expect(formatBucketLabelFor(weekStart, "week", "zh-CN")).toBe(
+			"3月16日–22日",
+		);
+		expect(formatBucketLabelFor(crossMonthWeek, "week", "zh-CN")).toBe(
+			"3月30日–4月5日",
+		);
+		expect(formatBucketLabelFor(monthStart, "month", "zh-CN")).toBe(
+			"2026年3月",
+		);
+		expect(formatBucketLabelFor(monthStart, "month", "en")).toBe("Mar 2026");
+		expect(formatBucketLabelFor(weekStart, "week", "en")).not.toBe("Mar 16");
+	});
+});

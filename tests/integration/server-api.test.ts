@@ -30,21 +30,37 @@ describe("Server REST API Integration Suite", () => {
 	let baseUrl = "";
 
 	beforeAll(async () => {
-		originalEnv = {
-			CODEX_HOME: process.env.CODEX_HOME,
-			DSH_HOME: process.env.DSH_HOME,
-			OPENCODE_DATA_DIR: process.env.OPENCODE_DATA_DIR,
-			OPENCODE_DB: process.env.OPENCODE_DB,
-			COMMANDCODE_HOME: process.env.COMMANDCODE_HOME,
-			ANTIGRAVITY_HOME: process.env.ANTIGRAVITY_HOME,
-			T3_USER_DATA_DIR: process.env.T3_USER_DATA_DIR,
-		};
+		const envKeys = [
+			"HOME",
+			"CODEX_HOME",
+			"DSH_HOME",
+			"OPENCODE_DATA_DIR",
+			"OPENCODE_DB",
+			"COMMANDCODE_HOME",
+			"ANTIGRAVITY_HOME",
+			"T3_USER_DATA_DIR",
+			"CLAUDE_CONFIG_DIR",
+			"AIDER_HOME",
+			"GOOSE_PATH_ROOT",
+			"OPENHANDS_DIR",
+			"OPENHANDS_CONVERSATIONS_DIR",
+			"XDG_CONFIG_HOME",
+			"XDG_DATA_HOME",
+			"XDG_CACHE_HOME",
+		] as const;
+		originalEnv = {};
+		for (const key of envKeys) {
+			originalEnv[key] = process.env[key];
+		}
 
+		const mockHome = path.join(suiteTmp, "home");
 		mkdirSync(suiteTmp, { recursive: true });
+		mkdirSync(mockHome, { recursive: true });
 		mkdirSync(codexHome, { recursive: true });
 		mkdirSync(dshHome, { recursive: true });
 		mkdirSync(exportTargetDir, { recursive: true });
 
+		process.env.HOME = mockHome;
 		process.env.CODEX_HOME = codexHome;
 		process.env.DSH_HOME = dshHome;
 		process.env.OPENCODE_DATA_DIR = path.join(suiteTmp, "opencode");
@@ -52,11 +68,25 @@ describe("Server REST API Integration Suite", () => {
 		process.env.COMMANDCODE_HOME = path.join(suiteTmp, "commandcode");
 		process.env.ANTIGRAVITY_HOME = path.join(suiteTmp, "antigravity");
 		process.env.T3_USER_DATA_DIR = path.join(suiteTmp, "t3");
+		process.env.CLAUDE_CONFIG_DIR = path.join(suiteTmp, "claude");
+		process.env.AIDER_HOME = path.join(suiteTmp, "aider");
+		process.env.GOOSE_PATH_ROOT = path.join(suiteTmp, "goose");
+		process.env.OPENHANDS_DIR = path.join(suiteTmp, "openhands");
+		process.env.OPENHANDS_CONVERSATIONS_DIR = path.join(
+			suiteTmp,
+			"openhands",
+			"conversations",
+		);
+		process.env.XDG_CONFIG_HOME = path.join(suiteTmp, "xdg-config");
+		process.env.XDG_DATA_HOME = path.join(suiteTmp, "xdg-data");
+		process.env.XDG_CACHE_HOME = path.join(suiteTmp, "xdg-cache");
 
-		mkdirSync(process.env.OPENCODE_DATA_DIR, { recursive: true });
-		mkdirSync(process.env.COMMANDCODE_HOME, { recursive: true });
-		mkdirSync(process.env.ANTIGRAVITY_HOME, { recursive: true });
-		mkdirSync(process.env.T3_USER_DATA_DIR, { recursive: true });
+		for (const key of envKeys) {
+			if (key !== "OPENCODE_DB") {
+				const dir = process.env[key];
+				if (dir) mkdirSync(dir, { recursive: true });
+			}
+		}
 
 		// Seed a valid Codex session so that sessions and exports succeed
 		const codexSessionsDir = path.join(codexHome, "sessions");
@@ -128,6 +158,7 @@ describe("Server REST API Integration Suite", () => {
 		if (serverInstance?.server) {
 			serverInstance.server.stop();
 		}
+		store.close();
 		for (const [key, val] of Object.entries(originalEnv)) {
 			if (val === undefined) {
 				delete process.env[key];
@@ -461,11 +492,10 @@ describe("Server REST API Integration Suite", () => {
 		test("API-T2-06: URL-encoded session ID is safely decoded without 500", async () => {
 			const encodedId = encodeURIComponent("/workspace/sub/sess-1");
 			const res = await dispatchApi(`/api/sessions/codex/${encodedId}`);
-			// Session may not exist in transcript sources, but it decodes safely and returns 200 payload
-			expect(res.status).toBe(200);
+			// Session does not exist in transcript sources; decodes safely and returns 404 rather than 500
+			expect(res.status).toBe(404);
 			const data = await res.json();
-			expect(data).toHaveProperty("summary");
-			expect(data.summary.sessionId).toBe("/workspace/sub/sess-1");
+			expect(data.error).toBe("Session not found");
 		});
 	});
 
@@ -515,29 +545,33 @@ describe("Server REST API Integration Suite", () => {
 			}
 
 			const partialStore = new DataStore();
-			partialStore.configure({ dbPath: partialDbPath });
-			await partialStore.start();
-
-			const summaries = partialStore.sessionSummaries({
-				from: null,
-				until: null,
-			});
-			const harnesses = new Set(summaries.map((item) => item.harness));
-			expect(harnesses.has("codex")).toBe(true);
-			expect(partialStore.catalogEntries().has("codex:codex-sess-1")).toBe(
-				true,
-			);
-
-			const persistedDb = new Database(partialDbPath, { readonly: true });
 			try {
-				const codexRows = persistedDb
-					.query(
-						"SELECT COUNT(*) as cnt FROM session_catalog WHERE harness = 'codex'",
-					)
-					.get() as { cnt: number };
-				expect(codexRows.cnt).toBeGreaterThan(0);
+				partialStore.configure({ dbPath: partialDbPath });
+				await partialStore.start();
+
+				const summaries = partialStore.sessionSummaries({
+					from: null,
+					until: null,
+				});
+				const harnesses = new Set(summaries.map((item) => item.harness));
+				expect(harnesses.has("codex")).toBe(true);
+				expect(partialStore.catalogEntries().has("codex:codex-sess-1")).toBe(
+					true,
+				);
+
+				const persistedDb = new Database(partialDbPath, { readonly: true });
+				try {
+					const codexRows = persistedDb
+						.query(
+							"SELECT COUNT(*) as cnt FROM session_catalog WHERE harness = 'codex'",
+						)
+						.get() as { cnt: number };
+					expect(codexRows.cnt).toBeGreaterThan(0);
+				} finally {
+					persistedDb.close();
+				}
 			} finally {
-				persistedDb.close();
+				partialStore.close();
 			}
 		});
 
@@ -647,14 +681,18 @@ describe("Server REST API Integration Suite", () => {
 			copyFileSync(dbPath, workerDbPath);
 
 			const coldStore = new DataStore();
-			coldStore.configure({ dbPath: workerDbPath, useIndexWorker: true });
-			await coldStore.start();
+			try {
+				coldStore.configure({ dbPath: workerDbPath, useIndexWorker: true });
+				await coldStore.start();
 
-			expect(coldStore.isReady).toBe(true);
-			expect(coldStore.allRecords().length).toBeGreaterThan(0);
-			expect(
-				coldStore.sessionSummaries({ from: null, until: null }).length,
-			).toBeGreaterThan(0);
+				expect(coldStore.isReady).toBe(true);
+				expect(coldStore.allRecords().length).toBeGreaterThan(0);
+				expect(
+					coldStore.sessionSummaries({ from: null, until: null }).length,
+				).toBeGreaterThan(0);
+			} finally {
+				coldStore.close();
+			}
 		});
 	});
 });

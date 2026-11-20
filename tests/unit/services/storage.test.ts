@@ -149,9 +149,7 @@ describe("Services: StorageService & SQLite Persistence (Feature 7)", () => {
 		const state = readSourceState(db, "dsh");
 		expect(state).toBeDefined();
 		expect(state?.fingerprint).toBe("fp-123456");
-		expect((state as unknown as { indexed_at: number })?.indexed_at).toBe(
-			1700000000000,
-		);
+		expect(state?.indexedAt).toBe(1700000000000);
 		expect(state?.available).toBe(1);
 		expect(JSON.parse(state?.warnings ?? "[]")).toEqual(["Warning sample"]);
 
@@ -772,7 +770,7 @@ describe("Services: DefaultStorageService (Feature 7)", () => {
 			const version = upgraded
 				.query<{ user_version: number }, []>("PRAGMA user_version")
 				.get()?.user_version;
-			expect(version).toBe(5);
+			expect(version).toBe(6);
 			const loaded = readHarnessRecords(upgraded, "codex");
 			expect(loaded).toHaveLength(2);
 			expect(loaded[0]?.rawModel).toBe("gpt-4o");

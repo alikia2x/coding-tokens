@@ -5,10 +5,7 @@ import path from "node:path";
 import { handleApi } from "../../server/api";
 import { store } from "../../server/data/store";
 import { MockOsEnvProvider } from "../../src/platform/env";
-import {
-	DefaultPlatformPathService,
-	defaultPlatformPathService,
-} from "../../src/platform/paths";
+import { DefaultPlatformPathService } from "../../src/platform/paths";
 import { AntigravityProvider } from "../../src/providers/antigravity";
 import { ClineProvider } from "../../src/providers/cline";
 import { CodexProvider } from "../../src/providers/codex";
@@ -236,34 +233,57 @@ describe("End-to-End Pipeline Integration Suite (Milestone EM3 Tier 3)", () => {
 
 	test("E2E-T3-05: Full Multi-Harness Pipeline -> REST API overview output", async () => {
 		const apiDbPath = path.join(suiteTmp, "api-pipeline.db");
-		const prevCodex = process.env.CODEX_HOME;
-		const prevDsh = process.env.DSH_HOME;
-		const prevOpenCode = process.env.OPENCODE_DB;
-		const prevCmd = process.env.COMMANDCODE_HOME;
-		const prevAg = process.env.ANTIGRAVITY_HOME;
-		const prevT3 = process.env.T3_USER_DATA_DIR;
+		const envKeys = [
+			"HOME",
+			"CODEX_HOME",
+			"DSH_HOME",
+			"OPENCODE_DATA_DIR",
+			"OPENCODE_DB",
+			"COMMANDCODE_HOME",
+			"ANTIGRAVITY_HOME",
+			"T3_USER_DATA_DIR",
+			"CLAUDE_CONFIG_DIR",
+			"AIDER_HOME",
+			"GOOSE_PATH_ROOT",
+			"OPENHANDS_DIR",
+			"OPENHANDS_CONVERSATIONS_DIR",
+			"XDG_CONFIG_HOME",
+			"XDG_DATA_HOME",
+			"XDG_CACHE_HOME",
+		] as const;
+		const savedEnv: Record<string, string | undefined> = {};
+		for (const key of envKeys) {
+			savedEnv[key] = process.env[key];
+		}
 
 		const emptyHome = path.join(suiteTmp, "empty-harnesses");
 		mkdirSync(emptyHome, { recursive: true });
-		process.env.CODEX_HOME = emptyHome;
-		process.env.DSH_HOME = emptyHome;
-		process.env.OPENCODE_DB = path.join(emptyHome, "none.db");
-		process.env.COMMANDCODE_HOME = emptyHome;
-		process.env.ANTIGRAVITY_HOME = emptyHome;
-		process.env.T3_USER_DATA_DIR = emptyHome;
+		for (const key of envKeys) {
+			if (key === "OPENCODE_DB") {
+				process.env[key] = path.join(emptyHome, "none.db");
+			} else {
+				process.env[key] = emptyHome;
+			}
+		}
+
+		const isolatedPaths = new DefaultPlatformPathService(
+			new MockOsEnvProvider({ platform: "darwin", home: emptyHome }),
+		);
+		const storage = createStorageService({
+			dbPath: apiDbPath,
+		});
 
 		try {
 			store.configure({ dbPath: apiDbPath });
 
-			// Seed storage directly via DefaultStorageService using current host fingerprints
-			// so store.start() preserves the seeded records on clean CI runners.
+			// Seed storage directly via DefaultStorageService using isolated empty fingerprints
+			// so store.start() preserves the seeded records deterministically.
 			const codexFp = await new CodexProvider().computeFingerprint(
-				defaultPlatformPathService,
+				isolatedPaths,
 			);
 			const clineFp = await new ClineProvider().computeFingerprint(
-				defaultPlatformPathService,
+				isolatedPaths,
 			);
-			const storage = createStorageService({ dbPath: apiDbPath });
 			await storage.init();
 			await storage.saveHarnessBatch({
 				harness: "codex",
@@ -332,18 +352,12 @@ describe("End-to-End Pipeline Integration Suite (Milestone EM3 Tier 3)", () => {
 			expect(overview.totals.sessions).toBeGreaterThanOrEqual(2);
 			expect(overview.totals.inputTokens).toBeGreaterThan(0);
 		} finally {
-			if (prevCodex !== undefined) process.env.CODEX_HOME = prevCodex;
-			else delete process.env.CODEX_HOME;
-			if (prevDsh !== undefined) process.env.DSH_HOME = prevDsh;
-			else delete process.env.DSH_HOME;
-			if (prevOpenCode !== undefined) process.env.OPENCODE_DB = prevOpenCode;
-			else delete process.env.OPENCODE_DB;
-			if (prevCmd !== undefined) process.env.COMMANDCODE_HOME = prevCmd;
-			else delete process.env.COMMANDCODE_HOME;
-			if (prevAg !== undefined) process.env.ANTIGRAVITY_HOME = prevAg;
-			else delete process.env.ANTIGRAVITY_HOME;
-			if (prevT3 !== undefined) process.env.T3_USER_DATA_DIR = prevT3;
-			else delete process.env.T3_USER_DATA_DIR;
+			store.close();
+			await storage.close();
+			for (const [key, val] of Object.entries(savedEnv)) {
+				if (val !== undefined) process.env[key] = val;
+				else delete process.env[key];
+			}
 		}
 	});
 
@@ -564,6 +578,8 @@ describe("End-to-End Pipeline Integration Suite (Milestone EM3 Tier 3)", () => {
 	});
 
 	test("E2E-T3-12: Full CLI Subprocess Scan on Synthetic Fixtures", async () => {
+		const emptyHome = path.join(suiteTmp, "cli-subproc-empty");
+		mkdirSync(emptyHome, { recursive: true });
 		const proc = Bun.spawn(
 			[
 				"bun",
@@ -578,12 +594,22 @@ describe("End-to-End Pipeline Integration Suite (Milestone EM3 Tier 3)", () => {
 				cwd: process.cwd(),
 				env: {
 					...process.env,
+					HOME: emptyHome,
 					CODEX_HOME: path.join(HARNESSES_DIR, "codex"),
 					DSH_HOME: path.join(HARNESSES_DIR, "dsh"),
 					OPENCODE_DATA_DIR: path.join(HARNESSES_DIR, "opencode"),
 					OPENCODE_DB: path.join(HARNESSES_DIR, "opencode/opencode.db"),
 					COMMANDCODE_HOME: path.join(HARNESSES_DIR, "commandcode"),
 					ANTIGRAVITY_HOME: path.join(HARNESSES_DIR, "antigravity"),
+					T3_USER_DATA_DIR: emptyHome,
+					CLAUDE_CONFIG_DIR: emptyHome,
+					AIDER_HOME: emptyHome,
+					GOOSE_PATH_ROOT: emptyHome,
+					OPENHANDS_DIR: emptyHome,
+					OPENHANDS_CONVERSATIONS_DIR: emptyHome,
+					XDG_CONFIG_HOME: emptyHome,
+					XDG_DATA_HOME: emptyHome,
+					XDG_CACHE_HOME: emptyHome,
 				},
 				stdout: "pipe",
 				stderr: "pipe",

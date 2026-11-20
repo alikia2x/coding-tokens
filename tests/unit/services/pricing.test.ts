@@ -2,8 +2,8 @@ import { afterAll, describe, expect, test } from "bun:test";
 import {
 	existsSync,
 	mkdirSync,
+	mkdtempSync,
 	readFileSync,
-	renameSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
@@ -11,10 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import type { UsageRecord } from "@shared/types";
 import { MockOsEnvProvider } from "../../../src/platform/env";
-import {
-	DefaultPlatformPathService,
-	defaultPlatformPathService,
-} from "../../../src/platform/paths";
+import { DefaultPlatformPathService } from "../../../src/platform/paths";
 import {
 	applyCatalog,
 	enrichWithModelsDev,
@@ -249,33 +246,13 @@ describe("Services: PricingService & models.dev Modernization (Feature 8)", () =
 	// =========================================================================
 
 	test("F8-T2-01: Network failure / timeout or cached catalog fallback returns cleanly without crashing", async () => {
-		const cachePath = path.join(
-			defaultPlatformPathService.getCacheDir("coding-tokens"),
-			"models.dev.json",
-		);
-		const backupPath = `${cachePath}.test-bak-${Date.now()}`;
-		let didBackup = false;
-		if (existsSync(cachePath)) {
-			renameSync(cachePath, backupPath);
-			didBackup = true;
-		}
-
-		const legacyCache = path.join(
-			defaultPlatformPathService.getHomeDir(),
-			"Library",
-			"Caches",
-			"harness-token-usage",
-			"models.dev.json",
-		);
-		const legacyBackup = `${legacyCache}.test-bak-${Date.now()}`;
-		let didLegacyBackup = false;
-		if (existsSync(legacyCache)) {
-			renameSync(legacyCache, legacyBackup);
-			didLegacyBackup = true;
-		}
-
-		const originalFetch = globalThis.fetch;
-		globalThis.fetch = ((..._args: unknown[]) => {
+		const isolatedHome = mkdtempSync(path.join(os.tmpdir(), "ct-pricing-net-"));
+		const mockEnv = new MockOsEnvProvider({
+			platform: "darwin",
+			home: isolatedHome,
+		});
+		const mockPaths = new DefaultPlatformPathService(mockEnv);
+		const mockFailingFetch = ((..._args: unknown[]) => {
 			throw new Error("Network timeout simulated");
 		}) as unknown as typeof fetch;
 
@@ -296,19 +273,16 @@ describe("Services: PricingService & models.dev Modernization (Feature 8)", () =
 				costEstimated: false,
 			};
 
-			const warning = await enrichWithModelsDev([record]);
+			const warning = await enrichWithModelsDev([record], {
+				paths: mockPaths,
+				fetchFn: mockFailingFetch,
+			});
 			// With isolated cache and simulated network failure, fallback warning must be returned
 			expect(warning).toContain("models.dev pricing could not be reached");
 			expect(record.costUsd).toBeNull();
 			expect(record.costEstimated).toBe(false);
 		} finally {
-			globalThis.fetch = originalFetch;
-			if (didBackup && existsSync(backupPath)) {
-				renameSync(backupPath, cachePath);
-			}
-			if (didLegacyBackup && existsSync(legacyBackup)) {
-				renameSync(legacyBackup, legacyCache);
-			}
+			rmSync(isolatedHome, { recursive: true, force: true });
 		}
 	});
 
@@ -357,7 +331,7 @@ describe("Services: PricingService & models.dev Modernization (Feature 8)", () =
 		expect(record.costEstimated).toBe(false);
 	});
 
-	test("F8-T2-04: Corrupted / invalid catalog data safely returns empty structure", () => {
+	test("F8-T2-04: Corrupted / invalid catalog data safely returns empty structure", async () => {
 		const emptyCat = readCatalog(null);
 		expect(emptyCat.providers.size).toBe(0);
 		expect(emptyCat.byProviderModel.size).toBe(0);
@@ -366,7 +340,7 @@ describe("Services: PricingService & models.dev Modernization (Feature 8)", () =
 		expect(malformedCat.providers.size).toBe(0);
 
 		// Empty array input to enrichWithModelsDev returns null immediately
-		expect(enrichWithModelsDev([])).resolves.toBeNull();
+		await expect(enrichWithModelsDev([])).resolves.toBeNull();
 	});
 
 	test("F8-T2-05: Unresolvable model graceful pass-through without throwing", () => {
@@ -543,7 +517,21 @@ describe("Services: DefaultPricingService (Feature 8)", () => {
 	});
 
 	test("F8-T1-04: enrichRecords populates missing costUsd and marks costEstimated", async () => {
-		const service = new DefaultPricingService();
+		const isolatedDir = path.join(tmpRoot, "pricing-enrich");
+		mkdirSync(isolatedDir, { recursive: true });
+		const mockEnv = new MockOsEnvProvider({
+			platform: "darwin",
+			home: isolatedDir,
+		});
+		const mockPaths = new DefaultPlatformPathService(mockEnv);
+		const mockFailingFetch = (async () => {
+			throw new Error("Offline test");
+		}) as unknown as typeof fetch;
+
+		const service = new DefaultPricingService({
+			paths: mockPaths,
+			fetchFn: mockFailingFetch,
+		});
 
 		const records: UsageRecord[] = [
 			{

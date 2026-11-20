@@ -2,6 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import {
+	protoBytes,
+	protoConcat,
+	protoVarint,
+} from "../tests/fixtures/helpers/protobuf-builder";
 import { readCodex } from "./sources/codex";
 import {
 	cleanUserMessage,
@@ -375,56 +380,6 @@ describe("Codex user message cleaning", () => {
 	});
 });
 
-function protoVarint(field: number, value: number): Uint8Array {
-	const bytes: number[] = [];
-	let tag = (field << 3) | 0;
-	while (tag >= 128) {
-		bytes.push((tag & 127) | 128);
-		tag >>>= 7;
-	}
-	bytes.push(tag);
-	let v = BigInt(value);
-	while (v >= 128n) {
-		bytes.push(Number(v & 127n) | 128);
-		v >>= 7n;
-	}
-	bytes.push(Number(v));
-	return new Uint8Array(bytes);
-}
-
-function protoBytes(field: number, content: Uint8Array | string): Uint8Array {
-	const payload =
-		typeof content === "string" ? new TextEncoder().encode(content) : content;
-	const header: number[] = [];
-	let tag = (field << 3) | 2;
-	while (tag >= 128) {
-		header.push((tag & 127) | 128);
-		tag >>>= 7;
-	}
-	header.push(tag);
-	let len = payload.length;
-	while (len >= 128) {
-		header.push((len & 127) | 128);
-		len >>>= 7;
-	}
-	header.push(len);
-	const out = new Uint8Array(header.length + payload.length);
-	out.set(header, 0);
-	out.set(payload, header.length);
-	return out;
-}
-
-function protoConcat(...parts: Uint8Array[]): Uint8Array {
-	const total = parts.reduce((sum, p) => sum + p.length, 0);
-	const out = new Uint8Array(total);
-	let offset = 0;
-	for (const p of parts) {
-		out.set(p, offset);
-		offset += p.length;
-	}
-	return out;
-}
-
 describe("Antigravity T3 ACP, subagents, and token parsing", () => {
 	test("strips T3 wrapper XML tags from Antigravity user messages", () => {
 		const wrapped = [
@@ -443,7 +398,11 @@ describe("Antigravity T3 ACP, subagents, and token parsing", () => {
 
 	test("discovers T3 antigravity-acp sessions, detects subagents, and extracts reasoning without bogus cacheWrite", async () => {
 		const { Database } = await import("bun:sqlite");
-		const { readAntigravity } = await import("./sources/antigravity");
+		const { readAntigravityUsageSync } = await import(
+			"./providers/antigravity/usage"
+		);
+		const { MockOsEnvProvider } = await import("./platform/env");
+		const { DefaultPlatformPathService } = await import("./platform/paths");
 		const { buildSessionCatalog } = await import("../server/data/catalog");
 
 		const prevAgHome = process.env.ANTIGRAVITY_HOME;
@@ -462,6 +421,13 @@ describe("Antigravity T3 ACP, subagents, and token parsing", () => {
 		mkdirSync(nativeConv, { recursive: true });
 
 		try {
+			const acpPaths = new DefaultPlatformPathService(
+				new MockOsEnvProvider({
+					platform: "darwin",
+					home: fakeHome,
+					env: { T3_USER_DATA_DIR: t3Dir },
+				}),
+			);
 			delete process.env.ANTIGRAVITY_HOME;
 			process.env.T3_USER_DATA_DIR = t3Dir;
 			process.env.HOME = fakeHome;
@@ -568,7 +534,7 @@ describe("Antigravity T3 ACP, subagents, and token parsing", () => {
 
 			// Also verify readAntigravity uses fakeHome fallback only if ANTIGRAVITY_HOME isn't overriding;
 			// note homeDir in util.ts is evaluated at module load time, so explicitly point to acpConv's parent via T3_USER_DATA_DIR and check ACP + subagent via direct ANTIGRAVITY_HOME for nativeConv.
-			const acpUsage = readAntigravity();
+			const acpUsage = readAntigravityUsageSync(acpPaths);
 			const acpRecords = acpUsage.records.filter(
 				(r) => r.sessionId === "acp-root-1",
 			);
@@ -580,12 +546,19 @@ describe("Antigravity T3 ACP, subagents, and token parsing", () => {
 			expect(acpRecords[0]?.timestamp).toBe(1_780_000_000_000);
 			expect(acpRecords[0]?.isSubagent).toBeUndefined();
 
-			const catalog = buildSessionCatalog(acpUsage.records);
+			const catalog = buildSessionCatalog(
+				acpUsage.records,
+				new Set(["antigravity"]),
+			);
 			expect(catalog.entries.get("antigravity:acp-root-1")?.title).toBe(
 				"T3 ACP Session Title",
 			);
 
-			const transcripts = readTranscriptSources(["antigravity"]);
+			const transcripts = readTranscriptSources(
+				["antigravity"],
+				undefined,
+				acpPaths,
+			);
 			const agTranscript = transcripts
 				.find((t) => t.harness === "antigravity")
 				?.sessions.find((s) => s.sessionId === "acp-root-1");
@@ -593,21 +566,35 @@ describe("Antigravity T3 ACP, subagents, and token parsing", () => {
 			expect(agTranscript?.items[0]?.text).toBe("Hello ACP");
 
 			// Test native subagent isolation with ANTIGRAVITY_HOME
+			const subPaths = new DefaultPlatformPathService(
+				new MockOsEnvProvider({
+					platform: "darwin",
+					home: fakeHome,
+					env: { ANTIGRAVITY_HOME: agHome },
+				}),
+			);
 			process.env.ANTIGRAVITY_HOME = agHome;
-			const subUsage = readAntigravity();
+			const subUsage = readAntigravityUsageSync(subPaths);
 			expect(subUsage.records).toHaveLength(1);
 			expect(subUsage.records[0]?.isSubagent).toBe(true);
 			expect(subUsage.records[0]?.cacheWriteTokens).toBe(0);
 			expect(subUsage.messages.get("sub-1")).toBeUndefined();
 
-			const subCatalog = buildSessionCatalog(subUsage.records);
+			const subCatalog = buildSessionCatalog(
+				subUsage.records,
+				new Set(["antigravity"]),
+			);
 			expect(subCatalog.entries.get("antigravity:sub-1")?.isSubagent).toBe(
 				true,
 			);
 			expect(subCatalog.entries.get("antigravity:sub-1")?.title).toBe(
 				"Subagent: Swarm Worker",
 			);
-			const bulkSubTranscripts = readTranscriptSources(["antigravity"]);
+			const bulkSubTranscripts = readTranscriptSources(
+				["antigravity"],
+				undefined,
+				subPaths,
+			);
 			expect(
 				bulkSubTranscripts.find((t) => t.harness === "antigravity")?.sessions,
 			).toHaveLength(0);

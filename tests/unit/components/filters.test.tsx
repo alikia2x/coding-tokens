@@ -1,54 +1,114 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	test,
+} from "bun:test";
 import type { StatusPayload } from "@shared/types";
 import { getHarnessLabel } from "@shared/types";
 import { GlobalWindow } from "happy-dom";
 
+const DOM_KEYS = [
+	"Event",
+	"CustomEvent",
+	"MouseEvent",
+	"PointerEvent",
+	"FocusEvent",
+	"KeyboardEvent",
+	"UIEvent",
+	"window",
+	"document",
+	"navigator",
+	"HTMLElement",
+	"HTMLButtonElement",
+	"HTMLInputElement",
+	"HTMLFormElement",
+	"Element",
+	"Node",
+	"NodeFilter",
+	"DocumentFragment",
+	"getComputedStyle",
+	"ResizeObserver",
+	"MutationObserver",
+	"requestAnimationFrame",
+	"cancelAnimationFrame",
+] as const;
+
+const savedDescriptors = new Map<string, PropertyDescriptor | undefined>();
+for (const key of DOM_KEYS) {
+	savedDescriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+}
+
 const win = new GlobalWindow();
-globalThis.Event = win.Event;
-globalThis.CustomEvent = win.CustomEvent;
-globalThis.MouseEvent = win.MouseEvent;
-globalThis.PointerEvent = win.PointerEvent;
-globalThis.FocusEvent = win.FocusEvent;
-globalThis.KeyboardEvent = win.KeyboardEvent;
-globalThis.UIEvent = win.UIEvent;
-globalThis.window = win as unknown as Window & typeof globalThis;
-globalThis.document = win.document as unknown as Document;
-globalThis.navigator = win.navigator as unknown as Navigator;
-Object.defineProperty(globalThis.navigator, "language", {
-	value: "en-US",
-	configurable: true,
-});
-globalThis.HTMLElement = win.HTMLElement as unknown as typeof HTMLElement;
-globalThis.HTMLButtonElement =
-	win.HTMLButtonElement as unknown as typeof HTMLButtonElement;
-globalThis.HTMLInputElement =
-	win.HTMLInputElement as unknown as typeof HTMLInputElement;
-globalThis.HTMLFormElement =
-	win.HTMLFormElement as unknown as typeof HTMLFormElement;
-globalThis.Element = win.Element as unknown as typeof Element;
-globalThis.Node = win.Node as unknown as typeof Node;
-globalThis.NodeFilter = win.NodeFilter as unknown as typeof NodeFilter;
-globalThis.DocumentFragment =
-	win.DocumentFragment as unknown as typeof DocumentFragment;
-(
-	globalThis as unknown as {
-		getComputedStyle: typeof win.getComputedStyle;
-	}
-).getComputedStyle = win.getComputedStyle.bind(win);
-globalThis.ResizeObserver = class {
+const resizeObserverStub = class {
 	observe() {}
 	unobserve() {}
 	disconnect() {}
 } as unknown as typeof ResizeObserver;
-globalThis.MutationObserver =
-	win.MutationObserver as unknown as typeof MutationObserver;
-globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) =>
+const rafStub = ((cb: FrameRequestCallback) =>
 	setTimeout(cb, 0)) as unknown as typeof requestAnimationFrame;
-globalThis.cancelAnimationFrame = ((id: number) =>
+const cafStub = ((id: number) =>
 	clearTimeout(id)) as unknown as typeof cancelAnimationFrame;
+
+function applyHappyDomGlobals() {
+	globalThis.Event = win.Event as unknown as typeof Event;
+	globalThis.CustomEvent = win.CustomEvent as unknown as typeof CustomEvent;
+	globalThis.MouseEvent = win.MouseEvent as unknown as typeof MouseEvent;
+	globalThis.PointerEvent = win.PointerEvent as unknown as typeof PointerEvent;
+	globalThis.FocusEvent = win.FocusEvent as unknown as typeof FocusEvent;
+	globalThis.KeyboardEvent =
+		win.KeyboardEvent as unknown as typeof KeyboardEvent;
+	globalThis.UIEvent = win.UIEvent as unknown as typeof UIEvent;
+	globalThis.window = win as unknown as Window & typeof globalThis;
+	globalThis.document = win.document as unknown as Document;
+	globalThis.navigator = win.navigator as unknown as Navigator;
+	Object.defineProperty(globalThis.navigator, "language", {
+		value: "en-US",
+		configurable: true,
+	});
+	globalThis.HTMLElement = win.HTMLElement as unknown as typeof HTMLElement;
+	globalThis.HTMLButtonElement =
+		win.HTMLButtonElement as unknown as typeof HTMLButtonElement;
+	globalThis.HTMLInputElement =
+		win.HTMLInputElement as unknown as typeof HTMLInputElement;
+	globalThis.HTMLFormElement =
+		win.HTMLFormElement as unknown as typeof HTMLFormElement;
+	globalThis.Element = win.Element as unknown as typeof Element;
+	globalThis.Node = win.Node as unknown as typeof Node;
+	globalThis.NodeFilter = win.NodeFilter as unknown as typeof NodeFilter;
+	globalThis.DocumentFragment =
+		win.DocumentFragment as unknown as typeof DocumentFragment;
+	(
+		globalThis as unknown as {
+			getComputedStyle: typeof win.getComputedStyle;
+		}
+	).getComputedStyle = win.getComputedStyle.bind(win);
+	globalThis.ResizeObserver = resizeObserverStub;
+	globalThis.MutationObserver =
+		win.MutationObserver as unknown as typeof MutationObserver;
+	globalThis.requestAnimationFrame = rafStub;
+	globalThis.cancelAnimationFrame = cafStub;
+}
+
+function restoreHappyDomGlobals() {
+	for (const key of DOM_KEYS) {
+		const desc = savedDescriptors.get(key);
+		if (desc) {
+			Object.defineProperty(globalThis, key, desc);
+		} else {
+			Reflect.deleteProperty(globalThis, key);
+		}
+	}
+}
+
+applyHappyDomGlobals();
 
 const React = await import("react");
 const ReactDOM = await import("react-dom/client");
+type Root = import("react-dom/client").Root;
 const { MemoryRouter } = await import("react-router");
 const { QueryClient, QueryClientProvider } = await import(
 	"@tanstack/react-query"
@@ -69,7 +129,10 @@ function sleep(ms: number) {
 function click(element: Element | null | undefined) {
 	if (!element) throw new Error("Element not found for click");
 	element.dispatchEvent(
-		new win.MouseEvent("click", { bubbles: true, cancelable: true }),
+		new win.MouseEvent("click", {
+			bubbles: true,
+			cancelable: true,
+		}) as unknown as Event,
 	);
 }
 
@@ -77,9 +140,18 @@ function makeStatusPayload(): StatusPayload {
 	return {
 		ready: true,
 		indexing: false,
+		phase: "ready",
+		progress: { completed: 15, total: 15 },
+		indexedAt: Date.now(),
+		durationMs: 10,
+		error: null,
+		totals: { sessions: 53, records: 50 },
+		warnings: [],
 		harnesses: [
 			{
 				harness: "codex",
+				label: getHarnessLabel("codex"),
+				paths: [],
 				available: true,
 				records: 10,
 				sessions: 12,
@@ -87,6 +159,8 @@ function makeStatusPayload(): StatusPayload {
 			},
 			{
 				harness: "dsh",
+				label: getHarnessLabel("dsh"),
+				paths: [],
 				available: true,
 				records: 5,
 				sessions: 7,
@@ -94,6 +168,8 @@ function makeStatusPayload(): StatusPayload {
 			},
 			{
 				harness: "opencode",
+				label: getHarnessLabel("opencode"),
+				paths: [],
 				available: true,
 				records: 3,
 				sessions: 4,
@@ -101,6 +177,8 @@ function makeStatusPayload(): StatusPayload {
 			},
 			{
 				harness: "commandcode",
+				label: getHarnessLabel("commandcode"),
+				paths: [],
 				available: false,
 				records: 0,
 				sessions: 0,
@@ -108,6 +186,8 @@ function makeStatusPayload(): StatusPayload {
 			},
 			{
 				harness: "antigravity",
+				label: getHarnessLabel("antigravity"),
+				paths: [],
 				available: true,
 				records: 8,
 				sessions: 9,
@@ -115,6 +195,8 @@ function makeStatusPayload(): StatusPayload {
 			},
 			{
 				harness: "claude",
+				label: getHarnessLabel("claude"),
+				paths: [],
 				available: true,
 				records: 20,
 				sessions: 15,
@@ -122,23 +204,31 @@ function makeStatusPayload(): StatusPayload {
 			},
 			{
 				harness: "custom-harness",
+				label: getHarnessLabel("custom-harness"),
+				paths: [],
 				available: true,
 				records: 4,
 				sessions: 6,
 				warnings: [],
 			},
 		],
-		lastIndexedAt: Date.now(),
-		totalRecords: 50,
-		totalSessions: 53,
-		totalMessages: 200,
 	};
 }
 
 describe("Dynamic Harness Filter UI Regression Suite", () => {
 	let container: HTMLDivElement;
-	let root: ReactDOM.Root;
+	let root: Root;
 	const originalFetch = globalThis.fetch;
+
+	beforeAll(() => {
+		applyHappyDomGlobals();
+	});
+
+	afterAll(async () => {
+		await sleep(30);
+		restoreHappyDomGlobals();
+		await win.close();
+	});
 
 	beforeEach(() => {
 		document.body.innerHTML = "";
@@ -147,8 +237,10 @@ describe("Dynamic Harness Filter UI Regression Suite", () => {
 		root = ReactDOM.createRoot(container);
 	});
 
-	afterEach(() => {
+	afterEach(async () => {
 		root.unmount();
+		await sleep(10);
+		document.body.innerHTML = "";
 		globalThis.fetch = originalFetch;
 	});
 
@@ -164,7 +256,7 @@ describe("Dynamic Harness Filter UI Regression Suite", () => {
 			["custom-harness", 6],
 		]);
 
-		let selectedHarness: string | null = null;
+		const selected: { harness: string | null } = { harness: null };
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false } },
 		});
@@ -191,7 +283,7 @@ describe("Dynamic Harness Filter UI Regression Suite", () => {
 						status,
 						rangeLabel: "All time",
 						onSelectHarness: (value) => {
-							selectedHarness = value;
+							selected.harness = value;
 						},
 						onSetProjects: () => {},
 						onSetModels: () => {},
@@ -220,7 +312,7 @@ describe("Dynamic Harness Filter UI Regression Suite", () => {
 
 		click(customBtn);
 		await sleep(20);
-		expect(selectedHarness).toBe("custom-harness");
+		expect(selected.harness).toBe("custom-harness");
 	});
 
 	test("ExplorePage renders dynamic harnesses from status.data.harnesses in the Harness FacetFilter with labels and counts", async () => {
@@ -344,7 +436,12 @@ describe("Dynamic Harness Filter UI Regression Suite", () => {
 
 	test("SessionsPage batch export button exports only filtered sessions via BatchExportDialog", async () => {
 		const status = makeStatusPayload();
-		let postedBatchPayload: Record<string, unknown> | null = null;
+		const capturedBatch: { payload: Record<string, unknown> | null } = {
+			payload: null,
+		};
+		const capturePostedPayload = (payload: Record<string, unknown>) => {
+			capturedBatch.payload = payload;
+		};
 		const sessionsData = {
 			indexedAt: Date.now(),
 			warnings: [],
@@ -427,10 +524,9 @@ describe("Dynamic Harness Filter UI Regression Suite", () => {
 				);
 			}
 			if (url.includes("/api/sessions/export")) {
-				postedBatchPayload = JSON.parse(String(init?.body ?? "{}")) as Record<
-					string,
-					unknown
-				>;
+				capturePostedPayload(
+					JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+				);
 				return new Response(
 					JSON.stringify({
 						directory: "/tmp/coding-tokens-exports",
@@ -512,8 +608,8 @@ describe("Dynamic Harness Filter UI Regression Suite", () => {
 		click(confirmBtn);
 		await sleep(50);
 
-		expect(postedBatchPayload).not.toBeNull();
-		expect(postedBatchPayload?.keys).toEqual(["claude:c1"]);
+		expect(capturedBatch.payload).not.toBeNull();
+		expect(capturedBatch.payload?.keys).toEqual(["claude:c1"]);
 		expect(document.body.textContent).toContain(
 			"/tmp/coding-tokens-exports/export-1",
 		);

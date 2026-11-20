@@ -1,48 +1,105 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	test,
+} from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import type { DateRange } from "react-day-picker";
 
+const DOM_KEYS = [
+	"Event",
+	"CustomEvent",
+	"MouseEvent",
+	"PointerEvent",
+	"FocusEvent",
+	"KeyboardEvent",
+	"UIEvent",
+	"window",
+	"document",
+	"navigator",
+	"HTMLElement",
+	"HTMLButtonElement",
+	"HTMLInputElement",
+	"Element",
+	"Node",
+	"NodeFilter",
+	"getComputedStyle",
+	"ResizeObserver",
+	"requestAnimationFrame",
+	"cancelAnimationFrame",
+] as const;
+
+const savedDescriptors = new Map<string, PropertyDescriptor | undefined>();
+for (const key of DOM_KEYS) {
+	savedDescriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+}
+
 // Setup happy-dom environment before importing React and UI components
 const win = new GlobalWindow();
-globalThis.Event = win.Event;
-globalThis.CustomEvent = win.CustomEvent;
-globalThis.MouseEvent = win.MouseEvent;
-globalThis.PointerEvent = win.PointerEvent;
-globalThis.FocusEvent = win.FocusEvent;
-globalThis.KeyboardEvent = win.KeyboardEvent;
-globalThis.UIEvent = win.UIEvent;
-globalThis.window = win as unknown as Window & typeof globalThis;
-globalThis.document = win.document as unknown as Document;
-globalThis.navigator = win.navigator as unknown as Navigator;
-Object.defineProperty(globalThis.navigator, "language", {
-	value: "en-US",
-	configurable: true,
-});
-globalThis.HTMLElement = win.HTMLElement as unknown as typeof HTMLElement;
-globalThis.HTMLButtonElement =
-	win.HTMLButtonElement as unknown as typeof HTMLButtonElement;
-globalThis.HTMLInputElement =
-	win.HTMLInputElement as unknown as typeof HTMLInputElement;
-globalThis.Element = win.Element as unknown as typeof Element;
-globalThis.Node = win.Node as unknown as typeof Node;
-globalThis.NodeFilter = win.NodeFilter as unknown as typeof NodeFilter;
-(
-	globalThis as unknown as {
-		getComputedStyle: typeof win.getComputedStyle;
-	}
-).getComputedStyle = win.getComputedStyle.bind(win);
-globalThis.ResizeObserver = class {
+const resizeObserverStub = class {
 	observe() {}
 	unobserve() {}
 	disconnect() {}
 } as unknown as typeof ResizeObserver;
-globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) =>
+const rafStub = ((cb: FrameRequestCallback) =>
 	setTimeout(cb, 0)) as unknown as typeof requestAnimationFrame;
-globalThis.cancelAnimationFrame = ((id: number) =>
+const cafStub = ((id: number) =>
 	clearTimeout(id)) as unknown as typeof cancelAnimationFrame;
+
+function applyHappyDomGlobals() {
+	globalThis.Event = win.Event as unknown as typeof Event;
+	globalThis.CustomEvent = win.CustomEvent as unknown as typeof CustomEvent;
+	globalThis.MouseEvent = win.MouseEvent as unknown as typeof MouseEvent;
+	globalThis.PointerEvent = win.PointerEvent as unknown as typeof PointerEvent;
+	globalThis.FocusEvent = win.FocusEvent as unknown as typeof FocusEvent;
+	globalThis.KeyboardEvent =
+		win.KeyboardEvent as unknown as typeof KeyboardEvent;
+	globalThis.UIEvent = win.UIEvent as unknown as typeof UIEvent;
+	globalThis.window = win as unknown as Window & typeof globalThis;
+	globalThis.document = win.document as unknown as Document;
+	globalThis.navigator = win.navigator as unknown as Navigator;
+	Object.defineProperty(globalThis.navigator, "language", {
+		value: "en-US",
+		configurable: true,
+	});
+	globalThis.HTMLElement = win.HTMLElement as unknown as typeof HTMLElement;
+	globalThis.HTMLButtonElement =
+		win.HTMLButtonElement as unknown as typeof HTMLButtonElement;
+	globalThis.HTMLInputElement =
+		win.HTMLInputElement as unknown as typeof HTMLInputElement;
+	globalThis.Element = win.Element as unknown as typeof Element;
+	globalThis.Node = win.Node as unknown as typeof Node;
+	globalThis.NodeFilter = win.NodeFilter as unknown as typeof NodeFilter;
+	(
+		globalThis as unknown as {
+			getComputedStyle: typeof win.getComputedStyle;
+		}
+	).getComputedStyle = win.getComputedStyle.bind(win);
+	globalThis.ResizeObserver = resizeObserverStub;
+	globalThis.requestAnimationFrame = rafStub;
+	globalThis.cancelAnimationFrame = cafStub;
+}
+
+function restoreHappyDomGlobals() {
+	for (const key of DOM_KEYS) {
+		const desc = savedDescriptors.get(key);
+		if (desc) {
+			Object.defineProperty(globalThis, key, desc);
+		} else {
+			Reflect.deleteProperty(globalThis, key);
+		}
+	}
+}
+
+applyHappyDomGlobals();
 
 const React = await import("react");
 const ReactDOM = await import("react-dom/client");
+type Root = import("react-dom/client").Root;
 const { MemoryRouter } = await import("react-router");
 const { QueryClient, QueryClientProvider } = await import(
 	"@tanstack/react-query"
@@ -52,6 +109,18 @@ const { TimeRangePicker } = await import("~/components/time-range-picker");
 const { RangeProvider, useRange } = await import("~/lib/range");
 const { SettingsProvider } = await import("~/lib/settings");
 
+type CapturedRange = ReturnType<typeof useRange>["range"];
+
+function createRangeCapture() {
+	const state: { current: CapturedRange | null } = { current: null };
+	function RangeProbe() {
+		const { range } = useRange();
+		state.current = range;
+		return null;
+	}
+	return { state, RangeProbe };
+}
+
 function sleep(ms: number) {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -59,13 +128,26 @@ function sleep(ms: number) {
 function click(element: Element | null | undefined) {
 	if (!element) throw new Error("Element not found for click");
 	element.dispatchEvent(
-		new win.MouseEvent("click", { bubbles: true, cancelable: true }),
+		new win.MouseEvent("click", {
+			bubbles: true,
+			cancelable: true,
+		}) as unknown as Event,
 	);
 }
 
 describe("Date Picker & Calendar Interactive Regression Suite", () => {
 	let container: HTMLDivElement;
-	let root: ReactDOM.Root;
+	let root: Root;
+
+	beforeAll(() => {
+		applyHappyDomGlobals();
+	});
+
+	afterAll(async () => {
+		await sleep(30);
+		restoreHappyDomGlobals();
+		await win.close();
+	});
 
 	beforeEach(() => {
 		document.body.innerHTML = "";
@@ -74,9 +156,17 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		root = ReactDOM.createRoot(container);
 	});
 
+	afterEach(async () => {
+		root.unmount();
+		await sleep(10);
+		document.body.innerHTML = "";
+	});
+
 	test("Calendar: mode='range' onSelect fires immediately with DateRange and triggerDate", async () => {
-		let firedRange: DateRange | undefined;
-		let firedTrigger: Date | null = null;
+		const captured: {
+			range: DateRange | undefined;
+			trigger: Date | null;
+		} = { range: undefined, trigger: null };
 
 		function TestCalendar() {
 			const [selected, setSelected] = React.useState<DateRange | undefined>(
@@ -87,8 +177,8 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 				selected,
 				month: new Date(2026, 9, 1), // October 2026
 				onSelect: (range: DateRange | undefined, triggerDate: Date) => {
-					firedRange = range;
-					firedTrigger = triggerDate;
+					captured.range = range;
+					captured.trigger = triggerDate;
 					setSelected(range);
 				},
 			});
@@ -110,11 +200,11 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		click(btn15);
 		await sleep(40);
 
-		expect(firedTrigger).not.toBeNull();
-		expect(firedTrigger?.getDate()).toBe(15);
-		expect(firedTrigger?.getMonth()).toBe(9); // October
-		expect(firedRange).toBeDefined();
-		expect(firedRange?.from).toBeDefined();
+		expect(captured.trigger).not.toBeNull();
+		expect(captured.trigger?.getDate()).toBe(15);
+		expect(captured.trigger?.getMonth()).toBe(9); // October
+		expect(captured.range).toBeDefined();
+		expect(captured.range?.from).toBeDefined();
 
 		// Re-query day buttons after first click and re-render
 		const dayButtonsAfter = Array.from(
@@ -127,10 +217,10 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		click(btn22);
 		await sleep(40);
 
-		expect(firedTrigger?.getDate()).toBe(22);
-		expect(firedRange?.from).toBeDefined();
-		expect(firedRange?.to).toBeDefined();
-		expect(firedRange?.to.getDate()).toBe(22);
+		expect(captured.trigger?.getDate()).toBe(22);
+		expect(captured.range?.from).toBeDefined();
+		expect(captured.range?.to).toBeDefined();
+		expect(captured.range?.to?.getDate()).toBe(22);
 	});
 
 	test("Calendar: range modifiers highlight start, middle, and end dates accurately", async () => {
@@ -199,13 +289,7 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false } },
 		});
-		let capturedRange: ReturnType<typeof useRange> | null = null;
-
-		function RangeProbe() {
-			const { range } = useRange();
-			capturedRange = range;
-			return null;
-		}
+		const { state: captured, RangeProbe } = createRangeCapture();
 
 		root.render(
 			React.createElement(
@@ -229,7 +313,7 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		);
 		await sleep(40);
 
-		expect(capturedRange?.key).toBe("30d");
+		expect(captured.current?.key).toBe("30d");
 
 		// Open the Popover
 		const trigger = document.querySelector("[data-range-picker]");
@@ -298,12 +382,12 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		click(applyBtnAfter);
 		await sleep(60);
 
-		expect(capturedRange?.key).toBe("custom");
-		expect(capturedRange?.from).toBeDefined();
-		expect(capturedRange?.until).toBeDefined();
+		expect(captured.current?.key).toBe("custom");
+		expect(captured.current?.from).not.toBeNull();
+		expect(captured.current?.until).not.toBeNull();
 
-		const fromDate = new Date(capturedRange.from);
-		const toDate = new Date(capturedRange.until - 1);
+		const fromDate = new Date(captured.current?.from ?? 0);
+		const toDate = new Date((captured.current?.until ?? 1) - 1);
 		expect(fromDate.getDate()).toBe(10);
 		expect(fromDate.getMonth()).toBe(9); // October
 		expect(toDate.getDate()).toBe(20);
@@ -314,13 +398,7 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false } },
 		});
-		let capturedRange: ReturnType<typeof useRange> | null = null;
-
-		function RangeProbe() {
-			const { range } = useRange();
-			capturedRange = range;
-			return null;
-		}
+		const { state: captured, RangeProbe } = createRangeCapture();
 
 		root.render(
 			React.createElement(
@@ -376,9 +454,11 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		click(applyBtn);
 		await sleep(60);
 
-		expect(capturedRange?.key).toBe("custom");
-		const fromDate = new Date(capturedRange.from);
-		const toDate = new Date(capturedRange.until - 1);
+		expect(captured.current?.key).toBe("custom");
+		expect(captured.current?.from).not.toBeNull();
+		expect(captured.current?.until).not.toBeNull();
+		const fromDate = new Date(captured.current?.from ?? 0);
+		const toDate = new Date((captured.current?.until ?? 1) - 1);
 		expect(fromDate.getDate()).toBe(5);
 		expect(toDate.getDate()).toBe(20);
 		expect(fromDate.getTime()).toBeLessThan(toDate.getTime());
@@ -388,13 +468,7 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false } },
 		});
-		let capturedRange: ReturnType<typeof useRange> | null = null;
-
-		function RangeProbe() {
-			const { range } = useRange();
-			capturedRange = range;
-			return null;
-		}
+		const { state: captured, RangeProbe } = createRangeCapture();
 
 		root.render(
 			React.createElement(
@@ -445,9 +519,11 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		click(applyBtn);
 		await sleep(60);
 
-		expect(capturedRange?.key).toBe("custom");
-		const fromDate = new Date(capturedRange.from);
-		const toDate = new Date(capturedRange.until - 1);
+		expect(captured.current?.key).toBe("custom");
+		expect(captured.current?.from).not.toBeNull();
+		expect(captured.current?.until).not.toBeNull();
+		const fromDate = new Date(captured.current?.from ?? 0);
+		const toDate = new Date((captured.current?.until ?? 1) - 1);
 		expect(fromDate.getDate()).toBe(15);
 		expect(toDate.getDate()).toBe(15);
 		// Span should be full day 23:59:00
@@ -459,13 +535,7 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false } },
 		});
-		let capturedRange: ReturnType<typeof useRange> | null = null;
-
-		function RangeProbe() {
-			const { range } = useRange();
-			capturedRange = range;
-			return null;
-		}
+		const { state: captured, RangeProbe } = createRangeCapture();
 
 		root.render(
 			React.createElement(
@@ -505,7 +575,7 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		click(preset7d);
 		await sleep(60);
 
-		expect(capturedRange?.key).toBe("7d");
+		expect(captured.current?.key).toBe("7d");
 
 		// Open popover again and click "All time"
 		click(document.querySelector("[data-range-picker]"));
@@ -519,7 +589,7 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		click(presetAll);
 		await sleep(60);
 
-		expect(capturedRange?.key).toBe("all");
+		expect(captured.current?.key).toBe("all");
 	});
 
 	test("TimeRangePicker: Reset button resets draft to default settings fallback", async () => {
@@ -571,16 +641,7 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 	});
 
 	test("TimeRangePicker: allows start-only open-ended custom range", async () => {
-		let capturedRange: {
-			key: string;
-			from: number | null;
-			until: number | null;
-		} | null = null;
-		function RangeProbe() {
-			const { range } = useRange();
-			capturedRange = range;
-			return null;
-		}
+		const { state: captured, RangeProbe } = createRangeCapture();
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false } },
 		});
@@ -626,22 +687,13 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		click(applyButton);
 		await sleep(60);
 
-		expect(capturedRange?.key).toBe("custom");
-		expect(capturedRange?.from).not.toBeNull();
-		expect(capturedRange?.until).toBeNull();
+		expect(captured.current?.key).toBe("custom");
+		expect(captured.current?.from).not.toBeNull();
+		expect(captured.current?.until).toBeNull();
 	});
 
 	test("TimeRangePicker: allows clearing start endpoint for end-only open-ended custom range", async () => {
-		let capturedRange: {
-			key: string;
-			from: number | null;
-			until: number | null;
-		} | null = null;
-		function RangeProbe() {
-			const { range } = useRange();
-			capturedRange = range;
-			return null;
-		}
+		const { state: captured, RangeProbe } = createRangeCapture();
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false } },
 		});
@@ -689,8 +741,161 @@ describe("Date Picker & Calendar Interactive Regression Suite", () => {
 		click(applyButton);
 		await sleep(60);
 
-		expect(capturedRange?.key).toBe("custom");
-		expect(capturedRange?.from).toBeNull();
-		expect(capturedRange?.until).not.toBeNull();
+		expect(captured.current?.key).toBe("custom");
+		expect(captured.current?.from).toBeNull();
+		expect(captured.current?.until).not.toBeNull();
+	});
+
+	test("TimeRangePicker: keeps day button DOM mounted across hover preview when selecting end date", async () => {
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		const { state: captured, RangeProbe } = createRangeCapture();
+
+		root.render(
+			React.createElement(
+				QueryClientProvider,
+				{ client: queryClient },
+				React.createElement(
+					SettingsProvider,
+					null,
+					React.createElement(
+						MemoryRouter,
+						{ initialEntries: ["/?range=all"] },
+						React.createElement(
+							RangeProvider,
+							null,
+							React.createElement(RangeProbe, null),
+							React.createElement(TimeRangePicker, null),
+						),
+					),
+				),
+			),
+		);
+		await sleep(40);
+
+		click(document.querySelector("[data-range-picker]"));
+		await sleep(50);
+
+		// Click Start endpoint explicitly, then click day 10
+		const startEndpoint = document.querySelector(
+			'button[data-endpoint="start"]',
+		);
+		click(startEndpoint);
+		await sleep(20);
+
+		const day10 = Array.from(
+			document.querySelectorAll("button[data-day]"),
+		).find((b) => b.textContent?.trim() === "10");
+		expect(day10).toBeDefined();
+		click(day10);
+		await sleep(40);
+
+		// Hover over day 18 before clicking it; DOM element must NOT unmount/remount
+		const day18BeforeHover = Array.from(
+			document.querySelectorAll("button[data-day]"),
+		).find((b) => b.textContent?.trim() === "18");
+		expect(day18BeforeHover).toBeDefined();
+		day18BeforeHover?.dispatchEvent(
+			new MouseEvent("mouseover", { bubbles: true }),
+		);
+		await sleep(30);
+
+		const day18AfterHover = Array.from(
+			document.querySelectorAll("button[data-day]"),
+		).find((b) => b.textContent?.trim() === "18");
+		expect(day18AfterHover).toBe(day18BeforeHover);
+
+		click(day18AfterHover);
+		await sleep(40);
+
+		const applyButton = Array.from(document.querySelectorAll("button")).find(
+			(b) => b.textContent?.trim() === "Apply",
+		) as HTMLButtonElement | undefined;
+		expect(applyButton?.disabled).toBe(false);
+		click(applyButton);
+		await sleep(60);
+
+		expect(captured.current?.key).toBe("custom");
+		expect(new Date(captured.current?.from ?? 0).getDate()).toBe(10);
+		expect(new Date((captured.current?.until ?? 1) - 1).getDate()).toBe(18);
+	});
+
+	test("TimeRangePicker: allows applying empty/all-time range without error and supports in-panel year/month jumping", async () => {
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		const { state: captured, RangeProbe } = createRangeCapture();
+
+		root.render(
+			React.createElement(
+				QueryClientProvider,
+				{ client: queryClient },
+				React.createElement(
+					SettingsProvider,
+					null,
+					React.createElement(
+						MemoryRouter,
+						{ initialEntries: ["/?range=all"] },
+						React.createElement(
+							RangeProvider,
+							null,
+							React.createElement(RangeProbe, null),
+							React.createElement(TimeRangePicker, null),
+						),
+					),
+				),
+			),
+		);
+		await sleep(40);
+
+		click(document.querySelector("[data-range-picker]"));
+		await sleep(50);
+
+		// Should NOT show validation error when range=all is active
+		expect(document.body.textContent).not.toContain(
+			"Choose a start and end date",
+		);
+		// Must NOT render native <select> dropdowns; instead supports in-panel year/month grids
+		expect(document.querySelectorAll("select").length).toBe(0);
+
+		const yearTrigger = document.querySelector(
+			"button[data-calendar-year-trigger]",
+		);
+		expect(yearTrigger).not.toBeNull();
+		click(yearTrigger);
+		await sleep(30);
+
+		const year2025Btn = document.querySelector(
+			'button[data-calendar-year="2025"]',
+		);
+		expect(year2025Btn).not.toBeNull();
+		click(year2025Btn);
+		await sleep(30);
+
+		const monthMarBtn = document.querySelector(
+			'button[data-calendar-month="2"]',
+		);
+		expect(monthMarBtn).not.toBeNull();
+		click(monthMarBtn);
+		await sleep(30);
+
+		const jumpedYearTrigger = document.querySelector(
+			'button[data-calendar-year-trigger="2025"]',
+		);
+		const jumpedMonthTrigger = document.querySelector(
+			'button[data-calendar-month-trigger="2"]',
+		);
+		expect(jumpedYearTrigger).not.toBeNull();
+		expect(jumpedMonthTrigger).not.toBeNull();
+
+		const applyButton = Array.from(document.querySelectorAll("button")).find(
+			(b) => b.textContent?.trim() === "Apply",
+		) as HTMLButtonElement | undefined;
+		expect(applyButton?.disabled).toBe(false);
+		click(applyButton);
+		await sleep(50);
+
+		expect(captured.current?.key).toBe("all");
 	});
 });

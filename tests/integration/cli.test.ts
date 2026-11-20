@@ -14,6 +14,7 @@ describe("CLI Integration Suite (Feature 1)", () => {
 		os.tmpdir(),
 		`ct-cli-suite-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
 	);
+	const mockHome = path.join(suiteTmp, "home");
 	const codexHome = path.join(suiteTmp, "codex");
 	const dshHome = path.join(suiteTmp, "dsh");
 	const opencodeData = path.join(suiteTmp, "opencode");
@@ -21,8 +22,16 @@ describe("CLI Integration Suite (Feature 1)", () => {
 	const commandcodeHome = path.join(suiteTmp, "commandcode");
 	const antigravityHome = path.join(suiteTmp, "antigravity");
 	const t3UserData = path.join(suiteTmp, "t3");
+	const claudeConfigDir = path.join(suiteTmp, "claude");
+	const aiderHome = path.join(suiteTmp, "aider");
+	const gooseRoot = path.join(suiteTmp, "goose");
+	const openhandsDir = path.join(suiteTmp, "openhands");
+	const xdgConfigHome = path.join(suiteTmp, "xdg-config");
+	const xdgDataHome = path.join(suiteTmp, "xdg-data");
+	const xdgCacheHome = path.join(suiteTmp, "xdg-cache");
 
 	const isolatedEnv: Record<string, string> = {
+		HOME: mockHome,
 		CODEX_HOME: codexHome,
 		DSH_HOME: dshHome,
 		OPENCODE_DATA_DIR: opencodeData,
@@ -30,16 +39,32 @@ describe("CLI Integration Suite (Feature 1)", () => {
 		COMMANDCODE_HOME: commandcodeHome,
 		ANTIGRAVITY_HOME: antigravityHome,
 		T3_USER_DATA_DIR: t3UserData,
+		CLAUDE_CONFIG_DIR: claudeConfigDir,
+		AIDER_HOME: aiderHome,
+		GOOSE_PATH_ROOT: gooseRoot,
+		OPENHANDS_DIR: openhandsDir,
+		OPENHANDS_CONVERSATIONS_DIR: path.join(openhandsDir, "conversations"),
+		XDG_CONFIG_HOME: xdgConfigHome,
+		XDG_DATA_HOME: xdgDataHome,
+		XDG_CACHE_HOME: xdgCacheHome,
 	};
 
 	beforeAll(() => {
 		mkdirSync(suiteTmp, { recursive: true });
+		mkdirSync(mockHome, { recursive: true });
 		mkdirSync(codexHome, { recursive: true });
 		mkdirSync(dshHome, { recursive: true });
 		mkdirSync(opencodeData, { recursive: true });
 		mkdirSync(commandcodeHome, { recursive: true });
 		mkdirSync(antigravityHome, { recursive: true });
 		mkdirSync(t3UserData, { recursive: true });
+		mkdirSync(claudeConfigDir, { recursive: true });
+		mkdirSync(aiderHome, { recursive: true });
+		mkdirSync(gooseRoot, { recursive: true });
+		mkdirSync(openhandsDir, { recursive: true });
+		mkdirSync(xdgConfigHome, { recursive: true });
+		mkdirSync(xdgDataHome, { recursive: true });
+		mkdirSync(xdgCacheHome, { recursive: true });
 
 		// Seed a minimal valid Codex session so that export commands find sessions
 		const codexSessionsDir = path.join(codexHome, "sessions");

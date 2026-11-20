@@ -45,7 +45,7 @@ const KNOWN_HOST_HARNESSES_WITH_SESSIONS = [
 	"continue",
 ];
 
-describe.skipIf(Boolean(process.env.CI))(
+describe.skipIf(Boolean(process.env.CI) || process.env.RUN_DOGFOOD !== "1")(
 	"Feature 25: Real Host Dogfooding Automated Test Suite",
 	() => {
 		const paths = defaultPlatformPathService;

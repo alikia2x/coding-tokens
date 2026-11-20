@@ -205,7 +205,7 @@ describe("Feature 26: Adversarial Hardening (Tier 5)", () => {
 			const provider = new ClaudeProvider();
 			const session = await provider.readTranscript(paths, "sess-trans");
 
-			expect(session).toBeDefined();
+			expect(session).not.toBeNull();
 			expect(session?.sessionId).toBe("sess-trans");
 			expect(session?.items.length).toBeGreaterThan(0);
 			const userItems = session?.items.filter((it) => it.role === "user");
@@ -587,8 +587,12 @@ describe("Feature 26: Adversarial Hardening (Tier 5)", () => {
 	describe("5. Corrupted Protobuf Wire Streams and Unexpected Tag Types", () => {
 		test("F26-PROTO-01: Empty buffer and truncated 1-byte headers decode safely", () => {
 			expect(decodeProto(new Uint8Array([]))).toEqual([]);
-			expect(decodeProto(new Uint8Array([0x08]))).toBeDefined(); // Tag without varint value
-			expect(decodeProto(new Uint8Array([0x12]))).toBeDefined(); // Tag without length delimiter
+			expect(decodeProto(new Uint8Array([0x08]))).toEqual([
+				{ field: 1, wire: 0, val: 0 },
+			]); // Tag without varint value
+			expect(decodeProto(new Uint8Array([0x12]))).toEqual([
+				{ field: 2, wire: 2, raw: new Uint8Array([]) },
+			]); // Tag without length delimiter
 		});
 
 		test("F26-PROTO-02: Infinite-varint sequence with MSB=1 terminates at EOF without hanging", () => {
@@ -644,7 +648,7 @@ describe("Feature 26: Adversarial Hardening (Tier 5)", () => {
 			expect(protoSub({ field: 1, wire: 2 })).toEqual([]);
 			expect(
 				protoSub({ field: 1, wire: 2, raw: new Uint8Array([0xff, 0xff]) }),
-			).toBeDefined();
+			).toEqual([]);
 		});
 
 		test("F26-PROTO-06: Windsurf parseWindsurfPbFile returns null or fallback on noise and 0-byte files", () => {
@@ -685,7 +689,7 @@ describe("Feature 26: Adversarial Hardening (Tier 5)", () => {
 			writeFileSync(pbFile, partialPb);
 			const parsed = parseWindsurfPbFile(pbFile);
 
-			expect(parsed).toBeDefined();
+			expect(parsed).not.toBeNull();
 			expect(parsed?.conversationId).toBe("sess-partial");
 			expect(parsed?.model).toBe("claude-3-5-sonnet");
 		});
@@ -695,9 +699,18 @@ describe("Feature 26: Adversarial Hardening (Tier 5)", () => {
 	// Domain 6: Zero-Token and Unpriced Model Fallback Calculations
 	// =========================================================================
 	describe("6. Zero-Token and Unpriced Model Fallback Calculations", () => {
-		const pricingService = new DefaultPricingService();
+		const pricingHome = path.join(tmpDir, "pricing-home");
+		const pricingService = new DefaultPricingService({
+			paths: new DefaultPlatformPathService(
+				new MockOsEnvProvider({ platform: "darwin", home: pricingHome }),
+			),
+			fetchFn: (async () => {
+				throw new Error("Offline test");
+			}) as unknown as typeof fetch,
+		});
 
 		beforeAll(async () => {
+			mkdirSync(pricingHome, { recursive: true });
 			await pricingService.init();
 		});
 
@@ -766,9 +779,8 @@ describe("Feature 26: Adversarial Hardening (Tier 5)", () => {
 				0,
 				800, // reasoning exceeds output
 			);
-			expect(cost).toBeDefined();
-			expect(typeof cost).toBe("number");
-			expect(cost ?? 0).toBeGreaterThan(0);
+			expect(cost).not.toBeNull();
+			expect(cost).toBeCloseTo(0.002302, 6);
 		});
 
 		test("F26-PRICING-05: Fallback rate deduction when reasoning and cache tiers are missing", () => {
@@ -782,8 +794,8 @@ describe("Feature 26: Adversarial Hardening (Tier 5)", () => {
 				100,
 				50,
 			);
-			expect(costWithTiers).toBeDefined();
-			expect(costWithTiers ?? 0).toBeGreaterThan(0);
+			expect(costWithTiers).not.toBeNull();
+			expect(costWithTiers).toBeCloseTo(0.008, 6);
 		});
 
 		test("F26-PRICING-06: enrichRecords processes mixed batch (priced, unpriced, zero-token) safely", async () => {
@@ -874,13 +886,13 @@ describe("Feature 26: Adversarial Hardening (Tier 5)", () => {
 			const r1 = pricingService.getModelRates(
 				"Anthropic/Claude-3-5-Sonnet-20241022",
 			);
-			expect(r1).toBeDefined();
+			expect(r1).toMatchObject({ input: 3, output: 15 });
 
 			const r2 = pricingService.getModelRates("GPT-4O-MINI-2024-07-18");
-			expect(r2).toBeDefined();
+			expect(r2).toMatchObject({ input: 2.5, output: 10 });
 
 			const r3 = pricingService.getModelRates("deepseek/deepseek-chat");
-			expect(r3).toBeDefined();
+			expect(r3).toMatchObject({ input: 0.14, output: 0.28 });
 		});
 	});
 });

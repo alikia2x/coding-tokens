@@ -1,12 +1,9 @@
-import { beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { MockOsEnvProvider } from "../../../src/platform/env";
-import {
-	DefaultPlatformPathService,
-	defaultPlatformPathService,
-} from "../../../src/platform/paths";
+import { DefaultPlatformPathService } from "../../../src/platform/paths";
 import { AiderProvider } from "../../../src/providers/aider";
 import { ClaudeProvider } from "../../../src/providers/claude";
 import { GooseProvider } from "../../../src/providers/goose";
@@ -21,6 +18,10 @@ describe("Milestone 3 Batch 1: Major CLI & Autonomous Agents", () => {
 
 	beforeEach(() => {
 		mkdirSync(tmpDir, { recursive: true });
+	});
+
+	afterAll(() => {
+		rmSync(tmpDir, { recursive: true, force: true });
 	});
 
 	// =========================================================================
@@ -360,27 +361,61 @@ describe("Milestone 3 Batch 1: Major CLI & Autonomous Agents", () => {
 			expect(items[4]?.phase).toBe("final");
 		});
 
-		test("CLAUDE-05: Real local host compatibility test against ~/.claude if present", async () => {
-			const hostClaude = path.join(os.homedir(), ".claude");
-			if (!existsSync(hostClaude)) {
-				console.log(
-					"Skipping host Claude test: ~/.claude does not exist on host.",
-				);
-				return;
-			}
+		test("CLAUDE-05: Isolated ~/.claude compatibility test with multi-project sessions", async () => {
+			const mockHome = path.join(tmpDir, "claude-compat-home");
+			const projectDir = path.join(
+				mockHome,
+				".claude",
+				"projects",
+				"-Users-dev-compat-app",
+			);
+			mkdirSync(projectDir, { recursive: true });
 
+			writeFileSync(
+				path.join(projectDir, "compat-sess-1.jsonl"),
+				[
+					JSON.stringify({
+						type: "user",
+						sessionId: "compat-sess-1",
+						uuid: "u-compat-1",
+						cwd: "/Users/dev/compat-app",
+						timestamp: "2026-04-01T10:00:00.000Z",
+						message: { role: "user", content: "Summarize build errors" },
+					}),
+					JSON.stringify({
+						type: "assistant",
+						sessionId: "compat-sess-1",
+						timestamp: "2026-04-01T10:00:05.000Z",
+						message: {
+							id: "msg-compat-1",
+							role: "assistant",
+							model: "claude-sonnet-4-5",
+							usage: {
+								input_tokens: 600,
+								output_tokens: 150,
+							},
+							content: [{ type: "text", text: "No build errors remain." }],
+						},
+					}),
+				].join("\n"),
+			);
+
+			const paths = new DefaultPlatformPathService(
+				new MockOsEnvProvider({ platform: "darwin", home: mockHome }),
+			);
 			const claude = new ClaudeProvider();
-			const isAvail = await claude.isAvailable(defaultPlatformPathService);
+			const isAvail = await claude.isAvailable(paths);
 			expect(isAvail).toBe(true);
 
-			const sessions = await claude.discoverSessions(
-				defaultPlatformPathService,
-			);
-			expect(Array.isArray(sessions)).toBe(true);
+			const sessions = await claude.discoverSessions(paths);
+			expect(sessions).toHaveLength(1);
+			expect(sessions[0]?.sessionId).toBe("compat-sess-1");
 
-			const usage = await claude.readUsage(defaultPlatformPathService);
+			const usage = await claude.readUsage(paths);
 			expect(usage.harness).toBe("claude");
-			expect(Array.isArray(usage.records)).toBe(true);
+			expect(usage.records).toHaveLength(1);
+			expect(usage.records[0]?.inputTokens).toBe(600);
+			expect(usage.records[0]?.outputTokens).toBe(150);
 		});
 
 		test("CLAUDE-06: Fallback to stats-cache.json when projects directory has no session files", async () => {
@@ -889,6 +924,11 @@ Assistant reply for session 2.
 	// =========================================================================
 	describe("Cache Fingerprinting & Watch Paths", () => {
 		test("BATCH1-FP-01: Fingerprint follows v12:count:sha256 format across all 4 providers", async () => {
+			const fpHome = path.join(tmpDir, "fp-isolated-home");
+			mkdirSync(fpHome, { recursive: true });
+			const isolatedPaths = new DefaultPlatformPathService(
+				new MockOsEnvProvider({ platform: "darwin", home: fpHome }),
+			);
 			const providers = [
 				new ClaudeProvider(),
 				new AiderProvider(),
@@ -897,10 +937,10 @@ Assistant reply for session 2.
 			];
 
 			for (const p of providers) {
-				const fp = await p.computeFingerprint(defaultPlatformPathService);
-				expect(fp).toMatch(/^v12:\d+:[0-9a-f]{64}$/);
+				const fp = await p.computeFingerprint(isolatedPaths);
+				expect(fp).toMatch(/^v12:0:[0-9a-f]{64}$/);
 
-				const watch = p.getWatchPaths(defaultPlatformPathService);
+				const watch = p.getWatchPaths(isolatedPaths);
 				expect(Array.isArray(watch)).toBe(true);
 			}
 		});
