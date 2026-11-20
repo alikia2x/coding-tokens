@@ -1,9 +1,9 @@
-import { Database } from "bun:sqlite";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import type { Database } from "bun:sqlite";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { zstdDecompressSync } from "node:zlib";
 import type { HarnessName, UsageRecord } from "@shared/types";
+import { openSafeReadonlyDatabase as openPlatformReadonlyDatabase } from "../../src/platform/sqlite";
 import { defaultHarnessRegistry } from "../../src/providers/registry";
 import {
 	decodeProto,
@@ -32,7 +32,7 @@ import {
 	existingDshRoots,
 	openCodeDbPaths,
 } from "./paths";
-import { sessionKey } from "./totals";
+import { appendAll, sessionKey, timestampBounds } from "./totals";
 
 export type SessionSource =
 	| { kind: "file"; path: string }
@@ -158,30 +158,6 @@ function mergeEntry(
 	current.source ??= candidate.source;
 }
 
-function hasNonEmptySidecar(filePath: string): boolean {
-	try {
-		return statSync(filePath).size > 0;
-	} catch {
-		return false;
-	}
-}
-
-function openReadonlyDatabase(dbPath: string): Database {
-	const hasPendingSidecar =
-		hasNonEmptySidecar(`${dbPath}-wal`) ||
-		hasNonEmptySidecar(`${dbPath}-journal`);
-	if (hasPendingSidecar)
-		return new Database(dbPath, { readonly: true, create: false });
-	try {
-		return new Database(`${pathToFileURL(dbPath).href}?immutable=1`, {
-			readonly: true,
-			create: false,
-		});
-	} catch {
-		return new Database(dbPath, { readonly: true, create: false });
-	}
-}
-
 function tablesIn(db: Database): Set<string> {
 	return new Set(
 		db
@@ -226,8 +202,9 @@ function codexCatalog(
 		if (seen.has(databasePath) || !existsSync(databasePath)) continue;
 		seen.add(databasePath);
 		try {
-			const db = openReadonlyDatabase(databasePath);
+			const handle = openPlatformReadonlyDatabase(databasePath);
 			try {
+				const db = handle.db;
 				const tables = tablesIn(db);
 				if (tables.has("threads")) {
 					const rows = db
@@ -325,7 +302,7 @@ function codexCatalog(
 					}
 				}
 			} finally {
-				db.close();
+				handle.close();
 			}
 		} catch (error) {
 			warnings.push(
@@ -474,8 +451,9 @@ function openCodeCatalog(
 ): void {
 	for (const dbPath of openCodeDbPaths()) {
 		try {
-			const db = openReadonlyDatabase(dbPath);
+			const handle = openPlatformReadonlyDatabase(dbPath);
 			try {
+				const db = handle.db;
 				const tables = tablesIn(db);
 				const addRows = (
 					table: "session" | "session_v2",
@@ -519,7 +497,7 @@ function openCodeCatalog(
 				addRows("session", "title");
 				addRows("session_v2", "title");
 			} finally {
-				db.close();
+				handle.close();
 			}
 		} catch (error) {
 			warnings.push(
@@ -552,8 +530,9 @@ function commandCodeCatalog(
 			return;
 		}
 		for (const directory of projectDirs) {
-			files.push(
-				...walkFiles(
+			appendAll(
+				files,
+				walkFiles(
 					directory,
 					(_filePath, name) =>
 						name.endsWith(".jsonl") &&
@@ -746,15 +725,12 @@ export function buildSessionCatalog(
 		const current = entries.get(key);
 		const first =
 			sessionRecords.find((record) => record.cwd) ?? sessionRecords[0];
-		const timestamps = sessionRecords
-			.map((record) => record.timestamp)
-			.filter((value): value is number => value !== null);
+		const earliest = timestampBounds(sessionRecords)?.min ?? null;
 		const isSubagent = sessionRecords.some((record) => record.isSubagent);
 		const isReview = sessionRecords.some((record) => record.isReview);
 		if (current) {
 			current.cwd ??= first?.cwd ?? null;
-			if (timestamps.length > 0) {
-				const earliest = Math.min(...timestamps);
+			if (earliest !== null) {
 				current.startedAt =
 					current.startedAt === null || current.startedAt === undefined
 						? earliest
@@ -769,7 +745,7 @@ export function buildSessionCatalog(
 			entries,
 			entryFrom(first.harness, first.sessionId, {
 				cwd: first.cwd,
-				startedAt: timestamps.length > 0 ? Math.min(...timestamps) : null,
+				startedAt: earliest,
 				isSubagent,
 				isReview,
 			}),

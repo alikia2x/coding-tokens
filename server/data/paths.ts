@@ -1,33 +1,28 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { defaultPlatformPathService } from "../../src/platform/paths";
+import { getOpenCodeDbPaths } from "../../src/providers/opencode/discovery";
 import { defaultHarnessRegistry } from "../../src/providers/registry";
 import {
 	antigravityRoots,
 	existingAntigravityRoots,
 } from "../../src/sources/antigravity";
-import { expandHome, homeDir } from "../../src/util";
 
 export { antigravityRoots, existingAntigravityRoots };
 
 export function codexHome(): string {
-	return process.env.CODEX_HOME
-		? path.resolve(expandHome(process.env.CODEX_HOME))
-		: path.join(homeDir, ".codex");
+	return (
+		defaultPlatformPathService.resolveHarnessPaths("codex")[0] ??
+		path.join(defaultPlatformPathService.getHomeDir(), ".codex")
+	);
 }
 
 export function codexSessionRoots(): string[] {
-	const root = codexHome();
-	return [path.join(root, "sessions"), path.join(root, "archived_sessions")];
+	return defaultPlatformPathService.resolveHarnessPaths("codex").slice(1);
 }
 
 export function dshRoots(): string[] {
-	return process.env.DSH_HOME
-		? [path.resolve(expandHome(process.env.DSH_HOME))]
-		: [
-				path.join(homeDir, ".dsh"),
-				path.join(homeDir, "Library/Application Support/dsh-desktop/harness"),
-			];
+	return defaultPlatformPathService.resolveHarnessPaths("dsh");
 }
 
 export function existingDshRoots(): string[] {
@@ -35,46 +30,31 @@ export function existingDshRoots(): string[] {
 }
 
 export function openCodeDataDir(): string {
-	return process.env.OPENCODE_DATA_DIR
-		? path.resolve(expandHome(process.env.OPENCODE_DATA_DIR))
-		: path.join(homeDir, ".local/share/opencode");
+	return (
+		defaultPlatformPathService.resolveHarnessPaths("opencode")[0] ??
+		path.join(defaultPlatformPathService.getHomeDir(), ".local/share/opencode")
+	);
 }
 
 export function openCodeDbPaths(): string[] {
-	if (process.env.OPENCODE_DB)
-		return [path.resolve(expandHome(process.env.OPENCODE_DB))];
-	try {
-		return readdirSync(openCodeDataDir())
-			.filter((name) => /^opencode(?:-[^/]*)?\.db$/u.test(name))
-			.map((name) => path.join(openCodeDataDir(), name))
-			.filter(existsSync);
-	} catch {
-		return [];
-	}
+	return getOpenCodeDbPaths(defaultPlatformPathService);
 }
 
 export function commandCodeRoot(): string {
-	return process.env.COMMANDCODE_HOME
-		? path.resolve(expandHome(process.env.COMMANDCODE_HOME))
-		: path.join(homeDir, ".commandcode");
+	return (
+		defaultPlatformPathService.resolveHarnessPaths("commandcode")[0] ??
+		path.join(defaultPlatformPathService.getHomeDir(), ".commandcode")
+	);
 }
 
 export function harnessPaths(): Record<string, string[]> {
-	const paths: Record<string, string[]> = {
-		codex: [codexHome(), ...codexSessionRoots()],
-		dsh: dshRoots(),
-		opencode: openCodeDbPaths().length
-			? openCodeDbPaths()
-			: [openCodeDataDir()],
-		commandcode: [commandCodeRoot()],
-		antigravity: antigravityRoots(),
-	};
+	const paths: Record<string, string[]> = {};
 	for (const provider of defaultHarnessRegistry.getAll()) {
-		if (!paths[provider.metadata.id]) {
-			paths[provider.metadata.id] = provider.getWatchPaths(
-				defaultPlatformPathService,
-			);
-		}
+		const id = provider.metadata.id;
+		const watchPaths = provider.getWatchPaths(defaultPlatformPathService);
+		paths[id] = watchPaths.length
+			? watchPaths
+			: defaultPlatformPathService.resolveHarnessPaths(id);
 	}
 	return paths;
 }

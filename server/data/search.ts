@@ -3,6 +3,7 @@ import {
 	isEmptySearch,
 	matchesSessionQuery,
 	matchesTextQuery,
+	type ParsedSearch,
 	parseSearchQuery,
 	type SearchableSession,
 	scoreSessionQuery,
@@ -18,12 +19,130 @@ import type {
 import { HARNESS_LABELS } from "@shared/types";
 import { defaultHarnessRegistry } from "../../src/providers/registry";
 import { store } from "./store";
-import {
-	filterRecords,
-	projectName,
-	summarizeRecords,
-	totalTokens,
-} from "./totals";
+import { projectName, summarizeRecords, totalTokens } from "./totals";
+
+export interface SearchDataSource {
+	allRecords(): readonly UsageRecord[];
+	sessionSummaries(range: {
+		from: number | null;
+		until: number | null;
+	}): SessionSummary[];
+	searchTextKeysFts(ftsQuery: string, limit?: number): Set<string> | null;
+	sessionTextsByKeys(keys: readonly string[]): Map<string, string>;
+	searchTextsBySubstring(terms: readonly string[]): Map<string, string>;
+	harnessIds?(): HarnessName[];
+	harnessLabel?(harness: HarnessName): string;
+}
+
+const defaultSearchSource: SearchDataSource = {
+	allRecords: () => store.allRecords(),
+	sessionSummaries: (range) => store.sessionSummaries(range),
+	searchTextKeysFts: (ftsQuery, limit) =>
+		store.searchTextKeysFts(ftsQuery, limit),
+	sessionTextsByKeys: (keys) => store.sessionTextsByKeys(keys),
+	searchTextsBySubstring: (terms) => store.searchTextsBySubstring(terms),
+};
+
+function buildFtsTermClause(term: string): string | null {
+	const tokens = term.match(/[\p{L}\p{N}]+/gu);
+	if (!tokens || tokens.length === 0) return null;
+	return tokens.map((token) => `"${token.replaceAll(/"/gu, '""')}"*`).join(" ");
+}
+
+function buildFtsOrQuery(terms: readonly string[]): {
+	ftsQuery: string;
+	fallbackTerms: string[];
+} {
+	const clauses: string[] = [];
+	const fallbackTerms: string[] = [];
+	for (const term of terms) {
+		const clause = buildFtsTermClause(term);
+		if (clause) {
+			clauses.push(`(${clause})`);
+		} else if (term.trim()) {
+			fallbackTerms.push(term);
+		}
+	}
+	return {
+		ftsQuery: clauses.join(" OR "),
+		fallbackTerms,
+	};
+}
+
+function loadCandidateBodies(
+	sessions: readonly SessionSummary[],
+	query: ParsedSearch,
+	source: SearchDataSource,
+): Map<string, string> {
+	const bodies = new Map<string, string>();
+	if (query.terms.length === 0 && query.negativeTerms.length === 0) {
+		return bodies;
+	}
+
+	const keysToFetch = new Set<string>();
+
+	if (query.terms.length > 0) {
+		const { ftsQuery, fallbackTerms } = buildFtsOrQuery(query.terms);
+		let ftsFailed = false;
+		if (ftsQuery) {
+			const ftsHits = source.searchTextKeysFts(ftsQuery);
+			if (ftsHits === null) {
+				ftsFailed = true;
+			} else {
+				for (const key of ftsHits) keysToFetch.add(key);
+			}
+		}
+		if (ftsFailed) {
+			for (const [key, body] of source.searchTextsBySubstring(query.terms)) {
+				bodies.set(key, body);
+			}
+		} else if (fallbackTerms.length > 0) {
+			for (const [key, body] of source.searchTextsBySubstring(fallbackTerms)) {
+				bodies.set(key, body);
+			}
+		}
+	}
+
+	if (query.negativeTerms.length > 0) {
+		// Any session that could match via metadata (or positive body hits) also
+		// needs negative terms checked against its transcript body.
+		const { ftsQuery, fallbackTerms } = buildFtsOrQuery(query.negativeTerms);
+		let ftsFailed = false;
+		if (ftsQuery) {
+			const negHits = source.searchTextKeysFts(ftsQuery);
+			if (negHits === null) {
+				ftsFailed = true;
+			} else {
+				for (const key of negHits) keysToFetch.add(key);
+			}
+		}
+		if (ftsFailed) {
+			for (const [key, body] of source.searchTextsBySubstring(
+				query.negativeTerms,
+			)) {
+				bodies.set(key, body);
+			}
+		} else if (fallbackTerms.length > 0) {
+			for (const [key, body] of source.searchTextsBySubstring(fallbackTerms)) {
+				bodies.set(key, body);
+			}
+		}
+	}
+
+	const sessionKeySet = new Set(sessions.map((session) => session.key));
+	const missingKeys: string[] = [];
+	for (const key of keysToFetch) {
+		if (sessionKeySet.has(key) && !bodies.has(key)) {
+			missingKeys.push(key);
+		}
+	}
+	if (missingKeys.length > 0) {
+		for (const [key, body] of source.sessionTextsByKeys(missingKeys)) {
+			bodies.set(key, body);
+		}
+	}
+	return bodies;
+}
 
 function sessionSearchable(
 	session: SessionSummary,
@@ -95,9 +214,10 @@ export function sessionSearchMatches(
 		from: null,
 		until: null,
 	},
+	source: SearchDataSource = defaultSearchSource,
 ): SessionsSearchPayload {
 	const query = parseSearchQuery(raw);
-	const sessions = store.sessionSummaries(range);
+	const sessions = source.sessionSummaries(range);
 	if (isEmptySearch(query)) {
 		return {
 			query: raw,
@@ -105,11 +225,12 @@ export function sessionSearchMatches(
 			snippets: {},
 		};
 	}
+	const candidateBodies = loadCandidateBodies(sessions, query, source);
 	const keys: string[] = [];
 	const snippets: Record<string, string> = {};
 	const hasTextTerms = query.terms.length > 0;
 	for (const session of sessions) {
-		const body = hasTextTerms ? store.sessionText(session.key) : undefined;
+		const body = candidateBodies.get(session.key);
 		if (!matchesSessionQuery(sessionSearchable(session, body), query)) continue;
 		keys.push(session.key);
 		if (hasTextTerms) {
@@ -120,13 +241,18 @@ export function sessionSearchMatches(
 	return { query: raw, keys, snippets };
 }
 
-export function searchPayload(raw: string, limit = 8): SearchPayload {
+export function searchPayload(
+	raw: string,
+	limit = 8,
+	source: SearchDataSource = defaultSearchSource,
+): SearchPayload {
 	const query = parseSearchQuery(raw);
-	const records = store.allRecords();
-	const sessions = store.sessionSummaries({ from: null, until: null });
+	const records = source.allRecords();
+	const sessions = source.sessionSummaries({ from: null, until: null });
+	const candidateBodies = loadCandidateBodies(sessions, query, source);
 	const matchedSessions = sessions
 		.map((session) => {
-			const body = store.sessionText(session.key);
+			const body = candidateBodies.get(session.key);
 			const searchable = sessionSearchable(session, body);
 			if (!matchesSessionQuery(searchable, query)) return null;
 			return toSearchSession(
@@ -144,23 +270,33 @@ export function searchPayload(raw: string, limit = 8): SearchPayload {
 		.slice(0, limit);
 
 	const projectGroups = new Map<string, UsageRecord[]>();
+	const modelGroups = new Map<string, UsageRecord[]>();
+	const harnessGroups = new Map<HarnessName, UsageRecord[]>();
 	for (const record of records) {
-		const key = record.cwd ?? "";
-		const list = projectGroups.get(key) ?? [];
-		list.push(record);
-		projectGroups.set(key, list);
+		const projectKey = record.cwd ?? "";
+		const pList = projectGroups.get(projectKey) ?? [];
+		pList.push(record);
+		projectGroups.set(projectKey, pList);
+
+		const mList = modelGroups.get(record.model) ?? [];
+		mList.push(record);
+		modelGroups.set(record.model, mList);
+
+		const hList = harnessGroups.get(record.harness) ?? [];
+		hList.push(record);
+		harnessGroups.set(record.harness, hList);
 	}
+
 	const projects = [...projectGroups.entries()]
 		.map(([cwd, groupRecords]) => {
 			const name = projectName(cwd || null);
+			const totals = summarizeRecords(groupRecords);
 			return {
 				cwd: cwd || null,
 				name,
-				sessions: new Set(
-					groupRecords.map((record) => `${record.harness}:${record.sessionId}`),
-				).size,
-				costUsd: summarizeRecords(groupRecords).costUsd,
-				tokens: totalTokens(summarizeRecords(groupRecords)),
+				sessions: totals.sessions,
+				costUsd: totals.costUsd,
+				tokens: totalTokens(totals),
 			};
 		})
 		.filter((project) =>
@@ -171,20 +307,17 @@ export function searchPayload(raw: string, limit = 8): SearchPayload {
 		.sort((left, right) => right.costUsd - left.costUsd)
 		.slice(0, limit / 2);
 
-	const modelGroups = new Map<string, UsageRecord[]>();
-	for (const record of records) {
-		const list = modelGroups.get(record.model) ?? [];
-		list.push(record);
-		modelGroups.set(record.model, list);
-	}
 	const models = [...modelGroups.entries()]
-		.map(([model, groupRecords]) => ({
-			model,
-			provider: modelProvider(model) ?? "",
-			costUsd: summarizeRecords(groupRecords).costUsd,
-			requests: groupRecords.length,
-			tokens: totalTokens(summarizeRecords(groupRecords)),
-		}))
+		.map(([model, groupRecords]) => {
+			const totals = summarizeRecords(groupRecords);
+			return {
+				model,
+				provider: modelProvider(model) ?? "",
+				costUsd: totals.costUsd,
+				requests: groupRecords.length,
+				tokens: totalTokens(totals),
+			};
+		})
 		.filter((model) =>
 			matchesTextQuery(query, [model.model, model.provider], {
 				model: [model.model],
@@ -193,26 +326,24 @@ export function searchPayload(raw: string, limit = 8): SearchPayload {
 		.sort((left, right) => right.costUsd - left.costUsd)
 		.slice(0, limit / 2);
 
-	const allHarnesses = defaultHarnessRegistry
-		.getAll()
-		.map((p) => p.metadata.id);
+	const allHarnesses =
+		source.harnessIds?.() ??
+		defaultHarnessRegistry.getAll().map((p) => p.metadata.id);
 	const harnesses = allHarnesses
 		.map((harness) => {
-			const harnessRecords = filterRecords(records, {
-				harnesses: new Set<HarnessName>([harness]),
-			});
+			const harnessRecords = harnessGroups.get(harness) ?? [];
+			const totals = summarizeRecords(harnessRecords);
 			const provider = defaultHarnessRegistry.get(harness);
 			const label =
-				HARNESS_LABELS[harness] ?? provider?.metadata.displayName ?? harness;
+				source.harnessLabel?.(harness) ??
+				HARNESS_LABELS[harness] ??
+				provider?.metadata.displayName ??
+				harness;
 			return {
 				harness,
 				label,
-				sessions: new Set(
-					harnessRecords.map(
-						(record) => `${record.harness}:${record.sessionId}`,
-					),
-				).size,
-				costUsd: summarizeRecords(harnessRecords).costUsd,
+				sessions: totals.sessions,
+				costUsd: totals.costUsd,
 			};
 		})
 		.filter(

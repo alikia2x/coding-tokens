@@ -82,7 +82,7 @@ export interface UsageRecord {
 	model: string;
 	/** Original model identifier from the harness log before display normalization. */
 	rawModel?: string | null;
-	/** Provider-qualified model id kept for price matching. Not persisted. */
+	/** Provider-qualified model id kept for price matching. */
 	pricingModel?: string | null;
 	timestamp: number | null;
 	inputTokens: number;
@@ -96,6 +96,13 @@ export interface UsageRecord {
 	/** Original harness-recorded cost (null when missing/unrecorded or originally estimated). */
 	rawCostUsd?: number | null;
 	costEstimated: boolean;
+}
+
+export interface SourceStateRow {
+	fingerprint: string;
+	indexedAt: number;
+	available: number;
+	warnings: string;
 }
 
 export interface SourceResult {
@@ -210,7 +217,7 @@ export interface OverviewPayload {
 	range: { from: number | null; until: number | null };
 	totals: UsageTotals;
 	previous: UsageTotals | null;
-	bucketUnit: "hour" | "day" | "week";
+	bucketUnit: "hour" | "day" | "week" | "month";
 	buckets: UsageBucket[];
 	harnesses: BreakdownRow[];
 	models: BreakdownRow[];
@@ -576,6 +583,31 @@ export interface BatchSessionExportResult {
 
 export interface ApiError {
 	error: string;
+}
+
+export interface RefreshPayload {
+	started: boolean;
+	status: StatusPayload;
+}
+
+export interface SessionExportResult {
+	path: string;
+	filename: string;
+	bytes: number;
+}
+
+export interface PricingCatalogSearchPayload {
+	items: PricingCatalogSearchItem[];
+}
+
+export interface DialogDirectoryPayload {
+	supported: boolean;
+	path: string | null;
+	cancelled: boolean;
+}
+
+export interface DialogRevealPayload {
+	ok: boolean;
 }
 
 export type ExploreMetric = "tokens" | "cost" | "requests" | "sessions";

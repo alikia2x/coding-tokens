@@ -1,6 +1,8 @@
+import type { ModelPricingMeta, SourceResult } from "@shared/types";
 import type {
 	ExploreOptions,
 	ExplorePayload,
+	HarnessName,
 	HarnessReportPayload,
 	HeatmapPayload,
 	ModelReportPayload,
@@ -18,6 +20,7 @@ import {
 	modelReportPayload,
 	overviewPayload,
 	projectReportPayload,
+	type ReportingDataSource,
 } from "../data/reports";
 import { store } from "../data/store";
 import { summarizeRecords } from "../data/totals";
@@ -32,6 +35,11 @@ export interface ReportingDataProvider {
 	getWarnings(): string[];
 	getLastIndexedAt(): number | null;
 	getSourcePaths(): Record<string, string[]>;
+	getHarnessSource?(harness: HarnessName): SourceResult | undefined;
+	getModelPricingMeta?(
+		model: string,
+		records: readonly UsageRecord[],
+	): ModelPricingMeta;
 }
 
 export class StoreReportingDataProvider implements ReportingDataProvider {
@@ -77,20 +85,36 @@ export interface ReportingService {
 }
 
 export class DefaultReportingService implements ReportingService {
+	private readonly source: ReportingDataSource;
+
 	constructor(
 		private readonly dataProvider: ReportingDataProvider = new StoreReportingDataProvider(),
-	) {}
+	) {
+		this.source = {
+			getRecords: () => this.dataProvider.getRecords(),
+			getMessagesFor: (records) => this.dataProvider.getMessagesFor(records),
+			getSessionSummaries: (range) =>
+				this.dataProvider.getSessionSummaries(range),
+			getWarnings: () => this.dataProvider.getWarnings(),
+			getLastIndexedAt: () => this.dataProvider.getLastIndexedAt(),
+			getHarnessSource: (harness) =>
+				this.dataProvider.getHarnessSource?.(harness) ?? store.source(harness),
+			getModelPricingMeta: (model, records) =>
+				this.dataProvider.getModelPricingMeta?.(model, records) ??
+				store.modelPricingMeta(model, records),
+		};
+	}
 
 	getOverview(filters: RecordFilters): OverviewPayload {
-		return overviewPayload(filters);
+		return overviewPayload(filters, undefined, this.source);
 	}
 
 	getProjectReport(filters: RecordFilters): ProjectReportPayload {
-		return projectReportPayload(filters);
+		return projectReportPayload(filters, this.source);
 	}
 
 	getModelReport(filters: RecordFilters): ModelReportPayload {
-		return modelReportPayload(filters);
+		return modelReportPayload(filters, this.source);
 	}
 
 	getHarnessReport(
@@ -98,19 +122,19 @@ export class DefaultReportingService implements ReportingService {
 		paths?: Record<string, string[]>,
 	): HarnessReportPayload {
 		const resolvedPaths = paths ?? this.dataProvider.getSourcePaths();
-		return harnessReportPayload(filters, resolvedPaths);
+		return harnessReportPayload(filters, resolvedPaths, this.source);
 	}
 
 	getExploreReport(options: ExploreOptions): ExplorePayload {
-		return explorePayload(options);
+		return explorePayload(options, this.source);
 	}
 
 	getHeatmapReport(weeks = 53): HeatmapPayload {
-		return heatmapPayload(weeks);
+		return heatmapPayload(weeks, this.source);
 	}
 
 	calculateTotals(records: readonly UsageRecord[]): UsageTotals {
-		return summarizeRecords(records as UsageRecord[]);
+		return summarizeRecords(records);
 	}
 }
 

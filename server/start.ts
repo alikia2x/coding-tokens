@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { handleApi } from "./api";
 import { store } from "./data/store";
@@ -30,19 +30,32 @@ const contentTypes: Record<string, string> = {
 	".ico": "image/x-icon",
 };
 
-function safeFile(staticDir: string, pathname: string): string | null {
+function isRegularFile(filePath: string): boolean {
+	try {
+		return existsSync(filePath) && statSync(filePath).isFile();
+	} catch {
+		return false;
+	}
+}
+
+function safeFile(
+	staticDir: string,
+	pathname: string,
+): { path: string | null; badRequest?: boolean } {
+	if (pathname.includes("\0")) return { path: null, badRequest: true };
 	if (pathname === "/" || pathname === "")
-		return path.join(staticDir, "index.html");
+		return { path: path.join(staticDir, "index.html") };
 	let decoded: string;
 	try {
 		decoded = decodeURIComponent(pathname);
 	} catch {
-		return null;
+		return { path: null, badRequest: true };
 	}
+	if (decoded.includes("\0")) return { path: null, badRequest: true };
 	const resolved = path.resolve(staticDir, `.${decoded}`);
 	if (!resolved.startsWith(`${path.resolve(staticDir)}${path.sep}`))
-		return null;
-	return resolved;
+		return { path: null };
+	return { path: resolved };
 }
 
 async function serveStatic(
@@ -52,16 +65,23 @@ async function serveStatic(
 ): Promise<Response> {
 	if (request.method !== "GET" && request.method !== "HEAD")
 		return new Response("Method not allowed", { status: 405 });
-	const filePath = safeFile(staticDir, url.pathname);
+	const { path: filePath, badRequest } = safeFile(staticDir, url.pathname);
+	if (badRequest) {
+		return new Response("Bad request", { status: 400 });
+	}
 	const fallback = path.join(staticDir, "index.html");
-	if (!existsSync(fallback)) {
+	if (!isRegularFile(fallback)) {
 		return new Response(
 			"Coding Tokens is not built yet. Run `bun run build` and start the server again.",
 			{ status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } },
 		);
 	}
-	if (!filePath || !existsSync(filePath)) {
-		if (path.extname(url.pathname))
+	if (!filePath || !isRegularFile(filePath)) {
+		if (
+			(filePath && existsSync(filePath)) ||
+			path.extname(url.pathname) ||
+			url.pathname.startsWith("/assets/")
+		)
 			return new Response("Not found", { status: 404 });
 		const index = Bun.file(fallback);
 		return new Response(request.method === "HEAD" ? null : index, {

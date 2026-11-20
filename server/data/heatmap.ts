@@ -1,13 +1,18 @@
 import type { HeatmapDay, HeatmapPayload } from "@shared/types";
 import { localDate } from "../../src/util";
+import type { ReportingDataSource } from "./reports";
 import { store } from "./store";
 
-export function heatmapPayload(weeks = 53): HeatmapPayload {
+export function heatmapPayload(
+	weeks = 53,
+	source?: Pick<ReportingDataSource, "getRecords">,
+): HeatmapPayload {
+	const safeWeeks = Math.min(260, Math.max(1, Math.trunc(weeks) || 53));
 	const end = new Date();
 	end.setHours(0, 0, 0, 0);
 	end.setDate(end.getDate() + 1);
 	const start = new Date(end);
-	start.setDate(start.getDate() - weeks * 7);
+	start.setDate(start.getDate() - safeWeeks * 7);
 	start.setHours(0, 0, 0, 0);
 	start.setDate(start.getDate() - start.getDay());
 
@@ -34,7 +39,8 @@ export function heatmapPayload(weeks = 53): HeatmapPayload {
 	const fromMs = start.getTime();
 	const untilMs = end.getTime();
 	const allSessions = new Set<string>();
-	for (const record of store.allRecords()) {
+	const records = source ? source.getRecords() : store.allRecords();
+	for (const record of records) {
 		if (
 			record.timestamp === null ||
 			record.timestamp < fromMs ||

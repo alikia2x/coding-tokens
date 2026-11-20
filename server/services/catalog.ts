@@ -22,10 +22,22 @@ import type {
 	SessionMeta,
 	SessionSummary,
 	SessionsSearchPayload,
+	UsageRecord,
 } from "../../src/types";
 import { buildSessionCatalog, cleanSessionTitle } from "../data/catalog";
-import { searchPayload, sessionSearchMatches } from "../data/search";
-import { store } from "../data/store";
+import {
+	type SearchDataSource,
+	searchPayload,
+	sessionSearchMatches,
+} from "../data/search";
+import {
+	appendAll,
+	projectName,
+	recordMatches,
+	sessionKey,
+	summarizeSessionRecords,
+	timestampBounds,
+} from "../data/totals";
 
 export interface CatalogRefreshResult {
 	refreshedCount: number;
@@ -123,9 +135,10 @@ export class DefaultSessionCatalogService implements SessionCatalogService {
 		}
 
 		// 2. Correlate with usage records from storage
+		const targetHarnesses = new Set(providers.map((p) => p.metadata.id));
 		const records = await this.storage.getUsageRecords();
-		const fallbackCatalog = buildSessionCatalog(records);
-		warnings.push(...fallbackCatalog.warnings);
+		const fallbackCatalog = buildSessionCatalog(records, targetHarnesses);
+		appendAll(warnings, fallbackCatalog.warnings);
 
 		for (const [key, fallbackMeta] of fallbackCatalog.entries) {
 			const existing = entries.get(key);
@@ -161,12 +174,72 @@ export class DefaultSessionCatalogService implements SessionCatalogService {
 		return this.catalog.get(key) ?? null;
 	}
 
+	private buildSummaries(
+		records: readonly UsageRecord[],
+		messages: ReadonlyMap<string, number>,
+		range: { from: number | null; until: number | null },
+	): SessionSummary[] {
+		const bySession = new Map<string, UsageRecord[]>();
+		for (const record of records) {
+			if (!recordMatches(record, range)) continue;
+			const key = sessionKey(record);
+			const list = bySession.get(key) ?? [];
+			list.push(record);
+			bySession.set(key, list);
+		}
+		const summaries: SessionSummary[] = [];
+		for (const meta of this.catalog.values()) {
+			const ranged = bySession.get(meta.key);
+			if (!ranged?.length) continue;
+			const totals = summarizeSessionRecords(ranged);
+			totals.messages = messages.get(meta.key) ?? 0;
+			const bounds = timestampBounds(ranged);
+			const lastActivityAt = bounds?.max ?? null;
+			const recordedStart = bounds?.min ?? null;
+			const startedAt =
+				meta.startedAt === null || meta.startedAt === undefined
+					? recordedStart
+					: recordedStart === null
+						? meta.startedAt
+						: Math.min(meta.startedAt, recordedStart);
+			summaries.push({
+				key: meta.key,
+				harness: meta.harness,
+				sessionId: meta.sessionId,
+				title: meta.title,
+				cwd: meta.cwd,
+				projectName: projectName(meta.cwd),
+				models: [...new Set(ranged.map((record) => record.model))],
+				startedAt,
+				lastActivityAt,
+				durationMs:
+					startedAt !== null && lastActivityAt !== null
+						? Math.max(0, lastActivityAt - startedAt)
+						: null,
+				totals,
+				isSubagent: meta.isSubagent,
+				isReview: meta.isReview,
+				hasTranscript: meta.hasTranscript,
+			});
+		}
+		summaries.sort(
+			(left, right) =>
+				(right.lastActivityAt ?? right.startedAt ?? 0) -
+				(left.lastActivityAt ?? left.startedAt ?? 0),
+		);
+		return summaries;
+	}
+
 	async getSessionSummaries(range: {
 		from: number | null;
 		until: number | null;
 	}): Promise<SessionSummary[]> {
-		await store.ensureReady();
-		return store.sessionSummaries(range);
+		if (!this.initialized) await this.init();
+		const [records, messages] = await Promise.all([
+			this.storage.getUsageRecords(),
+			this.storage.getSessionMessages(),
+		]);
+		return this.buildSummaries(records, messages, range);
 	}
 
 	async getSessionDetail(
@@ -184,8 +257,51 @@ export class DefaultSessionCatalogService implements SessionCatalogService {
 		return this.transcripts.getSessionDetail(meta, records, level);
 	}
 
+	private async buildSearchSource(query: string): Promise<SearchDataSource> {
+		if (!this.initialized) await this.init();
+		const [records, messages, allTexts] = await Promise.all([
+			this.storage.getUsageRecords(),
+			this.storage.getSessionMessages(),
+			query.trim()
+				? this.storage.getAllSessionTexts()
+				: Promise.resolve(new Map<string, string>()),
+		]);
+		return {
+			allRecords: () => records,
+			sessionSummaries: (range) =>
+				this.buildSummaries(records, messages, range),
+			searchTextKeysFts: () => null,
+			sessionTextsByKeys: (keys) => {
+				const hits = new Map<string, string>();
+				for (const key of keys) {
+					const body = allTexts.get(key);
+					if (body !== undefined) hits.set(key, body);
+				}
+				return hits;
+			},
+			searchTextsBySubstring: (terms) => {
+				const cleanTerms = terms
+					.map((t) => t.trim().toLowerCase())
+					.filter(Boolean);
+				const hits = new Map<string, string>();
+				if (!cleanTerms.length) return hits;
+				for (const [key, body] of allTexts) {
+					const lower = body.toLowerCase();
+					if (cleanTerms.some((term) => lower.includes(term))) {
+						hits.set(key, body);
+					}
+				}
+				return hits;
+			},
+			harnessIds: () => this.registry.getAll().map((p) => p.metadata.id),
+			harnessLabel: (harness) =>
+				this.registry.get(harness)?.metadata.displayName ?? harness,
+		};
+	}
+
 	async search(query: string, limit = 8): Promise<SearchPayload> {
-		return searchPayload(query, limit);
+		const source = await this.buildSearchSource(query);
+		return searchPayload(query, limit, source);
 	}
 
 	async searchSessions(
@@ -195,7 +311,8 @@ export class DefaultSessionCatalogService implements SessionCatalogService {
 			until: null,
 		},
 	): Promise<SessionsSearchPayload> {
-		return sessionSearchMatches(query, range);
+		const source = await this.buildSearchSource(query);
+		return sessionSearchMatches(query, range, source);
 	}
 }
 

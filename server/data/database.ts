@@ -1,29 +1,54 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import type { HarnessName, UsageRecord } from "@shared/types";
+import type { HarnessName, SourceStateRow, UsageRecord } from "@shared/types";
 import type { SessionDiscoveryItem } from "../../src/providers/types";
 import { runMigrations } from "../../src/services/storage";
 import type { SessionMeta, SessionSource } from "./catalog";
 import { sessionKey } from "./totals";
 
-export interface SourceStateRow {
-	fingerprint: string;
-	indexedAt: number;
-	available: number;
-	warnings: string;
-}
+export type { SourceStateRow };
 
 export type StoreDatabase = Database;
 
+const initializedDbPaths = new Set<string>();
+
+function ensureUsageRecordColumns(db: Database): void {
+	const cols = new Set(
+		db
+			.query<{ name: string }, []>("PRAGMA table_info(usage_records)")
+			.all()
+			.map((row) => row.name),
+	);
+	if (!cols.has("is_review")) {
+		db.exec(
+			"ALTER TABLE usage_records ADD COLUMN is_review INTEGER NOT NULL DEFAULT 0;",
+		);
+	}
+	if (!cols.has("pricing_model")) {
+		db.exec("ALTER TABLE usage_records ADD COLUMN pricing_model TEXT;");
+	}
+}
+
 export function openStoreDatabase(dbPath: string): StoreDatabase {
-	mkdirSync(path.dirname(dbPath), { recursive: true });
-	const db = new Database(dbPath, { create: true });
+	const resolvedPath = path.resolve(dbPath);
+	const existed = existsSync(resolvedPath);
+	if (!existed) {
+		mkdirSync(path.dirname(resolvedPath), { recursive: true });
+	}
+	const db = new Database(resolvedPath, { create: true });
 	db.exec("PRAGMA busy_timeout = 5000;");
-	db.exec("PRAGMA journal_mode = WAL;");
 	db.exec("PRAGMA synchronous = NORMAL;");
 
-	runMigrations(db);
+	const userVersion =
+		db.query<{ user_version: number }, []>("PRAGMA user_version").get()
+			?.user_version ?? 0;
+	if (!existed || !initializedDbPaths.has(resolvedPath) || userVersion < 5) {
+		db.exec("PRAGMA journal_mode = WAL;");
+		runMigrations(db);
+		ensureUsageRecordColumns(db);
+		initializedDbPaths.add(resolvedPath);
+	}
 
 	return db;
 }
@@ -33,11 +58,25 @@ export function readSourceState(
 	harness: HarnessName,
 ): SourceStateRow | null {
 	const row = db
-		.query<SourceStateRow, [string]>(
+		.query<
+			{
+				fingerprint: string;
+				indexed_at: number;
+				available: number;
+				warnings: string;
+			},
+			[string]
+		>(
 			"SELECT fingerprint, indexed_at, available, warnings FROM source_state WHERE harness = ?",
 		)
 		.get(harness);
-	return row ?? null;
+	if (!row) return null;
+	return {
+		fingerprint: row.fingerprint,
+		indexedAt: row.indexed_at,
+		available: row.available,
+		warnings: row.warnings,
+	};
 }
 
 export function readAllSourceStates(
@@ -81,9 +120,11 @@ export function readHarnessRecords(
 				message_id: string;
 				turn_id: string | null;
 				is_subagent: number;
+				is_review: number;
 				cwd: string | null;
 				model: string;
 				raw_model: string | null;
+				pricing_model: string | null;
 				timestamp: number | null;
 				input_tokens: number;
 				output_tokens: number;
@@ -96,8 +137,8 @@ export function readHarnessRecords(
 			},
 			[HarnessName]
 		>(
-			`SELECT harness, session_id, message_id, turn_id, is_subagent, cwd, model,
-				raw_model, timestamp, input_tokens, output_tokens, cache_read_tokens,
+			`SELECT harness, session_id, message_id, turn_id, is_subagent, is_review, cwd, model,
+				raw_model, pricing_model, timestamp, input_tokens, output_tokens, cache_read_tokens,
 				cache_write_tokens, reasoning_tokens, cost_usd, raw_cost_usd, cost_estimated
 			FROM usage_records WHERE harness = ?`,
 		)
@@ -108,9 +149,11 @@ export function readHarnessRecords(
 		messageId: row.message_id,
 		turnId: row.turn_id ?? undefined,
 		isSubagent: row.is_subagent === 1 || undefined,
+		isReview: row.is_review === 1 || undefined,
 		cwd: row.cwd,
 		model: row.model,
 		rawModel: row.raw_model ?? row.model,
+		pricingModel: row.pricing_model ?? undefined,
 		timestamp: row.timestamp,
 		inputTokens: row.input_tokens,
 		outputTokens: row.output_tokens,
@@ -197,10 +240,10 @@ export function replaceHarnessRecords(
 ): void {
 	const insert = db.prepare(
 		`INSERT OR REPLACE INTO usage_records (
-			harness, session_id, message_id, turn_id, is_subagent, cwd, model,
-			raw_model, timestamp, input_tokens, output_tokens, cache_read_tokens,
+			harness, session_id, message_id, turn_id, is_subagent, is_review, cwd, model,
+			raw_model, pricing_model, timestamp, input_tokens, output_tokens, cache_read_tokens,
 			cache_write_tokens, reasoning_tokens, cost_usd, raw_cost_usd, cost_estimated
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	);
 	const remove = db.prepare("DELETE FROM usage_records WHERE harness = ?");
 	const upsertState = db.prepare(
@@ -224,9 +267,11 @@ export function replaceHarnessRecords(
 				record.messageId,
 				record.turnId ?? null,
 				record.isSubagent ? 1 : 0,
+				record.isReview ? 1 : 0,
 				record.cwd,
 				record.model,
 				rawModel,
+				record.pricingModel ?? null,
 				record.timestamp,
 				record.inputTokens,
 				record.outputTokens,
@@ -439,10 +484,10 @@ export function upsertHarnessSessionDelta(
 	);
 	const insertRecord = db.prepare(
 		`INSERT OR REPLACE INTO usage_records (
-			harness, session_id, message_id, turn_id, is_subagent, cwd, model,
-			raw_model, timestamp, input_tokens, output_tokens, cache_read_tokens,
+			harness, session_id, message_id, turn_id, is_subagent, is_review, cwd, model,
+			raw_model, pricing_model, timestamp, input_tokens, output_tokens, cache_read_tokens,
 			cache_write_tokens, reasoning_tokens, cost_usd, raw_cost_usd, cost_estimated
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	);
 	const deleteMsg = db.prepare(
 		"DELETE FROM session_messages WHERE harness = ? AND session_id = ?",
@@ -513,9 +558,11 @@ export function upsertHarnessSessionDelta(
 				record.messageId,
 				record.turnId ?? null,
 				record.isSubagent ? 1 : 0,
+				record.isReview ? 1 : 0,
 				record.cwd,
 				record.model,
 				rawModel,
+				record.pricingModel ?? null,
 				record.timestamp,
 				record.inputTokens,
 				record.outputTokens,
@@ -572,6 +619,236 @@ export function upsertHarnessSessionDelta(
 			options.state.warnings,
 		);
 	})();
+}
+
+export function replaceHarnessAll(
+	db: StoreDatabase,
+	harness: HarnessName,
+	options: {
+		records: readonly UsageRecord[];
+		messages: ReadonlyMap<string, number>;
+		texts: ReadonlyMap<string, string>;
+		discoveredItems: readonly SessionDiscoveryItem[];
+		catalogEntries: ReadonlyMap<string, SessionMeta>;
+		state: SourceStateRow;
+	},
+): void {
+	const removeRecords = db.prepare(
+		"DELETE FROM usage_records WHERE harness = ?",
+	);
+	const insertRecord = db.prepare(
+		`INSERT OR REPLACE INTO usage_records (
+			harness, session_id, message_id, turn_id, is_subagent, is_review, cwd, model,
+			raw_model, pricing_model, timestamp, input_tokens, output_tokens, cache_read_tokens,
+			cache_write_tokens, reasoning_tokens, cost_usd, raw_cost_usd, cost_estimated
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	);
+	const removeMessages = db.prepare(
+		"DELETE FROM session_messages WHERE harness = ?",
+	);
+	const insertMessage = db.prepare(
+		"INSERT OR REPLACE INTO session_messages (harness, session_id, messages) VALUES (?, ?, ?)",
+	);
+	const removeTexts = db.prepare("DELETE FROM session_texts WHERE harness = ?");
+	const insertText = db.prepare(
+		"INSERT OR REPLACE INTO session_texts (harness, session_id, body) VALUES (?, ?, ?)",
+	);
+	let removeFts = null;
+	let insertFts = null;
+	try {
+		removeFts = db.prepare("DELETE FROM fts_session_text WHERE harness = ?");
+		insertFts = db.prepare(
+			"INSERT INTO fts_session_text (harness, session_id, body) VALUES (?, ?, ?)",
+		);
+	} catch {}
+	const removeStamps = db.prepare(
+		"DELETE FROM session_file_stamps WHERE harness = ?",
+	);
+	const insertStamp = db.prepare(
+		`INSERT OR REPLACE INTO session_file_stamps
+			(harness, session_id, file_path, mtime_ms, size_bytes)
+		VALUES (?, ?, ?, ?, ?)`,
+	);
+	const removeCatalog = db.prepare(
+		"DELETE FROM session_catalog WHERE harness = ?",
+	);
+	const insertCatalog = db.prepare(
+		`INSERT OR REPLACE INTO session_catalog (
+			harness, session_id, title, cwd, started_at, is_subagent,
+			is_review, has_transcript, source_kind, source_path
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	);
+	const upsertState = db.prepare(
+		`INSERT OR REPLACE INTO source_state
+			(harness, fingerprint, indexed_at, available, warnings)
+		VALUES (?, ?, ?, ?, ?)`,
+	);
+
+	db.transaction(() => {
+		removeRecords.run(harness);
+		for (const record of options.records) {
+			const rawModel = record.rawModel ?? record.pricingModel ?? record.model;
+			const rawCostUsd =
+				record.rawCostUsd !== undefined
+					? record.rawCostUsd
+					: record.costEstimated
+						? null
+						: record.costUsd;
+			insertRecord.run(
+				record.harness,
+				record.sessionId,
+				record.messageId,
+				record.turnId ?? null,
+				record.isSubagent ? 1 : 0,
+				record.isReview ? 1 : 0,
+				record.cwd,
+				record.model,
+				rawModel,
+				record.pricingModel ?? null,
+				record.timestamp,
+				record.inputTokens,
+				record.outputTokens,
+				record.cacheReadTokens,
+				record.cacheWriteTokens,
+				record.reasoningTokens,
+				record.costUsd,
+				rawCostUsd,
+				record.costEstimated ? 1 : 0,
+			);
+		}
+
+		removeMessages.run(harness);
+		for (const [sessionId, count] of options.messages) {
+			insertMessage.run(harness, sessionId, count);
+		}
+
+		removeTexts.run(harness);
+		if (removeFts) removeFts.run(harness);
+		for (const [sessionId, body] of options.texts) {
+			insertText.run(harness, sessionId, body);
+			if (insertFts) insertFts.run(harness, sessionId, body);
+		}
+
+		removeStamps.run(harness);
+		for (const item of options.discoveredItems) {
+			insertStamp.run(
+				harness,
+				item.sessionId,
+				item.filePath,
+				item.mtimeMs,
+				item.sizeBytes,
+			);
+		}
+
+		removeCatalog.run(harness);
+		for (const meta of options.catalogEntries.values()) {
+			if (meta.harness !== harness) continue;
+			insertCatalog.run(
+				meta.harness,
+				meta.sessionId,
+				meta.title,
+				meta.cwd,
+				meta.startedAt,
+				meta.isSubagent ? 1 : 0,
+				meta.isReview ? 1 : 0,
+				meta.hasTranscript ? 1 : 0,
+				meta.source?.kind ?? null,
+				meta.source?.path ?? null,
+			);
+		}
+
+		upsertState.run(
+			harness,
+			options.state.fingerprint,
+			options.state.indexedAt,
+			options.state.available,
+			options.state.warnings,
+		);
+	})();
+}
+
+export function searchSessionTextKeysFts(
+	db: StoreDatabase,
+	ftsQuery: string,
+	limit?: number,
+): Set<string> | null {
+	if (!ftsQuery.trim()) return new Set();
+	try {
+		const sql = limit
+			? "SELECT DISTINCT harness, session_id FROM fts_session_text WHERE fts_session_text MATCH ? LIMIT ?"
+			: "SELECT DISTINCT harness, session_id FROM fts_session_text WHERE fts_session_text MATCH ?";
+		const rows = limit
+			? db
+					.query<
+						{ harness: HarnessName; session_id: string },
+						[string, number]
+					>(sql)
+					.all(ftsQuery, limit)
+			: db
+					.query<{ harness: HarnessName; session_id: string }, [string]>(sql)
+					.all(ftsQuery);
+		return new Set(rows.map((row) => `${row.harness}:${row.session_id}`));
+	} catch {
+		return null;
+	}
+}
+
+export function readSessionTextsByKeys(
+	db: StoreDatabase,
+	keys: readonly string[],
+): Map<string, string> {
+	const result = new Map<string, string>();
+	if (!keys.length) return result;
+	const parsed: Array<{ harness: string; sessionId: string }> = [];
+	for (const key of keys) {
+		const sep = key.indexOf(":");
+		if (sep <= 0) continue;
+		parsed.push({
+			harness: key.slice(0, sep),
+			sessionId: key.slice(sep + 1),
+		});
+	}
+	const chunkSize = 200;
+	for (let i = 0; i < parsed.length; i += chunkSize) {
+		const chunk = parsed.slice(i, i + chunkSize);
+		const clauses = chunk
+			.map(() => "(harness = ? AND session_id = ?)")
+			.join(" OR ");
+		const params: string[] = [];
+		for (const item of chunk) {
+			params.push(item.harness, item.sessionId);
+		}
+		const rows = db
+			.query<
+				{ harness: HarnessName; session_id: string; body: string },
+				string[]
+			>(`SELECT harness, session_id, body FROM session_texts WHERE ${clauses}`)
+			.all(...params);
+		for (const row of rows) {
+			result.set(`${row.harness}:${row.session_id}`, row.body);
+		}
+	}
+	return result;
+}
+
+export function searchSessionTextsBySubstring(
+	db: StoreDatabase,
+	terms: readonly string[],
+): Map<string, string> {
+	const cleanTerms = terms.map((t) => t.trim().toLowerCase()).filter(Boolean);
+	if (!cleanTerms.length) return new Map();
+	const clauses = cleanTerms
+		.map(() => "instr(lower(body), ?) > 0")
+		.join(" OR ");
+	const rows = db
+		.query<
+			{ harness: HarnessName; session_id: string; body: string },
+			string[]
+		>(`SELECT harness, session_id, body FROM session_texts WHERE ${clauses}`)
+		.all(...cleanTerms);
+	return new Map(
+		rows.map((row) => [`${row.harness}:${row.session_id}`, row.body]),
+	);
 }
 
 export interface RecordPricingUpdate {

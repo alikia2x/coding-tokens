@@ -28,7 +28,7 @@ import {
 	type TranscriptSession,
 } from "../../src/transcripts";
 import { projectNameFor, store } from "./store";
-import { summarizeSessionRecords } from "./totals";
+import { appendAll, summarizeSessionRecords, timestampBounds } from "./totals";
 
 const MAX_MESSAGE = 100_000;
 const MAX_TOOL_INPUT = 50_000;
@@ -166,10 +166,20 @@ function buildTurns(
 	session: TranscriptSession,
 	records: UsageRecord[],
 ): TurnSummary[] {
-	const knownTurns = new Set(session.items.map((item) => item.turnId));
-	const users = session.items.filter(
-		(item) => item.role === "user" && item.kind === "message",
-	);
+	const knownTurns = new Set<string>();
+	const users: TranscriptItem[] = [];
+	const order = new Map<string, number>();
+	const itemsByTurn = new Map<string, TranscriptItem[]>();
+	for (const item of session.items) {
+		knownTurns.add(item.turnId);
+		if (item.role === "user" && item.kind === "message") {
+			users.push(item);
+		}
+		if (!order.has(item.turnId)) order.set(item.turnId, item.order);
+		const list = itemsByTurn.get(item.turnId) ?? [];
+		list.push(item);
+		itemsByTurn.set(item.turnId, list);
+	}
 	const grouped = new Map<string, UsageRecord[]>();
 	for (const record of records) {
 		const turnId = turnForRecord(record, users, knownTurns);
@@ -177,29 +187,27 @@ function buildTurns(
 		list.push(record);
 		grouped.set(turnId, list);
 	}
-	const order = new Map<string, number>();
-	for (const item of session.items) {
-		if (!order.has(item.turnId)) order.set(item.turnId, item.order);
-	}
 	const turnIds = [...new Set([...order.keys(), ...grouped.keys()])].sort(
 		(left, right) => (order.get(left) ?? 1e9) - (order.get(right) ?? 1e9),
 	);
 	return turnIds.map((turnId, index) => {
 		const turnRecords = grouped.get(turnId) ?? [];
-		const items = session.items.filter((item) => item.turnId === turnId);
-		const timestamps = [
-			...turnRecords
-				.map((record) => record.timestamp)
-				.filter((value): value is number => value !== null),
-			...items
-				.map((item) => item.timestamp)
-				.filter((value): value is number => value !== null),
-		];
+		const items = itemsByTurn.get(turnId) ?? [];
+		const recordBounds = timestampBounds(turnRecords);
+		const itemBounds = timestampBounds(items);
+		const startedAt =
+			recordBounds && itemBounds
+				? Math.min(recordBounds.min, itemBounds.min)
+				: (recordBounds?.min ?? itemBounds?.min ?? null);
+		const endedAt =
+			recordBounds && itemBounds
+				? Math.max(recordBounds.max, itemBounds.max)
+				: (recordBounds?.max ?? itemBounds?.max ?? null);
 		return {
 			id: turnId,
 			index,
-			startedAt: timestamps.length ? Math.min(...timestamps) : null,
-			endedAt: timestamps.length ? Math.max(...timestamps) : null,
+			startedAt,
+			endedAt,
 			requests: turnRecords.length,
 			totals: summarizeSessionRecords(turnRecords),
 			models: [...new Set(turnRecords.map((record) => record.model))],
@@ -440,7 +448,7 @@ export async function loadSessionTranscriptsBatch(
 					defaultPlatformPathService,
 					targetFiles.size ? targetFiles : undefined,
 				);
-				harnessWarnings.push(...batch.warnings);
+				appendAll(harnessWarnings, batch.warnings);
 				for (const sess of batch.sessions) {
 					bySessionId.set(sess.sessionId, sess);
 				}
@@ -450,7 +458,7 @@ export async function loadSessionTranscriptsBatch(
 				[harness]: targetFiles,
 			})[0];
 			if (res) {
-				harnessWarnings.push(...res.warnings);
+				appendAll(harnessWarnings, res.warnings);
 				for (const sess of res.sessions) {
 					bySessionId.set(sess.sessionId, sess);
 				}

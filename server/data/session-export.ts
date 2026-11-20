@@ -182,6 +182,10 @@ async function runSingleWorkerShard(
 	options.signal?.addEventListener("abort", killWorker, { once: true });
 
 	const reader = proc.stdout.getReader();
+	const stderrPromise =
+		proc.stderr && typeof proc.stderr !== "number"
+			? new Response(proc.stderr).text().catch(() => "")
+			: Promise.resolve("");
 	const decoder = new TextDecoder();
 	let buffer = "";
 
@@ -226,7 +230,7 @@ async function runSingleWorkerShard(
 		options.signal?.removeEventListener("abort", killWorker);
 	}
 
-	const exitCode = await proc.exited;
+	const [exitCode] = await Promise.all([proc.exited, stderrPromise]);
 	if (options.signal?.aborted) {
 		throw new DOMException("Export cancelled", "AbortError");
 	}

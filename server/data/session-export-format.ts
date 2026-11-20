@@ -6,6 +6,7 @@ import type {
 import { renderSessionMarkdown } from "../../src/exporter";
 import type { TranscriptSession } from "../../src/types";
 import { cleanSessionTitle, type SessionMeta } from "./catalog";
+import { projectName } from "./totals";
 
 export interface ExportWorkerItem {
 	key: string;
@@ -38,10 +39,7 @@ export type ExportWorkerEvent =
 	  };
 
 export function exportProjectName(cwd: string | null): string {
-	if (!cwd) return "Unknown project";
-	const normalized = cwd.replace(/\/+$/u, "");
-	const name = normalized.split("/").at(-1);
-	return name || normalized;
+	return projectName(cwd);
 }
 
 export function safeFilename(value: string): string {

@@ -10,6 +10,7 @@ import type {
 	UsageTotals,
 } from "@shared/types";
 import { HARNESS_LABELS, type HarnessName } from "@shared/types";
+import type { ReportingDataSource } from "./reports";
 import { store } from "./store";
 import {
 	bucketize,
@@ -95,10 +96,16 @@ function seriesFor(
 	});
 }
 
-export function explorePayload(options: ExploreOptions): ExplorePayload {
-	const filtered = filterRecords(store.allRecords(), options.filters);
+export function explorePayload(
+	options: ExploreOptions,
+	source?: Pick<ReportingDataSource, "getRecords" | "getMessagesFor">,
+): ExplorePayload {
+	const records = source ? source.getRecords() : store.allRecords();
+	const filtered = filterRecords(records, options.filters);
 	const payload = build(options, filtered);
-	payload.totals.messages = store.messagesFor(filtered);
+	payload.totals.messages = source
+		? source.getMessagesFor(filtered)
+		: store.messagesFor(filtered);
 	return payload;
 }
 

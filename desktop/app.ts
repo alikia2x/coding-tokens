@@ -1,10 +1,11 @@
 import path from "node:path";
-import { BrowserWindow, Utils } from "electrobun/main";
+import { app, BrowserWindow, Utils } from "electrobun/main";
 import {
 	type ApplicationMenuItemConfig,
 	setApplicationMenu,
 } from "electrobun/main/app-menu";
 import { VIEWS_FOLDER } from "electrobun/main/paths";
+import { store } from "../server/data/store";
 import { startServer } from "../server/start";
 import { defaultPlatformPathService } from "../src/platform/paths";
 
@@ -67,7 +68,7 @@ const userDataDir =
 	Utils?.paths?.userData ??
 	defaultPlatformPathService.getDataDir("coding-tokens");
 const databasePath = path.join(userDataDir, "coding-tokens.sqlite");
-const { port } = startServer({
+const { server, port } = startServer({
 	port: 0,
 	hostname: "127.0.0.1",
 	staticDir,
@@ -99,6 +100,23 @@ const mainWindow = new BrowserWindow({
 	titleBarStyle: isMac ? "hiddenInset" : "default",
 	trafficLightOffset: isMac ? { x: 16, y: 15 } : undefined,
 });
+
+let serverStopped = false;
+const stopDesktopServer = () => {
+	if (serverStopped) return;
+	serverStopped = true;
+	try {
+		server.stop();
+	} catch {}
+	try {
+		store.close();
+	} catch {}
+};
+
+app.on("before-quit", stopDesktopServer);
+mainWindow.on("close", stopDesktopServer);
+process.on("SIGINT", stopDesktopServer);
+process.on("SIGTERM", stopDesktopServer);
 
 console.log(`Coding Tokens window: http://127.0.0.1:${port}`);
 console.log(`Views: ${staticDir}`);

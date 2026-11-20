@@ -10,6 +10,7 @@ import {
 	type ExportWorkerRequest,
 	renderExportSessionItem,
 } from "./session-export-format";
+import { appendAll } from "./totals";
 
 function emitEvent(event: ExportWorkerEvent): void {
 	process.stdout.write(`${JSON.stringify(event)}\n`);
@@ -65,7 +66,7 @@ async function loadChunkTranscripts(
 				defaultPlatformPathService,
 				targetFiles.size ? targetFiles : undefined,
 			);
-			warnings.push(...batch.warnings);
+			appendAll(warnings, batch.warnings);
 			for (const sess of batch.sessions) {
 				bySessionId.set(sess.sessionId, sess);
 			}
@@ -80,7 +81,7 @@ async function loadChunkTranscripts(
 			[harness]: targetFiles,
 		})[0];
 		if (res) {
-			warnings.push(...res.warnings);
+			appendAll(warnings, res.warnings);
 			for (const sess of res.sessions) {
 				bySessionId.set(sess.sessionId, sess);
 			}

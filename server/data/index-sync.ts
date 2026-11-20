@@ -1,4 +1,3 @@
-import { normalizeModelName } from "@shared/models";
 import type {
 	CustomModelPriceRule,
 	HarnessName,
@@ -17,18 +16,17 @@ import { extractSearchText } from "../../src/services/transcripts";
 import { extractHarnessSearchTexts } from "../../src/transcripts";
 import { buildSessionCatalog } from "./catalog";
 import {
+	type FileStampRow,
 	readAllSourceStates,
 	readCatalogMap,
 	readHarnessRecords,
 	readSessionFileStamps,
+	replaceHarnessAll,
 	replaceHarnessCatalog,
-	replaceHarnessMessages,
-	replaceHarnessRecords,
-	replaceHarnessTexts,
-	replaceSessionFileStamps,
 	type StoreDatabase,
 	upsertHarnessSessionDelta,
 } from "./database";
+import { appendAll } from "./totals";
 
 export interface IndexProgressEvent {
 	phase: string;
@@ -194,48 +192,59 @@ export async function syncHarnessesToDatabase(options: {
 					distinctPaths.size === discovered.length;
 
 				if (canUseIncremental && cachedRecords) {
-					const stampBySession = new Map<
-						string,
-						{ filePath: string; mtimeMs: number; sizeBytes: number }
-					>();
+					const stampKey = (sessionId: string, filePath: string) =>
+						`${sessionId}\u0000${filePath}`;
+					const stampByFile = new Map<string, FileStampRow>();
+					const existingSessionIds = new Set<string>();
 					for (const stamp of existingStamps) {
-						stampBySession.set(stamp.sessionId, stamp);
+						stampByFile.set(stampKey(stamp.sessionId, stamp.filePath), stamp);
+						existingSessionIds.add(stamp.sessionId);
 					}
 					const discoveredIds = new Set<string>();
-					const changedItems: SessionDiscoveryItem[] = [];
+					const discoveredKeys = new Set<string>();
+					const changedIds = new Set<string>();
 					for (const item of discovered) {
 						discoveredIds.add(item.sessionId);
-						const prev = stampBySession.get(item.sessionId);
+						const key = stampKey(item.sessionId, item.filePath);
+						discoveredKeys.add(key);
+						const prev = stampByFile.get(key);
 						if (
 							!prev ||
-							prev.filePath !== item.filePath ||
 							prev.mtimeMs !== item.mtimeMs ||
 							prev.sizeBytes !== item.sizeBytes
 						) {
-							changedItems.push(item);
+							changedIds.add(item.sessionId);
 						}
 					}
 					const removedIds = new Set<string>();
-					for (const prevId of stampBySession.keys()) {
+					for (const prevId of existingSessionIds) {
 						if (!discoveredIds.has(prevId)) removedIds.add(prevId);
 					}
+					for (const stamp of existingStamps) {
+						if (
+							discoveredIds.has(stamp.sessionId) &&
+							!discoveredKeys.has(stampKey(stamp.sessionId, stamp.filePath))
+						) {
+							changedIds.add(stamp.sessionId);
+						}
+					}
+					const itemsToRead = discovered.filter((item) =>
+						changedIds.has(item.sessionId),
+					);
 
-					if (changedItems.length <= 20) {
-						const changedIds = new Set(
-							changedItems.map((item) => item.sessionId),
-						);
+					if (changedIds.size <= 20 && itemsToRead.length <= 20) {
 						const deltaRecords: UsageRecord[] = [];
 						const deltaMessages = new Map<string, number>();
 						const deltaWarnings: string[] = [];
 
-						for (const item of changedItems) {
+						for (const item of itemsToRead) {
 							try {
 								const single = await provider.readUsage(
 									defaultPlatformPathService,
 									item,
 								);
-								deltaRecords.push(...single.records);
-								deltaWarnings.push(...single.warnings);
+								appendAll(deltaRecords, single.records);
+								appendAll(deltaWarnings, single.warnings);
 								for (const [sid, cnt] of single.messages) {
 									deltaMessages.set(sid, cnt);
 								}
@@ -261,7 +270,7 @@ export async function syncHarnessesToDatabase(options: {
 								for (const fp of files) targetFiles.add(fp);
 							}
 						}
-						for (const item of changedItems) {
+						for (const item of itemsToRead) {
 							if (
 								!provider.resolveSessionFilesBatch &&
 								provider.resolveSessionFiles
@@ -275,7 +284,7 @@ export async function syncHarnessesToDatabase(options: {
 							}
 							targetFiles.add(item.filePath);
 						}
-						if (changedItems.length && provider.readTranscripts) {
+						if (itemsToRead.length && provider.readTranscripts) {
 							try {
 								const tRes = await provider.readTranscripts(
 									defaultPlatformPathService,
@@ -290,7 +299,7 @@ export async function syncHarnessesToDatabase(options: {
 						}
 
 						const changedFiles = new Set(
-							changedItems.map((item) => item.filePath),
+							itemsToRead.map((item) => item.filePath),
 						);
 						const harnessCat = changedIds.size
 							? buildSessionCatalog(deltaRecords, new Set([harness]), {
@@ -298,7 +307,7 @@ export async function syncHarnessesToDatabase(options: {
 									targetFiles: changedFiles,
 								})
 							: { entries: new Map(), warnings: [] };
-						warnings.push(...harnessCat.warnings);
+						appendAll(warnings, harnessCat.warnings);
 
 						upsertHarnessSessionDelta(db, harness, {
 							changedSessionIds: changedIds,
@@ -336,10 +345,6 @@ export async function syncHarnessesToDatabase(options: {
 				}
 				if (result.records.length) {
 					applyPricingToRecords(result.records, { catalog, rules });
-				} else {
-					for (const record of result.records) {
-						record.model = normalizeModelName(record.model);
-					}
 				}
 				let texts = new Map<string, string>();
 				if (provider.readTranscripts) {
@@ -371,23 +376,24 @@ export async function syncHarnessesToDatabase(options: {
 		if (fullSaves.length) {
 			emit("Saving local index", total);
 			for (const save of fullSaves) {
-				replaceHarnessRecords(db, save.harness, save.result.records, {
-					fingerprint: save.fingerprint,
-					indexedAt: Date.now(),
-					available: save.result.available ? 1 : 0,
-					warnings: JSON.stringify(save.result.warnings),
-				});
-				replaceHarnessMessages(db, save.harness, save.result.messages);
-				replaceHarnessTexts(db, save.harness, save.texts);
-				if (save.discovered.length) {
-					replaceSessionFileStamps(db, save.harness, save.discovered);
-				}
 				const harnessCat = buildSessionCatalog(
 					save.result.records,
 					new Set([save.harness]),
 				);
-				warnings.push(...harnessCat.warnings);
-				replaceHarnessCatalog(db, save.harness, harnessCat.entries);
+				appendAll(warnings, harnessCat.warnings);
+				replaceHarnessAll(db, save.harness, {
+					records: save.result.records,
+					messages: save.result.messages,
+					texts: save.texts,
+					discoveredItems: save.discovered,
+					catalogEntries: harnessCat.entries,
+					state: {
+						fingerprint: save.fingerprint,
+						indexedAt: Date.now(),
+						available: save.result.available ? 1 : 0,
+						warnings: JSON.stringify(save.result.warnings),
+					},
+				});
 				updatedHarnesses.add(save.harness);
 				if (yieldBetweenSteps) await yieldTick();
 			}
@@ -421,10 +427,10 @@ export async function syncHarnessesToDatabase(options: {
 		emit("Building session index", total);
 		const missingRecords: UsageRecord[] = [];
 		for (const harness of missingCatalogHarnesses) {
-			missingRecords.push(...readHarnessRecords(db, harness));
+			appendAll(missingRecords, readHarnessRecords(db, harness));
 		}
 		const built = buildSessionCatalog(missingRecords, missingCatalogHarnesses);
-		warnings.push(...built.warnings);
+		appendAll(warnings, built.warnings);
 		for (const harness of missingCatalogHarnesses) {
 			replaceHarnessCatalog(db, harness, built.entries);
 			catalogRebuiltHarnesses.add(harness);
