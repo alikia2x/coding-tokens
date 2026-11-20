@@ -16,7 +16,6 @@ import {
 	Bar,
 	BarChart,
 	CartesianGrid,
-	Curve,
 	Line,
 	LineChart,
 	ResponsiveContainer,
@@ -71,6 +70,7 @@ import { localizeLabel } from "~/lib/labels";
 import { useExplore, useModels, useProjects, useStatus } from "~/lib/queries";
 import { useRangeLabel } from "~/lib/range";
 import { useSettings } from "~/lib/settings";
+import { buildAdditiveStackedAreaPaths } from "~/lib/stacked-area";
 import { type ExploreSlice, useAppStore } from "~/lib/store";
 import { sessionsPath, UNKNOWN_PROJECT_KEY } from "~/lib/time-range";
 
@@ -443,6 +443,8 @@ export function ExplorePage() {
 		() => new Map(series.map((item, index) => [item.key, index])),
 		[series],
 	);
+
+	const seriesKeys = useMemo(() => series.map((item) => item.key), [series]);
 
 	const tableRows =
 		mode === "dimension"
@@ -852,8 +854,8 @@ export function ExplorePage() {
 												shape={(shapeProps) => (
 													<StackedAreaShape
 														{...shapeProps}
-														seriesKey={item.key}
-														clipId={`explore-stroke-${areaClipPrefix}-${index}`}
+														seriesKeys={seriesKeys}
+														seriesIndex={index}
 													/>
 												)}
 												isAnimationActive={false}
@@ -1138,99 +1140,87 @@ function renderActiveAreaDot(seriesKey: string, color: string) {
 }
 
 function StackedAreaShape({
-	seriesKey,
-	clipId,
+	seriesKeys,
+	seriesIndex,
 	...curveProps
 }: AreaRevealShapeProps & {
-	seriesKey: string;
-	clipId: string;
+	seriesKeys: readonly string[];
+	seriesIndex: number;
 }): ReactElement | null {
 	const points = curveProps.points;
-	if (!points || points.length === 0) return null;
+	if (!points || points.length < 2) return null;
 
-	const clipRects: Array<{ x: number; width: number }> = [];
-	let i = 0;
-	while (i < points.length) {
-		const point = points[i] as {
-			x?: number | null;
-			y?: number | null;
-			payload?: Record<string, unknown>;
-		};
-		const value = Number(point?.payload?.[seriesKey] ?? 0);
-		if (value <= 0 || point?.x == null || point?.y == null) {
-			i += 1;
-			continue;
-		}
-		let end = i;
-		while (end + 1 < points.length) {
-			const nextPoint = points[end + 1] as {
-				x?: number | null;
-				y?: number | null;
-				payload?: Record<string, unknown>;
-			};
-			if (
-				Number(nextPoint?.payload?.[seriesKey] ?? 0) <= 0 ||
-				nextPoint?.x == null ||
-				nextPoint?.y == null
-			) {
-				break;
-			}
-			end += 1;
-		}
-		const leftIdx = Math.max(0, i - 1);
-		const rightIdx = Math.min(points.length - 1, end + 1);
-		const rawLeft = Number(points[leftIdx]?.x);
-		const rawRight = Number(points[rightIdx]?.x);
-		if (Number.isFinite(rawLeft) && Number.isFinite(rawRight)) {
-			const padLeft = i === 0 ? 4 : 0;
-			const padRight = end === points.length - 1 ? 4 : 0;
-			const x = rawLeft - padLeft;
-			const width = Math.max(2, rawRight + padRight - x);
-			clipRects.push({ x, width });
-		}
-		i = end + 1;
+	const xs: number[] = [];
+	for (const pt of points) {
+		const x = Number(pt?.x);
+		if (!Number.isFinite(x)) return null;
+		xs.push(x);
 	}
 
-	const {
-		animationElapsedTime: _animationElapsedTime,
-		isAnimating: _isAnimating,
-		isEntrance: _isEntrance,
-		isRange: _isRange,
-		...svgCurveProps
-	} = curveProps;
+	let bestDelta = 0;
+	let pxPerUnit = 0;
+	let yZero = 0;
+	const baseArr = Array.isArray(curveProps.baseLine)
+		? curveProps.baseLine
+		: null;
+	for (let i = 0; i < points.length; i += 1) {
+		const pt = points[i] as { y?: number | null; value?: unknown };
+		const val = pt?.value;
+		if (!Array.isArray(val) || val.length < 2 || pt?.y == null) continue;
+		const v0 = Number(val[0]);
+		const v1 = Number(val[1]);
+		const delta = v1 - v0;
+		const botY = baseArr
+			? baseArr[i]?.y
+			: typeof curveProps.baseLine === "number"
+				? curveProps.baseLine
+				: null;
+		if (
+			delta > bestDelta &&
+			botY != null &&
+			Number.isFinite(botY) &&
+			Number.isFinite(pt.y)
+		) {
+			const unit = (Number(botY) - Number(pt.y)) / delta;
+			if (unit > 0 && Number.isFinite(unit)) {
+				bestDelta = delta;
+				pxPerUnit = unit;
+				yZero = Number(botY) + v0 * unit;
+			}
+		}
+	}
+
+	if (bestDelta <= 0 || pxPerUnit <= 0) return null;
+
+	const heightsByLayer = seriesKeys.slice(0, seriesIndex + 1).map((key) =>
+		points.map((pt) => {
+			const raw = (pt as { payload?: Record<string, unknown> })?.payload?.[key];
+			return Math.max(0, Number(raw ?? 0)) * pxPerUnit;
+		}),
+	);
+
+	const paths = buildAdditiveStackedAreaPaths(xs, heightsByLayer, yZero)[
+		seriesIndex
+	];
+	if (!paths?.fillPath) return null;
 
 	return (
 		<g>
-			<Curve {...svgCurveProps} stroke="none" />
-			{clipRects.length > 0 &&
-			curveProps.stroke &&
-			curveProps.stroke !== "none" ? (
-				<>
-					<defs>
-						<clipPath id={clipId}>
-							{clipRects.map((rect) => (
-								<rect
-									key={`${clipId}-${rect.x}-${rect.width}`}
-									x={rect.x}
-									y={-500}
-									width={rect.width}
-									height={2000}
-								/>
-							))}
-						</clipPath>
-					</defs>
-					<g clipPath={`url(#${clipId})`}>
-						<Curve
-							type={svgCurveProps.type}
-							layout={svgCurveProps.layout}
-							points={svgCurveProps.points}
-							connectNulls={svgCurveProps.connectNulls}
-							stroke={svgCurveProps.stroke}
-							strokeWidth={svgCurveProps.strokeWidth}
-							fill="none"
-						/>
-					</g>
-				</>
+			<path
+				d={paths.fillPath}
+				fill={curveProps.fill}
+				fillOpacity={curveProps.fillOpacity}
+				stroke="none"
+			/>
+			{paths.strokePath && curveProps.stroke && curveProps.stroke !== "none" ? (
+				<path
+					d={paths.strokePath}
+					fill="none"
+					stroke={curveProps.stroke}
+					strokeWidth={curveProps.strokeWidth}
+					strokeLinecap="round"
+					strokeLinejoin="round"
+				/>
 			) : null}
 		</g>
 	);
