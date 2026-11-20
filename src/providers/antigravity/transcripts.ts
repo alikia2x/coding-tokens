@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { PlatformPathService } from "../../platform/paths";
 import { defaultPlatformPathService } from "../../platform/paths";
 import { readAntigravityTranscripts } from "../../transcripts/antigravity";
@@ -5,10 +6,10 @@ import type { TranscriptReadResult, TranscriptSession } from "../../types";
 import { getAntigravityDbFiles } from "./discovery";
 
 export function readAntigravityTranscriptsSync(
-	_paths: PlatformPathService = defaultPlatformPathService,
+	paths: PlatformPathService = defaultPlatformPathService,
 	targetFiles?: ReadonlySet<string>,
 ): TranscriptReadResult {
-	return readAntigravityTranscripts(targetFiles);
+	return readAntigravityTranscripts(targetFiles, paths);
 }
 
 export function readAntigravitySingleTranscriptSync(
@@ -16,7 +17,7 @@ export function readAntigravitySingleTranscriptSync(
 	sessionId: string,
 ): TranscriptSession | null {
 	const files = getAntigravityDbFiles(paths);
-	const target = files.find((f) => f.includes(sessionId));
+	const target = files.find((f) => path.basename(f, ".db") === sessionId);
 	if (!target) return null;
 	const result = readAntigravityTranscriptsSync(paths, new Set([target]));
 	return result.sessions.find((s) => s.sessionId === sessionId) ?? null;

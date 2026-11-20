@@ -1,3 +1,7 @@
+import {
+	defaultPlatformPathService,
+	type PlatformPathService,
+} from "./platform/paths";
 import { readAntigravityTranscripts } from "./transcripts/antigravity";
 import { codexSessionFiles, readCodexTranscripts } from "./transcripts/codex";
 import { readCommandCodeTranscripts } from "./transcripts/commandcode";
@@ -42,9 +46,16 @@ export {
 export function readTranscriptSources(
 	harnesses: readonly HarnessName[],
 	targets?: Partial<Record<HarnessName, ReadonlySet<string>>>,
+	paths: PlatformPathService = defaultPlatformPathService,
 ): TranscriptReadResult[] {
 	const readers: Partial<
-		Record<HarnessName, (files?: ReadonlySet<string>) => TranscriptReadResult>
+		Record<
+			HarnessName,
+			(
+				files?: ReadonlySet<string>,
+				pathService?: PlatformPathService,
+			) => TranscriptReadResult
+		>
 	> = {
 		codex: readCodexTranscripts,
 		dsh: readDshTranscripts,
@@ -64,7 +75,7 @@ export function readTranscriptSources(
 				],
 			};
 		}
-		return reader(targets?.[harness]);
+		return reader(targets?.[harness], paths);
 	});
 }
 
@@ -72,8 +83,9 @@ const MAX_SESSION_SEARCH_CHARS = 200_000;
 
 export function extractHarnessSearchTexts(
 	harness: HarnessName,
+	paths: PlatformPathService = defaultPlatformPathService,
 ): Map<string, string> {
-	const result = readTranscriptSources([harness])[0];
+	const result = readTranscriptSources([harness], undefined, paths)[0];
 	const texts = new Map<string, string>();
 	if (!result) return texts;
 	for (const session of result.sessions) {
@@ -113,8 +125,11 @@ export function filterTranscriptSessions(
 			const cwd = normalizedCwd(session.cwd);
 			if (!cwd || !filters.projects.has(cwd)) return false;
 		}
-		if (filters.date !== undefined) {
-			return localDate(session.startedAt) === filters.date;
+		if (
+			filters.date !== undefined &&
+			localDate(session.startedAt) !== filters.date
+		) {
+			return false;
 		}
 		if (filters.since === undefined && filters.until === undefined) return true;
 		const startedAt = session.startedAt;

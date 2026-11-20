@@ -2,9 +2,51 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { uriToPath } from "../../platform/normalizer";
 import type { PlatformPathService } from "../../platform/paths";
-import { walkFiles } from "../../util";
+import {
+	objectOrEmpty,
+	parseJsonl,
+	textOrNull,
+	timestampMs,
+	walkFiles,
+} from "../../util";
 import type { SessionDiscoveryItem } from "../types";
-import type { CopilotChatSessionData } from "./types";
+
+function extractCopilotMeta(filePath: string): {
+	sessionId?: string;
+	mtimeMs?: number;
+} {
+	try {
+		const raw = readFileSync(filePath, "utf-8");
+		if (filePath.endsWith(".jsonl")) {
+			const rows = parseJsonl(raw);
+			let sessionId: string | undefined;
+			let mtimeMs: number | undefined;
+			for (const row of rows) {
+				const obj = objectOrEmpty(row);
+				const v =
+					typeof obj.kind === "number" && obj.kind === 0
+						? objectOrEmpty(obj.v)
+						: obj;
+				sessionId ??= textOrNull(v.sessionId) ?? textOrNull(v.id) ?? undefined;
+				mtimeMs =
+					timestampMs(v.lastMessageDate) ??
+					timestampMs(v.creationDate) ??
+					mtimeMs;
+			}
+			return { sessionId, mtimeMs };
+		}
+		const obj = objectOrEmpty(JSON.parse(raw));
+		return {
+			sessionId: textOrNull(obj.sessionId) ?? textOrNull(obj.id) ?? undefined,
+			mtimeMs:
+				timestampMs(obj.lastMessageDate) ??
+				timestampMs(obj.creationDate) ??
+				undefined,
+		};
+	} catch {
+		return {};
+	}
+}
 
 export interface CopilotRoots {
 	workspaceStorageDirs: string[];
@@ -169,17 +211,9 @@ export async function discoverCopilotSessions(
 					try {
 						const stat = statSync(filePath);
 						const fileBase = f.replace(/\.(json|jsonl)$/, "");
-						let sessionId = fileBase;
-						let mtime = stat.mtimeMs;
-
-						try {
-							const content = JSON.parse(
-								readFileSync(filePath, "utf-8"),
-							) as CopilotChatSessionData;
-							sessionId = content.sessionId ?? content.id ?? fileBase;
-							mtime =
-								content.lastMessageDate ?? content.creationDate ?? stat.mtimeMs;
-						} catch {}
+						const meta = extractCopilotMeta(filePath);
+						const sessionId = meta.sessionId ?? fileBase;
+						const mtime = meta.mtimeMs ?? stat.mtimeMs;
 
 						sessionMap.set(sessionId, {
 							sessionId,
@@ -208,17 +242,9 @@ export async function discoverCopilotSessions(
 					try {
 						const stat = statSync(filePath);
 						const fileBase = f.replace(/\.(json|jsonl)$/, "");
-						let sessionId = fileBase;
-						let mtime = stat.mtimeMs;
-
-						try {
-							const content = JSON.parse(
-								readFileSync(filePath, "utf-8"),
-							) as CopilotChatSessionData;
-							sessionId = content.sessionId ?? content.id ?? fileBase;
-							mtime =
-								content.lastMessageDate ?? content.creationDate ?? stat.mtimeMs;
-						} catch {}
+						const meta = extractCopilotMeta(filePath);
+						const sessionId = meta.sessionId ?? fileBase;
+						const mtime = meta.mtimeMs ?? stat.mtimeMs;
 
 						sessionMap.set(sessionId, {
 							sessionId,

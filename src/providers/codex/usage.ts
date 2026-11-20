@@ -1,6 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
-import { zstdDecompressSync } from "node:zlib";
 import type { PlatformPathService } from "../../platform/paths";
 import { cleanUserMessage } from "../../transcripts";
 import type { SourceResult, UsageRecord } from "../../types";
@@ -11,7 +10,7 @@ import {
 	modelName,
 	normalizedCwd,
 	objectOrEmpty,
-	parseJsonl,
+	readJsonlFileSync,
 	textOrNull,
 	timestampMs,
 	uniqueBy,
@@ -98,11 +97,7 @@ export function firstTurnModel(events: unknown[]): string | null {
 }
 
 export function readRolloutSync(filePath: string): unknown[] {
-	const bytes = readFileSync(filePath);
-	const text = filePath.endsWith(".zst")
-		? zstdDecompressSync(bytes).toString("utf8")
-		: bytes.toString("utf8");
-	return parseJsonl(text);
+	return readJsonlFileSync(filePath);
 }
 
 export function readCodexUsageSync(

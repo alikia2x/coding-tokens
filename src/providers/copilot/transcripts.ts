@@ -6,24 +6,26 @@ import {
 	newSession,
 } from "../../transcripts/shared";
 import type { TranscriptReadResult, TranscriptSession } from "../../types";
+import { timestampMs } from "../../util";
+import type { SessionDiscoveryItem } from "../types";
 import { discoverCopilotSessions } from "./discovery";
 import { parseCopilotChatJson } from "./usage";
 
-export async function readCopilotTranscript(
-	paths: PlatformPathService,
-	sessionId: string,
-): Promise<TranscriptSession | null> {
-	const sessions = await discoverCopilotSessions(paths);
-	const target = sessions.find((s) => s.sessionId === sessionId);
-
-	if (!target?.filePath.endsWith(".json")) {
+function buildCopilotTranscriptFromItem(
+	target: SessionDiscoveryItem,
+): TranscriptSession | null {
+	if (
+		!target.filePath.endsWith(".json") &&
+		!target.filePath.endsWith(".jsonl")
+	) {
 		return null;
 	}
 
 	const chatData = parseCopilotChatJson(target.filePath);
 	if (!chatData) return null;
 
-	const startedAt = chatData.creationDate ?? target.mtimeMs ?? Date.now();
+	const startedAt =
+		timestampMs(chatData.creationDate) ?? timestampMs(target.mtimeMs);
 	const title =
 		chatData.title ??
 		(typeof chatData.requests?.[0]?.message === "string"
@@ -33,7 +35,7 @@ export async function readCopilotTranscript(
 
 	const session = newSession(
 		"copilot",
-		sessionId,
+		target.sessionId,
 		target.cwd ?? null,
 		startedAt,
 		title,
@@ -43,8 +45,8 @@ export async function readCopilotTranscript(
 
 	for (const [i, req] of requests.entries()) {
 		if (!req) continue;
-		const turnId = `turn-${sessionId}-${i + 1}`;
-		const ts = req.timestamp ?? startedAt;
+		const turnId = `turn-${target.sessionId}-${i + 1}`;
+		const ts = timestampMs(req.timestamp) ?? startedAt;
 
 		const userText =
 			typeof req.message === "string" ? req.message : (req.message?.text ?? "");
@@ -69,7 +71,6 @@ export async function readCopilotTranscript(
 			});
 		}
 
-		// Tool calls if present
 		const rounds = req.result?.metadata?.toolCallRounds;
 		if (Array.isArray(rounds)) {
 			for (const [r, round] of rounds.entries()) {
@@ -107,6 +108,16 @@ export async function readCopilotTranscript(
 	return session;
 }
 
+export async function readCopilotTranscript(
+	paths: PlatformPathService,
+	sessionId: string,
+): Promise<TranscriptSession | null> {
+	const sessions = await discoverCopilotSessions(paths);
+	const target = sessions.find((s) => s.sessionId === sessionId);
+	if (!target) return null;
+	return buildCopilotTranscriptFromItem(target);
+}
+
 export async function readCopilotTranscripts(
 	paths: PlatformPathService,
 	targetFiles?: ReadonlySet<string>,
@@ -124,7 +135,7 @@ export async function readCopilotTranscripts(
 
 		for (const sess of sessions) {
 			if (targetFiles && !targetFiles.has(sess.filePath)) continue;
-			const transcript = await readCopilotTranscript(paths, sess.sessionId);
+			const transcript = buildCopilotTranscriptFromItem(sess);
 			if (transcript) {
 				result.sessions.push(transcript);
 			}

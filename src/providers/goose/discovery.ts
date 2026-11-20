@@ -1,13 +1,14 @@
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import type { PlatformPathService } from "../../platform/paths";
-import { defaultPlatformPathService } from "../../platform/paths";
-import { openReadonlyDatabase, tablesIn } from "../../transcripts/shared";
+import { defaultPlatformPathService, readPathEnv } from "../../platform/paths";
+import { openSafeReadonlyDatabase, tablesIn } from "../../platform/sqlite";
 import {
 	normalizedCwd,
 	objectOrEmpty,
 	parseJsonl,
 	textOrNull,
+	timestampMs,
 	walkFiles,
 } from "../../util";
 import type { SessionDiscoveryItem } from "../types";
@@ -47,10 +48,7 @@ export function getGooseLocations(
 	};
 
 	// 1. Environment variable override
-	const envRoot =
-		(
-			paths as unknown as { env?: { get: (k: string) => string | undefined } }
-		).env?.get("GOOSE_PATH_ROOT") ?? process.env.GOOSE_PATH_ROOT;
+	const envRoot = readPathEnv(paths, "GOOSE_PATH_ROOT");
 	if (envRoot) {
 		const expanded = paths.expandPath(envRoot);
 		checkDbCandidate(path.join(expanded, "sessions.db"));
@@ -141,11 +139,11 @@ export async function discoverGooseSessions(
 	for (const dbPath of dbFiles) {
 		try {
 			const dbStat = statSync(dbPath);
-			const db = openReadonlyDatabase(dbPath);
+			const handle = openSafeReadonlyDatabase(dbPath);
 			try {
-				const tables = tablesIn(db);
+				const tables = tablesIn(handle.db);
 				if (tables.has("sessions")) {
-					const rows = db
+					const rows = handle.db
 						.query<
 							{
 								id: string;
@@ -167,14 +165,15 @@ export async function discoverGooseSessions(
 							sessionId: row.id,
 							harness: "goose",
 							filePath: dbPath,
-							mtimeMs: row.updated_at ?? row.created_at ?? dbStat.mtimeMs,
+							mtimeMs:
+								timestampMs(row.updated_at ?? row.created_at) ?? dbStat.mtimeMs,
 							sizeBytes: dbStat.size,
 							cwd: normalizedCwd(row.working_dir),
 						});
 					}
 				}
 			} finally {
-				db.close();
+				handle.close();
 			}
 		} catch {
 			// skip corrupt or unreadable DB

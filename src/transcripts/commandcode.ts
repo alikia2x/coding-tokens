@@ -1,14 +1,14 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import {
-	expandHome,
-	homeDir,
-	normalizedCwd,
-	objectOrEmpty,
-	textOrNull,
-	timestampMs,
-	walkFiles,
-} from "../util";
+	defaultPlatformPathService,
+	type PlatformPathService,
+} from "../platform/paths";
+import {
+	getCommandCodeProjectsRoot,
+	getCommandCodeSessionFiles,
+} from "../providers/commandcode/discovery";
+import { normalizedCwd, objectOrEmpty, textOrNull, timestampMs } from "../util";
 import {
 	addItem,
 	addToolCall,
@@ -24,39 +24,18 @@ import {
 
 export function readCommandCodeTranscripts(
 	targetFiles?: ReadonlySet<string>,
+	paths: PlatformPathService = defaultPlatformPathService,
 ): TranscriptReadResult {
-	const root = process.env.COMMANDCODE_HOME
-		? path.resolve(expandHome(process.env.COMMANDCODE_HOME))
-		: path.join(homeDir, ".commandcode");
-	const projectsRoot = path.join(root, "projects");
+	const projectsRoot = getCommandCodeProjectsRoot(paths);
 	const result: TranscriptReadResult = {
 		harness: "commandcode",
 		available: existsSync(projectsRoot),
 		sessions: [],
 		warnings: [],
 	};
-	let projectDirs: string[] = [];
-	try {
-		projectDirs = readdirSync(projectsRoot, { withFileTypes: true })
-			.filter((entry) => entry.isDirectory())
-			.map((entry) => path.join(projectsRoot, entry.name));
-	} catch (error) {
-		if (existsSync(projectsRoot))
-			result.warnings.push(
-				`Command Code: failed to list projects (${String(error)})`,
-			);
-	}
-	const files = projectDirs
-		.flatMap((directory) =>
-			walkFiles(
-				directory,
-				(_filePath, name) =>
-					name.endsWith(".jsonl") &&
-					!name.endsWith(".checkpoints.jsonl") &&
-					!name.endsWith(".prompts.jsonl"),
-			),
-		)
-		.filter((filePath) => !targetFiles || targetFiles.has(filePath));
+	const files = getCommandCodeSessionFiles(paths).filter(
+		(filePath) => !targetFiles || targetFiles.has(filePath),
+	);
 	for (const filePath of files) {
 		try {
 			const rows = readJsonlFile(filePath).map(objectOrEmpty);

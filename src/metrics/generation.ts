@@ -16,6 +16,66 @@ export const MIN_MODEL_DURATION_FOR_TPS_MS = 500;
 // (rather than pre-LLM message-row creation times) can yield meaningful TTFT.
 const RELIABLE_TTFT_HARNESSES = new Set(["codex", "claude", "dsh"]);
 
+interface TimedTurnEntry {
+	timestamp: number;
+	turnId: string;
+}
+
+function buildSortedUserTurns(
+	users: readonly TranscriptItem[],
+): TimedTurnEntry[] {
+	const entries: TimedTurnEntry[] = [];
+	for (const user of users) {
+		if (user.timestamp !== null && Number.isFinite(user.timestamp)) {
+			entries.push({ timestamp: user.timestamp, turnId: user.turnId });
+		}
+	}
+	entries.sort((a, b) => a.timestamp - b.timestamp);
+	return entries;
+}
+
+function latestUserTurnAtOrBefore(
+	sortedUsers: readonly TimedTurnEntry[],
+	timestamp: number,
+): string | null {
+	let lo = 0;
+	let hi = sortedUsers.length - 1;
+	let best = -1;
+	while (lo <= hi) {
+		const mid = (lo + hi) >>> 1;
+		const entry = sortedUsers[mid];
+		if (!entry) break;
+		if (entry.timestamp <= timestamp) {
+			best = mid;
+			lo = mid + 1;
+		} else {
+			hi = mid - 1;
+		}
+	}
+	return best >= 0 ? (sortedUsers[best]?.turnId ?? null) : null;
+}
+
+function firstItemAfterOrder(
+	sortedTurnItems: readonly TranscriptItem[],
+	order: number,
+): TranscriptItem | undefined {
+	let lo = 0;
+	let hi = sortedTurnItems.length - 1;
+	let best = -1;
+	while (lo <= hi) {
+		const mid = (lo + hi) >>> 1;
+		const item = sortedTurnItems[mid];
+		if (!item) break;
+		if (item.order > order) {
+			best = mid;
+			hi = mid - 1;
+		} else {
+			lo = mid + 1;
+		}
+	}
+	return best >= 0 ? sortedTurnItems[best] : undefined;
+}
+
 export function turnForRecord(
 	record: UsageRecord,
 	users: TranscriptItem[],
@@ -66,21 +126,27 @@ export function computeToolCallDurations(
 	const sortedItems = [...items].sort(
 		(left, right) => left.order - right.order,
 	);
+	const timedItemsByTurn = new Map<string, TranscriptItem[]>();
+	for (const item of sortedItems) {
+		if (item.timestamp !== null && Number.isFinite(item.timestamp)) {
+			const list = timedItemsByTurn.get(item.turnId) ?? [];
+			list.push(item);
+			timedItemsByTurn.set(item.turnId, list);
+		}
+	}
 
 	for (const pair of pairToolItems(sortedItems)) {
 		if (pair.call.kind !== "tool_call") continue;
 		const start = pair.call.timestamp;
 		if (start === null || !Number.isFinite(start)) continue;
 
-		const resTimes = pair.results
-			.map((result) => result.timestamp)
-			.filter(
-				(timestamp): timestamp is number =>
-					timestamp !== null &&
-					Number.isFinite(timestamp) &&
-					timestamp >= start,
-			);
-		const end = resTimes.length ? Math.max(...resTimes) : null;
+		let end: number | null = null;
+		for (const result of pair.results) {
+			const ts = result.timestamp;
+			if (ts !== null && Number.isFinite(ts) && ts >= start) {
+				if (end === null || ts > end) end = ts;
+			}
+		}
 
 		if (end !== null && end > start) {
 			if (end - start <= MAX_TOOL_DURATION_MS) {
@@ -98,13 +164,10 @@ export function computeToolCallDurations(
 		if (!canFallback) continue;
 
 		const lastOrder = pair.results.at(-1)?.order ?? pair.call.order;
-		const nextItem = sortedItems.find(
-			(item) =>
-				item.turnId === pair.call.turnId &&
-				item.order > lastOrder &&
-				item.timestamp !== null &&
-				Number.isFinite(item.timestamp),
-		);
+		const turnTimedItems = timedItemsByTurn.get(pair.call.turnId);
+		const nextItem = turnTimedItems
+			? firstItemAfterOrder(turnTimedItems, lastOrder)
+			: undefined;
 		if (
 			nextItem &&
 			(nextItem.role === "assistant" || nextItem.role === "tool") &&
@@ -157,7 +220,7 @@ function computeTurnTtft(
 	if (!firstUser || firstUser.timestamp === null) return null;
 	const userTs = firstUser.timestamp;
 
-	const candidateTimestamps: number[] = [];
+	let earliest: number | null = null;
 	for (const item of turnItems) {
 		if (
 			item.role !== "user" &&
@@ -167,12 +230,13 @@ function computeTurnTtft(
 			item.timestamp - userTs >= MIN_RELIABLE_TTFT_MS &&
 			item.timestamp - userTs <= MAX_TTFT_MS
 		) {
-			candidateTimestamps.push(item.timestamp);
+			if (earliest === null || item.timestamp < earliest) {
+				earliest = item.timestamp;
+			}
 		}
 	}
 
-	if (!candidateTimestamps.length) return null;
-	return Math.min(...candidateTimestamps) - userTs;
+	return earliest === null ? null : earliest - userTs;
 }
 
 export function computeSessionGenerationMetrics(
@@ -189,6 +253,8 @@ export function computeSessionGenerationMetrics(
 	const users = session.items.filter(
 		(item) => item.role === "user" && item.kind === "message",
 	);
+	const sortedUserTurns = buildSortedUserTurns(users);
+	const fallbackTurnId = users.at(-1)?.turnId ?? "untracked";
 
 	const itemsByTurn = new Map<string, TranscriptItem[]>();
 	for (const item of session.items) {
@@ -199,7 +265,17 @@ export function computeSessionGenerationMetrics(
 
 	const recordsByTurn = new Map<string, UsageRecord[]>();
 	for (const record of records) {
-		const turnId = turnForRecord(record, users, knownTurns);
+		let turnId: string;
+		if (record.turnId && knownTurns.has(record.turnId)) {
+			turnId = record.turnId;
+		} else if (record.timestamp !== null && sortedUserTurns.length > 0) {
+			turnId =
+				latestUserTurnAtOrBefore(sortedUserTurns, record.timestamp) ??
+				record.turnId ??
+				fallbackTurnId;
+		} else {
+			turnId = record.turnId ?? fallbackTurnId;
+		}
 		const list = recordsByTurn.get(turnId) ?? [];
 		list.push(record);
 		recordsByTurn.set(turnId, list);

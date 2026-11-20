@@ -7,6 +7,7 @@ import {
 	hasTokenUsage,
 	modelName,
 	normalizedCwd,
+	numberOrZero,
 	objectOrEmpty,
 	parseJsonl,
 	textOrNull,
@@ -58,6 +59,13 @@ export function readCommandCodeUsageSync(
 				if (Object.keys(usage).length === 0) continue;
 				if (message.role && message.role !== "assistant") continue;
 
+				const rawOutput = numberOrZero(usage.outputTokens);
+				const reasoning = numberOrZero(
+					usage.reasoningTokens ?? usage.reasoning,
+				);
+				const outputTokens =
+					rawOutput < reasoning ? rawOutput + reasoning : rawOutput;
+
 				records.push(
 					usageRecord(
 						{
@@ -71,10 +79,10 @@ export function readCommandCodeUsageSync(
 						},
 						{
 							input: usage.inputTokens,
-							output: usage.outputTokens,
+							output: outputTokens,
 							cacheRead: usage.cacheReadTokens,
 							cacheWrite: usage.cacheWriteTokens,
-							reasoning: usage.reasoningTokens ?? usage.reasoning,
+							reasoning,
 							cost: usage.costUsd,
 						},
 					),

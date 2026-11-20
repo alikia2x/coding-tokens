@@ -119,43 +119,93 @@ function conversationTokenLine(records: UsageRecord[]): string | null {
 	return `[TOKENS] ${tokenDetails(totals)}`;
 }
 
-function turnForUsage(
-	record: UsageRecord,
-	users: TranscriptItem[],
-	assistantItems: TranscriptItem[],
-	knownTurns: ReadonlySet<string>,
-): string | undefined {
-	if (record.turnId && knownTurns.has(record.turnId)) return record.turnId;
-	const timestamp = record.timestamp;
-	if (timestamp !== null) {
-		let latest: TranscriptItem | undefined;
-		for (const user of users) {
-			if (user.timestamp !== null && user.timestamp <= timestamp) latest = user;
-		}
-		if (latest) return latest.turnId;
-		const nearestAssistant = closestByTimestamp(assistantItems, timestamp);
-		if (nearestAssistant) return nearestAssistant.turnId;
-	}
-	return assistantItems.at(-1)?.turnId;
+interface IndexedTimestampItem {
+	timestamp: number;
+	item: TranscriptItem;
 }
 
-function closestByTimestamp(
-	items: TranscriptItem[],
+function buildTimedIndex(
+	items: readonly TranscriptItem[],
+): IndexedTimestampItem[] {
+	const timed: IndexedTimestampItem[] = [];
+	for (const item of items) {
+		if (item.timestamp !== null && Number.isFinite(item.timestamp)) {
+			timed.push({ timestamp: item.timestamp, item });
+		}
+	}
+	timed.sort((a, b) => a.timestamp - b.timestamp);
+	return timed;
+}
+
+function latestTimedItemAtOrBefore(
+	timed: readonly IndexedTimestampItem[],
+	timestamp: number,
+): TranscriptItem | undefined {
+	let lo = 0;
+	let hi = timed.length - 1;
+	let best = -1;
+	while (lo <= hi) {
+		const mid = (lo + hi) >>> 1;
+		const entry = timed[mid];
+		if (!entry) break;
+		if (entry.timestamp <= timestamp) {
+			best = mid;
+			lo = mid + 1;
+		} else {
+			hi = mid - 1;
+		}
+	}
+	return best >= 0 ? timed[best]?.item : undefined;
+}
+
+function closestIndexedByTimestamp(
+	timed: readonly IndexedTimestampItem[],
+	items: readonly TranscriptItem[],
 	timestamp: number | null,
 ): TranscriptItem | undefined {
 	if (!items.length) return undefined;
-	if (timestamp === null) return items.at(-1);
-	return items.reduce(
-		(closest, item) => {
-			if (item.timestamp === null) return closest;
-			if (!closest || closest.timestamp === null) return item;
-			return Math.abs(item.timestamp - timestamp) <
-				Math.abs(closest.timestamp - timestamp)
-				? item
-				: closest;
-		},
-		undefined as TranscriptItem | undefined,
-	);
+	if (timestamp === null || !timed.length) return items.at(-1);
+	let lo = 0;
+	let hi = timed.length - 1;
+	while (lo < hi) {
+		const mid = (lo + hi) >>> 1;
+		const entry = timed[mid];
+		if (!entry) break;
+		if (entry.timestamp < timestamp) {
+			lo = mid + 1;
+		} else {
+			hi = mid;
+		}
+	}
+	const right = timed[lo];
+	const left = lo > 0 ? timed[lo - 1] : undefined;
+	if (!left) return right?.item;
+	if (!right) return left.item;
+	return Math.abs(left.timestamp - timestamp) <=
+		Math.abs(right.timestamp - timestamp)
+		? left.item
+		: right.item;
+}
+
+function firstItemAfterOrder(
+	itemsOrdered: readonly TranscriptItem[],
+	order: number,
+): TranscriptItem | undefined {
+	let lo = 0;
+	let hi = itemsOrdered.length - 1;
+	let best = -1;
+	while (lo <= hi) {
+		const mid = (lo + hi) >>> 1;
+		const item = itemsOrdered[mid];
+		if (!item) break;
+		if (item.order > order) {
+			best = mid;
+			hi = mid - 1;
+		} else {
+			lo = mid + 1;
+		}
+	}
+	return best >= 0 ? itemsOrdered[best] : undefined;
 }
 
 function usageByAssistantMessage(
@@ -166,25 +216,89 @@ function usageByAssistantMessage(
 	const result = new Map<string, UsageRecord[]>();
 	if (detail === "user_only") return result;
 
-	const visibleAssistant = visibleItems.filter(
-		(item) => item.kind === "message" && item.role === "assistant",
-	);
+	const visibleAssistant = visibleItems
+		.filter((item) => item.kind === "message" && item.role === "assistant")
+		.sort((a, b) => a.order - b.order);
 	if (!visibleAssistant.length) return result;
 
-	const allAssistant = session.items.filter(
-		(item) => item.kind === "message" && item.role === "assistant",
-	);
-	const users = session.items.filter(
-		(item) => item.role === "user" && item.kind === "message",
-	);
-	const knownTurns = new Set(session.items.map((item) => item.turnId));
+	const allAssistant: TranscriptItem[] = [];
+	const users: TranscriptItem[] = [];
+	const knownTurns = new Set<string>();
 	const callsByTurn = new Map<string, TranscriptItem[]>();
+
 	for (const item of session.items) {
-		if (item.kind !== "tool_call") continue;
-		const list = callsByTurn.get(item.turnId) ?? [];
-		list.push(item);
-		callsByTurn.set(item.turnId, list);
+		knownTurns.add(item.turnId);
+		if (item.kind === "message" && item.role === "assistant") {
+			allAssistant.push(item);
+		} else if (item.role === "user" && item.kind === "message") {
+			users.push(item);
+		} else if (item.kind === "tool_call") {
+			const list = callsByTurn.get(item.turnId) ?? [];
+			list.push(item);
+			callsByTurn.set(item.turnId, list);
+		}
 	}
+
+	const timedUsers = buildTimedIndex(users);
+	const timedAllAssistant = buildTimedIndex(allAssistant);
+	const timedVisibleAll = buildTimedIndex(visibleAssistant);
+	const lastAllAssistant = allAssistant.at(-1);
+
+	const visibleByTurn = new Map<string, TranscriptItem[]>();
+	const timedVisibleByTurn = new Map<string, IndexedTimestampItem[]>();
+	const lastFinalByTurn = new Map<string, TranscriptItem>();
+	let globalLastFinal: TranscriptItem | undefined;
+	const visibleByMsgId = new Map<string, TranscriptItem>();
+	const visibleByTurnMsgId = new Map<string, Map<string, TranscriptItem>>();
+
+	for (const item of visibleAssistant) {
+		const list = visibleByTurn.get(item.turnId) ?? [];
+		list.push(item);
+		visibleByTurn.set(item.turnId, list);
+
+		if (item.phase === "final") {
+			globalLastFinal = item;
+			lastFinalByTurn.set(item.turnId, item);
+		}
+
+		let turnMsgMap = visibleByTurnMsgId.get(item.turnId);
+		if (!turnMsgMap) {
+			turnMsgMap = new Map<string, TranscriptItem>();
+			visibleByTurnMsgId.set(item.turnId, turnMsgMap);
+		}
+		turnMsgMap.set(item.id, item);
+		if (item.usageId) turnMsgMap.set(item.usageId, item);
+
+		if (!visibleByMsgId.has(item.id)) visibleByMsgId.set(item.id, item);
+		if (item.usageId && !visibleByMsgId.has(item.usageId)) {
+			visibleByMsgId.set(item.usageId, item);
+		}
+	}
+
+	for (const [turnId, list] of visibleByTurn) {
+		timedVisibleByTurn.set(turnId, buildTimedIndex(list));
+	}
+
+	const timedCallsByTurn = new Map<string, IndexedTimestampItem[]>();
+	for (const [turnId, list] of callsByTurn) {
+		timedCallsByTurn.set(turnId, buildTimedIndex(list));
+	}
+
+	const turnForRecordFast = (record: UsageRecord): string | undefined => {
+		if (record.turnId && knownTurns.has(record.turnId)) return record.turnId;
+		const timestamp = record.timestamp;
+		if (timestamp !== null) {
+			const latestUser = latestTimedItemAtOrBefore(timedUsers, timestamp);
+			if (latestUser) return latestUser.turnId;
+			const nearestAssistant = closestIndexedByTimestamp(
+				timedAllAssistant,
+				allAssistant,
+				timestamp,
+			);
+			if (nearestAssistant) return nearestAssistant.turnId;
+		}
+		return lastAllAssistant?.turnId;
+	};
 
 	const append = (item: TranscriptItem | undefined, record: UsageRecord) => {
 		if (!item) return;
@@ -196,55 +310,72 @@ function usageByAssistantMessage(
 	for (const record of session.usageRecords ?? []) {
 		if (record.isSubagent || record.messageId.endsWith(":cumulative-total"))
 			continue;
-		const turnId = turnForUsage(record, users, allAssistant, knownTurns);
-		const sameTurn = visibleAssistant.filter(
-			(item) => !turnId || item.turnId === turnId,
-		);
-		const candidates = sameTurn.length ? sameTurn : visibleAssistant;
+		const turnId = turnForRecordFast(record);
+		const sameTurn = turnId ? visibleByTurn.get(turnId) : undefined;
+		const candidates = sameTurn?.length ? sameTurn : visibleAssistant;
+		const candidateTimed =
+			sameTurn?.length && turnId
+				? (timedVisibleByTurn.get(turnId) ?? timedVisibleAll)
+				: timedVisibleAll;
 
 		if (detail === "chat_compact") {
-			const final = [...candidates]
-				.reverse()
-				.find((item) => item.phase === "final");
+			const final =
+				sameTurn?.length && turnId
+					? lastFinalByTurn.get(turnId)
+					: globalLastFinal;
 			append(
 				final ??
-					closestByTimestamp(candidates, record.timestamp) ??
+					closestIndexedByTimestamp(
+						candidateTimed,
+						candidates,
+						record.timestamp,
+					) ??
 					candidates.at(-1),
 				record,
 			);
 			continue;
 		}
 
-		const exact = candidates.find(
-			(item) =>
-				item.id === record.messageId || item.usageId === record.messageId,
-		);
+		const exact =
+			sameTurn?.length && turnId
+				? visibleByTurnMsgId.get(turnId)?.get(record.messageId)
+				: visibleByMsgId.get(record.messageId);
 		if (exact) {
 			append(exact, record);
 			continue;
 		}
 
 		const sameTurnCalls = turnId ? (callsByTurn.get(turnId) ?? []) : [];
-		const nearestCall = closestByTimestamp(sameTurnCalls, record.timestamp);
+		const sameTurnCallsTimed = turnId
+			? (timedCallsByTurn.get(turnId) ?? [])
+			: [];
+		const nearestCall = closestIndexedByTimestamp(
+			sameTurnCallsTimed,
+			sameTurnCalls,
+			record.timestamp,
+		);
 		if (
 			nearestCall &&
 			record.timestamp !== null &&
 			nearestCall.timestamp !== null &&
 			Math.abs(nearestCall.timestamp - record.timestamp) <= 5_000
 		) {
-			const afterCall = candidates.find(
-				(item) => item.order > nearestCall.order,
-			);
+			const afterCall = firstItemAfterOrder(candidates, nearestCall.order);
 			append(
 				afterCall ??
-					closestByTimestamp(candidates, record.timestamp) ??
+					closestIndexedByTimestamp(
+						candidateTimed,
+						candidates,
+						record.timestamp,
+					) ??
 					candidates.at(-1),
 				record,
 			);
 			continue;
 		}
 		append(
-			closestByTimestamp(candidates, record.timestamp) ?? candidates.at(-1),
+			closestIndexedByTimestamp(candidateTimed, candidates, record.timestamp) ??
+				candidates.at(-1),
 			record,
 		);
 	}

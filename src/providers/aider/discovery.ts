@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import type { PlatformPathService } from "../../platform/paths";
-import { defaultPlatformPathService } from "../../platform/paths";
+import { defaultPlatformPathService, readPathEnv } from "../../platform/paths";
 import { normalizedCwd } from "../../util";
 import type { SessionDiscoveryItem } from "../types";
 
@@ -54,10 +54,7 @@ export function getAiderLocations(
 	};
 
 	// 1. Environment variable override
-	const envHome =
-		(
-			paths as unknown as { env?: { get: (k: string) => string | undefined } }
-		).env?.get("AIDER_HOME") ?? process.env.AIDER_HOME;
+	const envHome = readPathEnv(paths, "AIDER_HOME");
 	if (envHome) {
 		checkDirectory(paths.expandPath(envHome));
 	}
@@ -85,8 +82,8 @@ export function getAiderLocations(
 
 export function parseAiderSessionStarts(
 	content: string,
-): Array<{ sessionId: string; timestampMs: number }> {
-	const sessions: Array<{ sessionId: string; timestampMs: number }> = [];
+): Array<{ sessionId: string; timestampMs: number | null }> {
+	const sessions: Array<{ sessionId: string; timestampMs: number | null }> = [];
 	const regex =
 		/#\s+aider\s+chat\s+started\s+at\s+([0-9]{4}-[0-9]{2}-[0-9]{2}\s+[0-9]{2}:[0-9]{2}:[0-9]{2})/giu;
 	let match = regex.exec(content);
@@ -94,7 +91,7 @@ export function parseAiderSessionStarts(
 		const rawDate = match[1];
 		if (rawDate) {
 			const parsed = Date.parse(rawDate.replace(" ", "T"));
-			const timestampMs = Number.isNaN(parsed) ? Date.now() : parsed;
+			const timestampMs = Number.isNaN(parsed) ? null : parsed;
 			const sessionId = `aider-${rawDate.replace(/[\s:]/gu, "-")}`;
 			sessions.push({ sessionId, timestampMs });
 		}
@@ -112,7 +109,7 @@ export async function discoverAiderSessions(
 
 	for (const loc of locations) {
 		try {
-			let stat = { mtimeMs: Date.now(), size: 0 };
+			let stat = { mtimeMs: 0, size: 0 };
 			if (existsSync(loc.historyFile)) {
 				const s = statSync(loc.historyFile);
 				stat = { mtimeMs: s.mtimeMs, size: s.size };
@@ -122,7 +119,8 @@ export async function discoverAiderSessions(
 			}
 
 			// Read history file to extract distinct session timestamps
-			let sessions: Array<{ sessionId: string; timestampMs: number }> = [];
+			let sessions: Array<{ sessionId: string; timestampMs: number | null }> =
+				[];
 			if (existsSync(loc.historyFile)) {
 				const content = readFileSync(loc.historyFile, "utf8");
 				sessions = parseAiderSessionStarts(content);
@@ -134,7 +132,7 @@ export async function discoverAiderSessions(
 						sessionId: sess.sessionId,
 						harness: "aider",
 						filePath: loc.historyFile,
-						mtimeMs: sess.timestampMs,
+						mtimeMs: sess.timestampMs ?? stat.mtimeMs,
 						sizeBytes: stat.size,
 						cwd: normalizedCwd(loc.directory),
 					});
@@ -152,7 +150,7 @@ export async function discoverAiderSessions(
 				});
 			}
 		} catch {
-			// skip
+			// skip inaccessible aider directory
 		}
 	}
 

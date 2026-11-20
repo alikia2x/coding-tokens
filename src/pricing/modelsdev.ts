@@ -8,20 +8,26 @@ import {
 	writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { normalizeModelName } from "../../shared/models";
 import type { TokenRates } from "../../shared/types";
-import { defaultPlatformPathService } from "../platform/paths";
+import {
+	defaultPlatformPathService,
+	type PlatformPathService,
+} from "../platform/paths";
 import type { HarnessName, UsageRecord } from "../types";
 import { objectOrEmpty } from "../util";
 
 export const DEFAULT_MODELS_DEV_ENDPOINT = "https://models.dev/api.json";
 
-function resolveCacheFile(): string {
+function resolveCacheFile(
+	paths: PlatformPathService = defaultPlatformPathService,
+): string {
 	const newCache = path.join(
-		defaultPlatformPathService.getCacheDir("coding-tokens"),
+		paths.getCacheDir("coding-tokens"),
 		"models.dev.json",
 	);
 	const legacyCache = path.join(
-		defaultPlatformPathService.getHomeDir(),
+		paths.getHomeDir(),
 		"Library",
 		"Caches",
 		"harness-token-usage",
@@ -39,8 +45,8 @@ function resolveCacheFile(): string {
 	return newCache;
 }
 
-export function getModelsDevCachePath(): string {
-	return resolveCacheFile();
+export function getModelsDevCachePath(paths?: PlatformPathService): string {
+	return resolveCacheFile(paths);
 }
 
 const cacheTtl = 24 * 60 * 60 * 1000;
@@ -88,9 +94,109 @@ export interface Catalog {
 	byModel: Map<string, CatalogEntry[]>;
 }
 
-interface CatalogCache {
+export interface CatalogCache {
 	fetchedAt: number;
 	data: unknown;
+}
+
+export const STATIC_FALLBACK_RATES: Record<string, Rates> = {
+	"claude-3-5-sonnet": {
+		input: 3.0,
+		output: 15.0,
+		reasoning: 15.0,
+		cacheRead: 0.3,
+		cacheWrite: 3.75,
+	},
+	"claude-3-7-sonnet": {
+		input: 3.0,
+		output: 15.0,
+		reasoning: 15.0,
+		cacheRead: 0.3,
+		cacheWrite: 3.75,
+	},
+	"gpt-4o": {
+		input: 2.5,
+		output: 10.0,
+		reasoning: 10.0,
+		cacheRead: 1.25,
+		cacheWrite: 2.5,
+	},
+	"gpt-4o-mini": {
+		input: 0.15,
+		output: 0.6,
+		reasoning: 0.6,
+		cacheRead: 0.075,
+		cacheWrite: 0.15,
+	},
+	"deepseek-chat": {
+		input: 0.14,
+		output: 0.28,
+		reasoning: 0.28,
+		cacheRead: 0.014,
+		cacheWrite: 0.14,
+	},
+	"deepseek-reasoner": {
+		input: 0.55,
+		output: 2.19,
+		reasoning: 2.19,
+		cacheRead: 0.14,
+		cacheWrite: 0.55,
+	},
+	"deepseek-v3": {
+		input: 0.14,
+		output: 0.28,
+		reasoning: 0.28,
+		cacheRead: 0.014,
+		cacheWrite: 0.14,
+	},
+	"deepseek-r1": {
+		input: 0.55,
+		output: 2.19,
+		reasoning: 2.19,
+		cacheRead: 0.14,
+		cacheWrite: 0.55,
+	},
+	"gemini-1.5-pro": {
+		input: 1.25,
+		output: 5.0,
+		reasoning: 5.0,
+		cacheRead: 0.3125,
+		cacheWrite: 1.25,
+	},
+	"gemini-1.5-flash": {
+		input: 0.075,
+		output: 0.3,
+		reasoning: 0.3,
+		cacheRead: 0.01875,
+		cacheWrite: 0.075,
+	},
+	"gemini-2.0-flash": {
+		input: 0.1,
+		output: 0.4,
+		reasoning: 0.4,
+		cacheRead: 0.025,
+		cacheWrite: 0.1,
+	},
+};
+
+export const STATIC_MODEL_RATES = STATIC_FALLBACK_RATES;
+
+export function lookupFallbackRates(name: string): Rates | null {
+	const clean = name
+		.toLowerCase()
+		.replace(/[\s_.]+/g, "-")
+		.trim();
+	if (!clean) return null;
+	for (const [key, rates] of Object.entries(STATIC_FALLBACK_RATES)) {
+		if (
+			clean === key ||
+			clean.includes(key) ||
+			(clean.length >= 3 && key.includes(clean))
+		) {
+			return rates;
+		}
+	}
+	return null;
 }
 
 function normalized(value: string): string {
@@ -221,8 +327,10 @@ interface ParsedCatalogMemo {
 
 let parsedCatalogMemo: ParsedCatalogMemo | null = null;
 
-function loadValidatedCache(): { fetchedAt: number; catalog: Catalog } | null {
-	const cacheFile = resolveCacheFile();
+function loadValidatedCache(
+	paths?: PlatformPathService,
+): { fetchedAt: number; catalog: Catalog } | null {
+	const cacheFile = resolveCacheFile(paths);
 	try {
 		const stat = statSync(cacheFile);
 		if (
@@ -254,20 +362,26 @@ function loadValidatedCache(): { fetchedAt: number; catalog: Catalog } | null {
 			catalog,
 		};
 		return { fetchedAt: cache.fetchedAt, catalog };
-	} catch {
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException | undefined)?.code;
+		if (code !== "ENOENT") {
+			console.warn(
+				`models.dev: failed to load cache ${cacheFile}: ${String(err)}`,
+			);
+		}
 		return null;
 	}
 }
 
-export function loadCachedCatalogWithMeta(): {
+export function loadCachedCatalogWithMeta(paths?: PlatformPathService): {
 	fetchedAt: number;
 	catalog: Catalog;
 } | null {
-	return loadValidatedCache();
+	return loadValidatedCache(paths);
 }
 
-export function loadCachedCatalog(): Catalog | null {
-	return loadValidatedCache()?.catalog ?? null;
+export function loadCachedCatalog(paths?: PlatformPathService): Catalog | null {
+	return loadValidatedCache(paths)?.catalog ?? null;
 }
 
 export function catalogStats(catalog: Catalog | null): {
@@ -281,8 +395,12 @@ export function catalogStats(catalog: Catalog | null): {
 	};
 }
 
-function writeCache(data: unknown, fetchedAt = Date.now()): boolean {
-	const cacheFile = resolveCacheFile();
+function writeCache(
+	data: unknown,
+	fetchedAt = Date.now(),
+	paths?: PlatformPathService,
+): boolean {
+	const cacheFile = resolveCacheFile(paths);
 	try {
 		mkdirSync(path.dirname(cacheFile), { recursive: true });
 		const temporaryFile = `${cacheFile}.${process.pid}.tmp`;
@@ -516,12 +634,21 @@ export function resolveModel(
 	return null;
 }
 
-export function estimateTokensCost(record: UsageRecord, rates: Rates): number {
-	const input = record.inputTokens ?? 0;
-	const reasoning = record.reasoningTokens ?? 0;
-	const cacheRead = record.cacheReadTokens ?? 0;
-	const cacheWrite = record.cacheWriteTokens ?? 0;
-	const output = Math.max(0, (record.outputTokens ?? 0) - reasoning);
+export function calculateTokensCost(
+	tokens: {
+		inputTokens?: number;
+		outputTokens?: number;
+		cacheReadTokens?: number;
+		cacheWriteTokens?: number;
+		reasoningTokens?: number;
+	},
+	rates: Rates,
+): number {
+	const input = tokens.inputTokens ?? 0;
+	const reasoning = tokens.reasoningTokens ?? 0;
+	const cacheRead = tokens.cacheReadTokens ?? 0;
+	const cacheWrite = tokens.cacheWriteTokens ?? 0;
+	const output = Math.max(0, (tokens.outputTokens ?? 0) - reasoning);
 	const reasoningRate = rates.reasoning ?? rates.output;
 	return (
 		(input * rates.input +
@@ -531,6 +658,10 @@ export function estimateTokensCost(record: UsageRecord, rates: Rates): number {
 			cacheWrite * (rates.cacheWrite ?? rates.input)) /
 		1_000_000
 	);
+}
+
+export function estimateTokensCost(record: UsageRecord, rates: Rates): number {
+	return calculateTokensCost(record, rates);
 }
 
 export function hasPositiveRates(rates: Rates): boolean {
@@ -559,6 +690,7 @@ export async function fetchAndCacheCatalog(
 		endpoint?: string;
 		timeoutMs?: number;
 		fetchFn?: typeof fetch;
+		paths?: PlatformPathService;
 	} = {},
 ): Promise<FetchCatalogResult> {
 	const targetEndpoint =
@@ -610,7 +742,7 @@ export async function fetchAndCacheCatalog(
 			throw new Error("Catalog returned 0 models");
 		}
 		const fetchedAt = Date.now();
-		const wrote = writeCache(data, fetchedAt);
+		const wrote = writeCache(data, fetchedAt, options.paths);
 		return {
 			catalog: freshCatalog,
 			fetchedAt,
@@ -643,12 +775,16 @@ let inFlightRefresh: Promise<FetchCatalogResult> | null = null;
 
 export async function enrichWithModelsDev(
 	records: UsageRecord[],
+	options?: {
+		paths?: PlatformPathService;
+		fetchFn?: typeof fetch;
+	},
 ): Promise<string | null> {
 	if (!records.length) return null;
 	const needsPricing = records.some(
 		(record) => record.costUsd === null || record.costUsd === 0,
 	);
-	const cached = loadValidatedCache();
+	const cached = loadValidatedCache(options?.paths);
 	const age = cached ? Date.now() - cached.fetchedAt : Number.POSITIVE_INFINITY;
 	const cacheIsFresh = age >= 0 && age < cacheTtl;
 	let catalog = cached?.catalog ?? null;
@@ -658,15 +794,23 @@ export async function enrichWithModelsDev(
 	let warning: string | null = null;
 
 	if (!cacheIsFresh) {
-		if (!inFlightRefresh) {
-			inFlightRefresh = fetchAndCacheCatalog({
-				endpoint: DEFAULT_MODELS_DEV_ENDPOINT,
-				timeoutMs: 5000,
-			}).finally(() => {
-				inFlightRefresh = null;
-			});
+		const fetchOptions = {
+			endpoint: DEFAULT_MODELS_DEV_ENDPOINT,
+			timeoutMs: 5000,
+			fetchFn: options?.fetchFn,
+			paths: options?.paths,
+		};
+		let fetched: FetchCatalogResult;
+		if (options?.paths || options?.fetchFn) {
+			fetched = await fetchAndCacheCatalog(fetchOptions);
+		} else {
+			if (!inFlightRefresh) {
+				inFlightRefresh = fetchAndCacheCatalog(fetchOptions).finally(() => {
+					inFlightRefresh = null;
+				});
+			}
+			fetched = await inFlightRefresh;
 		}
-		const fetched = await inFlightRefresh;
 		if (fetched.catalog) {
 			catalog = fetched.catalog;
 			if (fetched.cacheWriteError) warning = fetched.cacheWriteError;
@@ -721,29 +865,51 @@ export function applyCatalog(
 	// model ids tens of thousands of times, so resolve each distinct harness and
 	// model pair once instead of once per request.
 	const resolved = new Map<string, CatalogEntry | null>();
+	const fallbackMemo = new Map<string, Rates | null>();
 	for (const record of records) {
-		const key = `${record.harness}\u0000${record.model}\u0000${record.pricingModel ?? ""}`;
+		if (record.rawModel === undefined || record.rawModel === null) {
+			record.rawModel = record.pricingModel ?? record.model;
+		}
+		const rawModel = record.rawModel;
+		const key = `${record.harness}\u0000${rawModel}\u0000${record.pricingModel ?? ""}\u0000${record.model}`;
 		let model = resolved.get(key);
 		if (model === undefined) {
 			model =
 				(record.pricingModel
 					? resolveModel(record.pricingModel, record.harness, catalog)
-					: null) ?? resolveModel(record.model, record.harness, catalog);
+					: null) ??
+				resolveModel(rawModel, record.harness, catalog) ??
+				resolveModel(record.model, record.harness, catalog);
 			resolved.set(key, model);
 		}
-		if (!model) continue;
-		record.model = model.name;
-		// A recorded zero is only authoritative when the catalog also prices the
-		// model at zero (free tiers, coding plans, local providers). Unknown
-		// providers and missing catalog entries often leave cost at 0 while the
-		// resolved model has real rates; estimate those instead of showing $0.
+
+		record.model = normalizeModelName(model?.name ?? rawModel ?? record.model);
+
+		let rates: Rates | null = model?.rates ?? null;
+		if (!rates) {
+			let fallback = fallbackMemo.get(key);
+			if (fallback === undefined) {
+				fallback =
+					(record.pricingModel
+						? lookupFallbackRates(record.pricingModel)
+						: null) ??
+					lookupFallbackRates(rawModel) ??
+					lookupFallbackRates(record.model);
+				fallbackMemo.set(key, fallback);
+			}
+			rates = fallback;
+		}
+		if (!rates) continue;
+
+		// A recorded zero is only authoritative when the model also prices at
+		// zero (free tiers, coding plans, local providers). Unknown providers
+		// and missing entries often leave cost at 0 while the resolved model has
+		// real rates; estimate those instead of showing $0.
 		const shouldEstimate =
 			record.costUsd === null ||
-			(record.costUsd === 0 &&
-				model.rates !== null &&
-				hasPositiveRates(model.rates));
-		if (shouldEstimate && model.rates) {
-			record.costUsd = estimateTokensCost(record, model.rates);
+			(record.costUsd === 0 && hasPositiveRates(rates));
+		if (shouldEstimate) {
+			record.costUsd = estimateTokensCost(record, rates);
 			record.costEstimated = true;
 		}
 	}

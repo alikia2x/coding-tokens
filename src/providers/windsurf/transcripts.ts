@@ -5,42 +5,26 @@ import {
 	newSession,
 } from "../../transcripts/shared";
 import type { TranscriptReadResult, TranscriptSession } from "../../types";
+import { timestampMs } from "../../util";
 import { discoverWindsurfSessions, getWindsurfPbFiles } from "./discovery";
+import type { WindsurfChatState } from "./types";
 import { parseWindsurfPbFile } from "./usage";
 
-export async function readWindsurfTranscript(
-	paths: PlatformPathService,
+function buildWindsurfTranscriptFromState(
+	state: WindsurfChatState,
 	sessionId: string,
-): Promise<TranscriptSession | null> {
-	const sessions = await discoverWindsurfSessions(paths);
-	const target = sessions.find((s) => s.sessionId === sessionId);
-
-	let filePath = target?.filePath;
-	if (!filePath) {
-		const pbFiles = getWindsurfPbFiles(paths);
-		for (const file of pbFiles) {
-			const state = parseWindsurfPbFile(file);
-			if (state?.conversationId === sessionId) {
-				filePath = file;
-				break;
-			}
-		}
-	}
-
-	if (!filePath) return null;
-
-	const state = parseWindsurfPbFile(filePath);
-	if (!state) return null;
-
+	cwd: string | null,
+): TranscriptSession {
 	const firstInteraction = state.interactions[0];
-	const startedAt = firstInteraction?.timestamp ?? state.mtimeMs ?? Date.now();
+	const startedAt =
+		timestampMs(firstInteraction?.timestamp) ?? timestampMs(state.mtimeMs);
 	const title =
 		firstInteraction?.prompt?.slice(0, 100) || "Windsurf Cascade Session";
 
 	const session = newSession(
 		"windsurf",
 		sessionId,
-		target?.cwd ?? state.cwd ?? null,
+		cwd ?? state.cwd ?? null,
 		startedAt,
 		title,
 	);
@@ -48,7 +32,7 @@ export async function readWindsurfTranscript(
 	for (const [i, turn] of state.interactions.entries()) {
 		if (!turn) continue;
 		const turnId = `turn-${sessionId}-${i + 1}`;
-		const ts = turn.timestamp ?? startedAt;
+		const ts = timestampMs(turn.timestamp) ?? startedAt;
 
 		if (turn.prompt) {
 			addItem(session, {
@@ -79,6 +63,37 @@ export async function readWindsurfTranscript(
 	return session;
 }
 
+export async function readWindsurfTranscript(
+	paths: PlatformPathService,
+	sessionId: string,
+): Promise<TranscriptSession | null> {
+	const sessions = await discoverWindsurfSessions(paths);
+	const target = sessions.find((s) => s.sessionId === sessionId);
+
+	let filePath = target?.filePath;
+	if (!filePath) {
+		const pbFiles = getWindsurfPbFiles(paths);
+		for (const file of pbFiles) {
+			const state = parseWindsurfPbFile(file);
+			if (state?.conversationId === sessionId) {
+				filePath = file;
+				break;
+			}
+		}
+	}
+
+	if (!filePath) return null;
+
+	const state = parseWindsurfPbFile(filePath);
+	if (!state) return null;
+
+	return buildWindsurfTranscriptFromState(
+		state,
+		sessionId,
+		target?.cwd ?? state.cwd ?? null,
+	);
+}
+
 export async function readWindsurfTranscripts(
 	paths: PlatformPathService,
 	targetFiles?: ReadonlySet<string>,
@@ -96,9 +111,15 @@ export async function readWindsurfTranscripts(
 
 		for (const sess of sessions) {
 			if (targetFiles && !targetFiles.has(sess.filePath)) continue;
-			const transcript = await readWindsurfTranscript(paths, sess.sessionId);
-			if (transcript) {
-				result.sessions.push(transcript);
+			const state = parseWindsurfPbFile(sess.filePath, result.warnings);
+			if (state) {
+				result.sessions.push(
+					buildWindsurfTranscriptFromState(
+						state,
+						sess.sessionId,
+						sess.cwd ?? state.cwd ?? null,
+					),
+				);
 			}
 		}
 	} catch (e) {

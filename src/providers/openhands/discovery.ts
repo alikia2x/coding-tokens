@@ -1,8 +1,8 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import type { PlatformPathService } from "../../platform/paths";
-import { defaultPlatformPathService } from "../../platform/paths";
-import { normalizedCwd, textOrNull } from "../../util";
+import { defaultPlatformPathService, readPathEnv } from "../../platform/paths";
+import { normalizedCwd, objectOrEmpty, textOrNull } from "../../util";
 import type { SessionDiscoveryItem } from "../types";
 
 export interface OpenHandsConversation {
@@ -29,17 +29,10 @@ export function getOpenHandsConversationDirs(
 	};
 
 	// 1. Environment variables
-	const envConv =
-		(
-			paths as unknown as { env?: { get: (k: string) => string | undefined } }
-		).env?.get("OPENHANDS_CONVERSATIONS_DIR") ??
-		process.env.OPENHANDS_CONVERSATIONS_DIR;
+	const envConv = readPathEnv(paths, "OPENHANDS_CONVERSATIONS_DIR");
 	if (envConv) checkCandidate(paths.expandPath(envConv));
 
-	const envRoot =
-		(
-			paths as unknown as { env?: { get: (k: string) => string | undefined } }
-		).env?.get("OPENHANDS_DIR") ?? process.env.OPENHANDS_DIR;
+	const envRoot = readPathEnv(paths, "OPENHANDS_DIR");
 	if (envRoot) {
 		checkCandidate(path.join(paths.expandPath(envRoot), "conversations"));
 		checkCandidate(paths.expandPath(envRoot));
@@ -133,7 +126,7 @@ export async function discoverOpenHandsSessions(
 		try {
 			const file = Bun.file(conv.baseStatePath);
 			const text = await file.text();
-			const json = JSON.parse(text);
+			const json = objectOrEmpty(JSON.parse(text));
 			sessionId = textOrNull(json.conversation_id) ?? sessionId;
 			cwd = normalizedCwd(json.workspace_path ?? json.cwd);
 		} catch {

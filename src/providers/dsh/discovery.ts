@@ -13,6 +13,7 @@ import { defaultPlatformPathService } from "../../platform/paths";
 import {
 	normalizedCwd,
 	objectOrEmpty,
+	readJsonlFileSync,
 	textOrNull,
 	walkFiles,
 } from "../../util";
@@ -67,7 +68,7 @@ export function collectDshLogs(paths: PlatformPathService): DshSessionLog[] {
 	return logs;
 }
 
-function readDshSessionHeader(filePath: string): {
+export function readDshSessionHeader(filePath: string): {
 	id?: string;
 	cwd?: string | null;
 } | null {
@@ -140,8 +141,7 @@ export async function discoverDshSessions(
 				cwd = header.cwd ?? null;
 			} else {
 				try {
-					const { readLogSync } = await import("./usage");
-					const events = readLogSync(log.filePath).map(objectOrEmpty);
+					const events = readJsonlFileSync(log.filePath).map(objectOrEmpty);
 					const evHeader = events.find((event) => event.type === "session");
 					if (evHeader) {
 						const id = textOrNull(evHeader.id);

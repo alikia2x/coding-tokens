@@ -15,7 +15,6 @@ import {
 	type TokenRates,
 	type UsageRecord,
 } from "../../shared/types";
-import { STATIC_FALLBACK_RATES } from "../services/pricing";
 import {
 	type Catalog,
 	type CatalogEntry,
@@ -26,6 +25,7 @@ import {
 	getModelsDevCachePath,
 	hasPositiveRates,
 	loadCachedCatalogWithMeta,
+	lookupFallbackRates,
 	resolveModel,
 } from "./modelsdev";
 
@@ -153,23 +153,7 @@ export function normalizePricingSettings(raw: unknown): PricingSettings {
 	};
 }
 
-export function lookupFallbackRates(modelName: string): TokenRates | null {
-	const normalized = modelName
-		.toLowerCase()
-		.replace(/[\s_.]+/g, "-")
-		.trim();
-	if (!normalized) return null;
-	for (const [key, rates] of Object.entries(STATIC_FALLBACK_RATES)) {
-		if (
-			normalized === key ||
-			normalized.includes(key) ||
-			(normalized.length >= 3 && key.includes(normalized))
-		) {
-			return rates;
-		}
-	}
-	return null;
-}
+export { lookupFallbackRates };
 
 export function resolveCustomRule(
 	model: string,
@@ -275,7 +259,7 @@ export function resolveEffectivePricing(options: {
 		}
 	}
 
-	if (catalogMatch) {
+	if (catalogMatch && defaultCatalogRates) {
 		return {
 			source: "models_dev",
 			matchedCatalogId: defaultCatalogId,
@@ -293,12 +277,24 @@ export function resolveEffectivePricing(options: {
 	if (fallback) {
 		return {
 			source: "fallback",
-			matchedCatalogId: null,
-			matchedCatalogName: null,
+			matchedCatalogId: defaultCatalogId,
+			matchedCatalogName: defaultCatalogName,
 			effectiveRates: fallback,
+			catalogRates: defaultCatalogRates,
+			customRule: null,
+			canonicalName: defaultCatalogName,
+		};
+	}
+
+	if (catalogMatch) {
+		return {
+			source: "models_dev",
+			matchedCatalogId: defaultCatalogId,
+			matchedCatalogName: defaultCatalogName,
+			effectiveRates: null,
 			catalogRates: null,
 			customRule: null,
-			canonicalName: null,
+			canonicalName: catalogMatch.name,
 		};
 	}
 

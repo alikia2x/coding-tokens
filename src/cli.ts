@@ -375,7 +375,15 @@ async function main(): Promise<void> {
 				try {
 					const uRes = await provider.readUsage(defaultPlatformPathService);
 					usageSources.push(uRes);
-				} catch {}
+				} catch (err) {
+					usageSources.push({
+						harness,
+						available: false,
+						records: [],
+						warnings: [`Failed reading usage for ${harness}: ${String(err)}`],
+						messages: new Map(),
+					});
+				}
 			}
 		}
 

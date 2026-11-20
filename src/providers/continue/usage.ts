@@ -1,9 +1,9 @@
-import type { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { PlatformPathService } from "../../platform/paths";
 import { defaultPlatformPathService } from "../../platform/paths";
-import { openReadonlyDatabase, tablesIn } from "../../transcripts/shared";
+import type { SafeDatabaseHandle } from "../../platform/sqlite";
+import { openSafeReadonlyDatabase, tablesIn } from "../../platform/sqlite";
 import type { SourceResult, UsageRecord } from "../../types";
 import {
 	blankSourceResult,
@@ -99,8 +99,8 @@ export function readContinueUsageSync(
 
 	for (const sPath of sessionsFiles.sessionFiles) {
 		try {
-			const parsed = JSON.parse(readFileSync(sPath, "utf8"));
-			if (typeof parsed === "object" && parsed !== null) {
+			const parsed = objectOrEmpty(JSON.parse(readFileSync(sPath, "utf8")));
+			if (Object.keys(parsed).length > 0) {
 				const baseName = path.basename(sPath, ".json");
 				const id = textOrNull(parsed.sessionId) ?? baseName;
 				const cwd = normalizedCwd(
@@ -124,8 +124,10 @@ export function readContinueUsageSync(
 					}
 				}
 			}
-		} catch {
-			// ignore
+		} catch (error) {
+			result.warnings.push(
+				`Continue: failed to read session file ${sPath} (${String(error)})`,
+			);
 		}
 	}
 
@@ -235,10 +237,10 @@ export function readContinueUsageSync(
 
 	// 3a. Read SQLite devdata.sqlite
 	for (const dbPath of devDataFiles.sqliteDbs) {
-		let db: Database | undefined;
+		let handle: SafeDatabaseHandle | undefined;
 		try {
-			db = openReadonlyDatabase(dbPath);
-			const tables = tablesIn(db);
+			handle = openSafeReadonlyDatabase(dbPath);
+			const tables = tablesIn(handle.db);
 			if (tables.has("tokens_generated")) {
 				interface DbTokenRow {
 					id: number;
@@ -248,7 +250,7 @@ export function readContinueUsageSync(
 					tokens_prompt: number;
 					timestamp: string | number;
 				}
-				const rows = db
+				const rows = handle.db
 					.query<DbTokenRow, []>(
 						"SELECT id, model, provider, tokens_generated, tokens_prompt, timestamp FROM tokens_generated ORDER BY id ASC",
 					)
@@ -279,13 +281,7 @@ export function readContinueUsageSync(
 				`Continue: failed to read ${dbPath} (${String(error)})`,
 			);
 		} finally {
-			if (db) {
-				try {
-					db.close();
-				} catch {
-					// ignore
-				}
-			}
+			handle?.close();
 		}
 	}
 

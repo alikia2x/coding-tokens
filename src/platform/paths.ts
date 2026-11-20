@@ -11,10 +11,27 @@ export interface PlatformPathService {
 	normalize(filePath: string): string;
 	safeBasename(filePath: string): string;
 	resolveHarnessPaths(harnessId: string): string[];
+	getEnv?(name: string): string | undefined;
+}
+
+export function readPathEnv(
+	paths: PlatformPathService,
+	name: string,
+): string | undefined {
+	if (typeof paths.getEnv === "function") return paths.getEnv(name);
+	const internal = (
+		paths as unknown as { env?: { get: (k: string) => string | undefined } }
+	).env;
+	if (internal) return internal.get(name);
+	return process.env[name];
 }
 
 export class DefaultPlatformPathService implements PlatformPathService {
 	constructor(private readonly env: OsEnvProvider = defaultOsEnvProvider) {}
+
+	getEnv(name: string): string | undefined {
+		return this.env.get(name);
+	}
 
 	getHomeDir(): string {
 		return normalizePath(this.env.homedir());

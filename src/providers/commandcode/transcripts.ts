@@ -1,14 +1,17 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { PlatformPathService } from "../../platform/paths";
 import { defaultPlatformPathService } from "../../platform/paths";
 import { readCommandCodeTranscripts } from "../../transcripts/commandcode";
 import type { TranscriptReadResult, TranscriptSession } from "../../types";
+import { objectOrEmpty, parseJsonl, textOrNull } from "../../util";
 import { getCommandCodeSessionFiles } from "./discovery";
 
 export function readCommandCodeTranscriptsSync(
-	_paths: PlatformPathService = defaultPlatformPathService,
+	paths: PlatformPathService = defaultPlatformPathService,
 	targetFiles?: ReadonlySet<string>,
 ): TranscriptReadResult {
-	return readCommandCodeTranscripts(targetFiles);
+	return readCommandCodeTranscripts(targetFiles, paths);
 }
 
 export function readCommandCodeSingleTranscriptSync(
@@ -16,7 +19,20 @@ export function readCommandCodeSingleTranscriptSync(
 	sessionId: string,
 ): TranscriptSession | null {
 	const files = getCommandCodeSessionFiles(paths);
-	const target = files.find((f) => f.includes(sessionId));
+	let target = files.find((f) => path.basename(f, ".jsonl") === sessionId);
+	if (!target) {
+		target = files.find((f) => {
+			try {
+				const rows = parseJsonl(readFileSync(f, "utf8"));
+				const header = rows
+					.map(objectOrEmpty)
+					.find((row) => row.type === "session");
+				return header ? textOrNull(header.id) === sessionId : false;
+			} catch {
+				return false;
+			}
+		});
+	}
 	if (!target) return null;
 	const result = readCommandCodeTranscriptsSync(paths, new Set([target]));
 	return result.sessions.find((s) => s.sessionId === sessionId) ?? null;

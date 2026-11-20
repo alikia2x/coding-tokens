@@ -2,7 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import type { PlatformPathService } from "../../platform/paths";
 import { defaultPlatformPathService } from "../../platform/paths";
-import { openSafeReadonlyDatabase } from "../../platform/sqlite";
+import { openSafeReadonlyDatabase, tablesIn } from "../../platform/sqlite";
 import { normalizedCwd } from "../../util";
 import type { SessionDiscoveryItem } from "../types";
 
@@ -38,14 +38,7 @@ export async function discoverOpenCodeSessions(
 			const stat = statSync(dbPath);
 			const handle = openSafeReadonlyDatabase(dbPath);
 			try {
-				const tables = new Set(
-					handle.db
-						.query<{ name: string }, []>(
-							"SELECT name FROM sqlite_master WHERE type = 'table'",
-						)
-						.all()
-						.map((r) => r.name),
-				);
+				const tables = tablesIn(handle.db);
 
 				if (tables.has("session_v2")) {
 					const rows = handle.db

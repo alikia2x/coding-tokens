@@ -5,10 +5,10 @@ import type { TranscriptReadResult, TranscriptSession } from "../../types";
 import { getOpenCodeDbPaths } from "./discovery";
 
 export function readOpenCodeTranscriptsSync(
-	_paths: PlatformPathService = defaultPlatformPathService,
+	paths: PlatformPathService = defaultPlatformPathService,
 	targetFiles?: ReadonlySet<string>,
 ): TranscriptReadResult {
-	return readOpenCodeTranscripts(targetFiles);
+	return readOpenCodeTranscripts(targetFiles, paths);
 }
 
 export function readOpenCodeSingleTranscriptSync(

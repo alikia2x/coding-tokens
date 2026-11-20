@@ -109,7 +109,7 @@ export function sanitizeFts5Query(raw: string): string {
 	const tokens = cleaned
 		.split(/\s+/u)
 		.map((t) => t.trim())
-		.filter((t) => t.length > 0 && !/^[-*+:^()]+$/u.test(t));
+		.filter((t) => t.length > 0 && /[\p{L}\p{N}]/u.test(t));
 
 	if (!tokens.length) return "";
 	return tokens.map((token) => `"${token}"*`).join(" ");
@@ -241,7 +241,8 @@ const MIGRATIONS: Migration[] = [
 					body,
 					tokenize = 'unicode61'
 				);
-				INSERT OR IGNORE INTO fts_session_text (harness, session_id, body)
+				DELETE FROM fts_session_text;
+				INSERT INTO fts_session_text (harness, session_id, body)
 				SELECT harness, session_id, body FROM session_texts;
 			`);
 		},
@@ -313,6 +314,26 @@ const MIGRATIONS: Migration[] = [
 			`);
 		},
 	},
+	{
+		version: 6,
+		name: "add_is_review_and_pricing_model",
+		up: (db) => {
+			const cols = new Set(
+				db
+					.query<{ name: string }, []>("PRAGMA table_info(usage_records)")
+					.all()
+					.map((row) => row.name),
+			);
+			if (!cols.has("is_review")) {
+				db.exec(
+					"ALTER TABLE usage_records ADD COLUMN is_review INTEGER NOT NULL DEFAULT 0;",
+				);
+			}
+			if (!cols.has("pricing_model")) {
+				db.exec("ALTER TABLE usage_records ADD COLUMN pricing_model TEXT;");
+			}
+		},
+	},
 ];
 
 export function runMigrations(db: Database): void {
@@ -330,6 +351,20 @@ export function runMigrations(db: Database): void {
 	}
 }
 
+function parseWarningsJson(raw: string, harness: string): string[] {
+	try {
+		const parsed: unknown = JSON.parse(raw);
+		return Array.isArray(parsed)
+			? parsed.filter((item): item is string => typeof item === "string")
+			: [];
+	} catch (err) {
+		console.warn(
+			`StorageService: failed to parse stored warnings for ${harness}: ${String(err)}`,
+		);
+		return [];
+	}
+}
+
 export class DefaultStorageService implements StorageService {
 	readonly dbPath: string;
 	private db: Database | null = null;
@@ -342,7 +377,11 @@ export class DefaultStorageService implements StorageService {
 			defaultPlatformPathService,
 	) {
 		this.dbPath = resolveDatabasePath(options, this.pathService);
-		this.busyTimeoutMs = options.busyTimeoutMs ?? 5000;
+		const busyTimeout = options.busyTimeoutMs ?? 5000;
+		if (!Number.isInteger(busyTimeout) || busyTimeout < 0) {
+			throw new RangeError(`Invalid busyTimeoutMs: ${String(busyTimeout)}`);
+		}
+		this.busyTimeoutMs = busyTimeout;
 	}
 
 	get isInitialized(): boolean {
@@ -353,23 +392,31 @@ export class DefaultStorageService implements StorageService {
 		if (this.initialized && this.db) return;
 		mkdirSync(path.dirname(this.dbPath), { recursive: true });
 		const db = new Database(this.dbPath, { create: true });
-		db.exec(`PRAGMA busy_timeout = ${this.busyTimeoutMs};`);
-		db.exec("PRAGMA journal_mode = WAL;");
-		db.exec("PRAGMA synchronous = NORMAL;");
+		try {
+			db.exec(`PRAGMA busy_timeout = ${this.busyTimeoutMs};`);
+			db.exec("PRAGMA journal_mode = WAL;");
+			db.exec("PRAGMA synchronous = NORMAL;");
 
-		runMigrations(db);
+			runMigrations(db);
 
-		this.db = db;
-		this.initialized = true;
+			this.db = db;
+			this.initialized = true;
+		} catch (err) {
+			try {
+				db.close();
+			} catch {
+				// preserve initialization error
+			}
+			throw err;
+		}
 	}
 
 	async close(): Promise<void> {
-		if (this.db) {
-			try {
-				this.db.close();
-			} catch {}
-			this.db = null;
-			this.initialized = false;
+		const db = this.db;
+		this.db = null;
+		this.initialized = false;
+		if (db) {
+			db.close();
 		}
 	}
 
@@ -423,9 +470,10 @@ export class DefaultStorageService implements StorageService {
 		}
 
 		let sql = `
-			SELECT harness, session_id, message_id, turn_id, is_subagent, cwd, model,
-				raw_model, timestamp, input_tokens, output_tokens, cache_read_tokens,
-				cache_write_tokens, reasoning_tokens, cost_usd, raw_cost_usd, cost_estimated
+			SELECT harness, session_id, message_id, turn_id, is_subagent, is_review,
+				cwd, model, pricing_model, raw_model, timestamp, input_tokens,
+				output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
+				cost_usd, raw_cost_usd, cost_estimated
 			FROM usage_records
 		`;
 
@@ -436,9 +484,19 @@ export class DefaultStorageService implements StorageService {
 		sql += " ORDER BY timestamp ASC";
 
 		if (filter?.limit !== undefined) {
-			sql += ` LIMIT ${Number(filter.limit)}`;
+			const limit = Number(filter.limit);
+			if (!Number.isInteger(limit) || limit < 0) {
+				throw new RangeError(`Invalid limit: ${String(filter.limit)}`);
+			}
+			sql += " LIMIT ?";
+			params.push(limit);
 			if (filter?.offset !== undefined) {
-				sql += ` OFFSET ${Number(filter.offset)}`;
+				const offset = Number(filter.offset);
+				if (!Number.isInteger(offset) || offset < 0) {
+					throw new RangeError(`Invalid offset: ${String(filter.offset)}`);
+				}
+				sql += " OFFSET ?";
+				params.push(offset);
 			}
 		}
 
@@ -450,8 +508,10 @@ export class DefaultStorageService implements StorageService {
 					message_id: string;
 					turn_id: string | null;
 					is_subagent: number;
+					is_review: number;
 					cwd: string | null;
 					model: string;
+					pricing_model: string | null;
 					raw_model: string | null;
 					timestamp: number | null;
 					input_tokens: number;
@@ -473,8 +533,10 @@ export class DefaultStorageService implements StorageService {
 			messageId: row.message_id,
 			turnId: row.turn_id ?? undefined,
 			isSubagent: row.is_subagent === 1 || undefined,
+			isReview: row.is_review === 1 || undefined,
 			cwd: row.cwd,
 			model: row.model,
+			pricingModel: row.pricing_model ?? undefined,
 			rawModel: row.raw_model ?? row.model,
 			timestamp: row.timestamp,
 			inputTokens: row.input_tokens,
@@ -492,10 +554,11 @@ export class DefaultStorageService implements StorageService {
 		const db = this.getDb();
 		const insert = db.prepare(
 			`INSERT OR REPLACE INTO usage_records (
-				harness, session_id, message_id, turn_id, is_subagent, cwd, model,
-				raw_model, timestamp, input_tokens, output_tokens, cache_read_tokens,
-				cache_write_tokens, reasoning_tokens, cost_usd, raw_cost_usd, cost_estimated
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				harness, session_id, message_id, turn_id, is_subagent, is_review,
+				cwd, model, pricing_model, raw_model, timestamp, input_tokens,
+				output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
+				cost_usd, raw_cost_usd, cost_estimated
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		);
 
 		db.transaction(() => {
@@ -513,8 +576,10 @@ export class DefaultStorageService implements StorageService {
 					r.messageId,
 					r.turnId ?? null,
 					r.isSubagent ? 1 : 0,
+					r.isReview ? 1 : 0,
 					r.cwd,
 					r.model,
+					r.pricingModel ?? null,
 					rawModel,
 					r.timestamp,
 					r.inputTokens,
@@ -532,7 +597,23 @@ export class DefaultStorageService implements StorageService {
 
 	async deleteHarnessRecords(harnessId: HarnessId): Promise<void> {
 		const db = this.getDb();
-		db.prepare("DELETE FROM usage_records WHERE harness = ?").run(harnessId);
+		db.transaction(() => {
+			db.prepare("DELETE FROM usage_records WHERE harness = ?").run(harnessId);
+			db.prepare("DELETE FROM session_messages WHERE harness = ?").run(
+				harnessId,
+			);
+			db.prepare("DELETE FROM session_texts WHERE harness = ?").run(harnessId);
+			db.prepare("DELETE FROM fts_session_text WHERE harness = ?").run(
+				harnessId,
+			);
+			db.prepare("DELETE FROM session_catalog WHERE harness = ?").run(
+				harnessId,
+			);
+			db.prepare("DELETE FROM session_file_stamps WHERE harness = ?").run(
+				harnessId,
+			);
+			db.prepare("DELETE FROM source_state WHERE harness = ?").run(harnessId);
+		})();
 	}
 
 	async getSourceState(harnessId: HarnessId): Promise<SourceState | null> {
@@ -552,10 +633,7 @@ export class DefaultStorageService implements StorageService {
 			.get(harnessId);
 
 		if (!row) return null;
-		let warnings: string[] = [];
-		try {
-			warnings = JSON.parse(row.warnings);
-		} catch {}
+		const warnings = parseWarningsJson(row.warnings, harnessId);
 
 		return {
 			harness: harnessId,
@@ -598,19 +676,13 @@ export class DefaultStorageService implements StorageService {
 			)
 			.all();
 
-		return rows.map((row) => {
-			let warnings: string[] = [];
-			try {
-				warnings = JSON.parse(row.warnings);
-			} catch {}
-			return {
-				harness: row.harness,
-				fingerprint: row.fingerprint,
-				indexedAt: row.indexed_at,
-				available: row.available === 1,
-				warnings,
-			};
-		});
+		return rows.map((row) => ({
+			harness: row.harness,
+			fingerprint: row.fingerprint,
+			indexedAt: row.indexed_at,
+			available: row.available === 1,
+			warnings: parseWarningsJson(row.warnings, row.harness),
+		}));
 	}
 
 	async getSessionText(
@@ -636,15 +708,12 @@ export class DefaultStorageService implements StorageService {
 			db.prepare(
 				"INSERT OR REPLACE INTO session_texts (harness, session_id, body) VALUES (?, ?, ?)",
 			).run(harnessId, sessionId, text);
-
-			try {
-				db.prepare(
-					"DELETE FROM fts_session_text WHERE harness = ? AND session_id = ?",
-				).run(harnessId, sessionId);
-				db.prepare(
-					"INSERT INTO fts_session_text (harness, session_id, body) VALUES (?, ?, ?)",
-				).run(harnessId, sessionId, text);
-			} catch {}
+			db.prepare(
+				"DELETE FROM fts_session_text WHERE harness = ? AND session_id = ?",
+			).run(harnessId, sessionId);
+			db.prepare(
+				"INSERT INTO fts_session_text (harness, session_id, body) VALUES (?, ?, ?)",
+			).run(harnessId, sessionId, text);
 		})();
 	}
 
@@ -693,28 +762,24 @@ export class DefaultStorageService implements StorageService {
 		sql += " ORDER BY rank ASC LIMIT ?";
 		params.push(limit);
 
-		try {
-			const rows = db
-				.query<
-					{
-						harness: HarnessId;
-						session_id: string;
-						snippet: string;
-						rank: number;
-					},
-					(string | number)[]
-				>(sql)
-				.all(...params);
+		const rows = db
+			.query<
+				{
+					harness: HarnessId;
+					session_id: string;
+					snippet: string;
+					rank: number;
+				},
+				(string | number)[]
+			>(sql)
+			.all(...params);
 
-			return rows.map((r) => ({
-				harness: r.harness,
-				sessionId: r.session_id,
-				snippet: r.snippet,
-				rank: r.rank,
-			}));
-		} catch {
-			return [];
-		}
+		return rows.map((r) => ({
+			harness: r.harness,
+			sessionId: r.session_id,
+			snippet: r.snippet,
+			rank: r.rank,
+		}));
 	}
 
 	async getSessionMessages(
@@ -796,10 +861,11 @@ export class DefaultStorageService implements StorageService {
 		const db = this.getDb();
 		const insertRecord = db.prepare(
 			`INSERT OR REPLACE INTO usage_records (
-				harness, session_id, message_id, turn_id, is_subagent, cwd, model,
-				raw_model, timestamp, input_tokens, output_tokens, cache_read_tokens,
-				cache_write_tokens, reasoning_tokens, cost_usd, raw_cost_usd, cost_estimated
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				harness, session_id, message_id, turn_id, is_subagent, is_review,
+				cwd, model, pricing_model, raw_model, timestamp, input_tokens,
+				output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
+				cost_usd, raw_cost_usd, cost_estimated
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		);
 		const removeRecords = db.prepare(
 			"DELETE FROM usage_records WHERE harness = ?",
@@ -824,14 +890,12 @@ export class DefaultStorageService implements StorageService {
 			"INSERT OR REPLACE INTO session_texts (harness, session_id, body) VALUES (?, ?, ?)",
 		);
 
-		let removeFts = null;
-		let insertFts = null;
-		try {
-			removeFts = db.prepare("DELETE FROM fts_session_text WHERE harness = ?");
-			insertFts = db.prepare(
-				"INSERT INTO fts_session_text (harness, session_id, body) VALUES (?, ?, ?)",
-			);
-		} catch {}
+		const removeFts = db.prepare(
+			"DELETE FROM fts_session_text WHERE harness = ?",
+		);
+		const insertFts = db.prepare(
+			"INSERT INTO fts_session_text (harness, session_id, body) VALUES (?, ?, ?)",
+		);
 
 		db.transaction(() => {
 			// Records
@@ -850,8 +914,10 @@ export class DefaultStorageService implements StorageService {
 					r.messageId,
 					r.turnId ?? null,
 					r.isSubagent ? 1 : 0,
+					r.isReview ? 1 : 0,
 					r.cwd,
 					r.model,
+					r.pricingModel ?? null,
 					rawModel,
 					r.timestamp,
 					r.inputTokens,
@@ -889,14 +955,14 @@ export class DefaultStorageService implements StorageService {
 			// Texts
 			if (batch.texts) {
 				removeTexts.run(batch.harness);
-				if (removeFts) removeFts.run(batch.harness);
+				removeFts.run(batch.harness);
 				const textEntries =
 					batch.texts instanceof Map
 						? batch.texts.entries()
 						: Object.entries(batch.texts);
 				for (const [sessionId, body] of textEntries) {
 					insertText.run(batch.harness, sessionId, body);
-					if (insertFts) insertFts.run(batch.harness, sessionId, body);
+					insertFts.run(batch.harness, sessionId, body);
 				}
 			}
 		})();

@@ -42,27 +42,27 @@ function appendClaudeToolResultBlock(
 	});
 }
 
-export function readClaudeSingleTranscriptSync(
-	paths: PlatformPathService = defaultPlatformPathService,
-	sessionId: string,
+function parseClaudeTranscriptFile(
+	targetFile: string,
+	requestedSessionId?: string,
+	warnings?: string[],
 ): TranscriptSession | null {
-	const { allFiles } = getClaudeSessionFiles(paths);
-	const targetFile = allFiles.find(
-		(f) => path.basename(f, ".jsonl") === sessionId || f.includes(sessionId),
-	);
-	if (!targetFile) return null;
-
 	try {
 		const content = readFileSync(targetFile, "utf8");
 		const rows = parseJsonl(content);
 		if (rows.length === 0) return null;
 
+		const defaultSessionId = path.basename(targetFile, ".jsonl");
 		let sessionCwd: string | null = null;
 		let startedAt: number | null = null;
 		let title: string | undefined;
+		let embeddedSessionId: string | null = null;
 
 		for (const raw of rows) {
 			const row = objectOrEmpty(raw);
+			if (!embeddedSessionId && row.sessionId) {
+				embeddedSessionId = textOrNull(row.sessionId);
+			}
 			if (row.cwd && !sessionCwd) {
 				sessionCwd = normalizedCwd(row.cwd);
 			}
@@ -83,11 +83,13 @@ export function readClaudeSingleTranscriptSync(
 			sessionCwd = decodeClaudeProjectPath(dirName);
 		}
 
+		const sessionId =
+			requestedSessionId ?? embeddedSessionId ?? defaultSessionId;
 		const session = newSession(
 			"claude",
 			sessionId,
 			sessionCwd,
-			startedAt ?? Date.now(),
+			startedAt,
 			title,
 		);
 
@@ -102,12 +104,12 @@ export function readClaudeSingleTranscriptSync(
 
 			if (rowType === "user") {
 				const message = objectOrEmpty(row.message);
-				const content = message.content;
+				const msgContent = message.content;
 				const nonToolBlocks: unknown[] = [];
 				let hasToolResult = false;
-				if (Array.isArray(content)) {
-					for (let blockIdx = 0; blockIdx < content.length; blockIdx++) {
-						const block = objectOrEmpty(content[blockIdx]);
+				if (Array.isArray(msgContent)) {
+					for (let blockIdx = 0; blockIdx < msgContent.length; blockIdx++) {
+						const block = objectOrEmpty(msgContent[blockIdx]);
 						const blockType = textOrNull(block.type) ?? "";
 						if (blockType === "tool_result" || blockType === "tool-result") {
 							hasToolResult = true;
@@ -119,13 +121,13 @@ export function readClaudeSingleTranscriptSync(
 								timestamp,
 							);
 						} else {
-							nonToolBlocks.push(content[blockIdx]);
+							nonToolBlocks.push(msgContent[blockIdx]);
 						}
 					}
 				}
 				const rawText = hasToolResult
 					? textFromContent(nonToolBlocks)
-					: textFromContent(content ?? message.text ?? row.text);
+					: textFromContent(msgContent ?? message.text ?? row.text);
 				const cleaned = cleanUserMessage("claude", rawText);
 				if (cleaned) {
 					addItem(session, {
@@ -143,11 +145,11 @@ export function readClaudeSingleTranscriptSync(
 
 			if (rowType === "assistant") {
 				const message = objectOrEmpty(row.message);
-				const content = message.content;
+				const msgContent = message.content;
 
-				if (Array.isArray(content)) {
-					for (let blockIdx = 0; blockIdx < content.length; blockIdx++) {
-						const block = objectOrEmpty(content[blockIdx]);
+				if (Array.isArray(msgContent)) {
+					for (let blockIdx = 0; blockIdx < msgContent.length; blockIdx++) {
+						const block = objectOrEmpty(msgContent[blockIdx]);
 						const blockType = textOrNull(block.type) ?? "";
 
 						if (blockType === "text" && typeof block.text === "string") {
@@ -242,9 +244,39 @@ export function readClaudeSingleTranscriptSync(
 
 		inferFinalMessages(session);
 		return session;
-	} catch {
+	} catch (error) {
+		warnings?.push(`Claude: failed to read ${targetFile} (${String(error)})`);
 		return null;
 	}
+}
+
+export function readClaudeSingleTranscriptSync(
+	paths: PlatformPathService = defaultPlatformPathService,
+	sessionId: string,
+): TranscriptSession | null {
+	const { allFiles } = getClaudeSessionFiles(paths);
+	const exactFile = allFiles.find(
+		(f) => path.basename(f, ".jsonl") === sessionId,
+	);
+	if (exactFile) {
+		return parseClaudeTranscriptFile(exactFile, sessionId);
+	}
+
+	// Fallback: match embedded row.sessionId inside files when filename differs
+	for (const filePath of allFiles) {
+		try {
+			const rows = parseJsonl(readFileSync(filePath, "utf8"));
+			const hasSession = rows.some(
+				(raw) => textOrNull(objectOrEmpty(raw).sessionId) === sessionId,
+			);
+			if (hasSession) {
+				return parseClaudeTranscriptFile(filePath, sessionId);
+			}
+		} catch {
+			// Skip unreadable candidate while searching for matching sessionId.
+		}
+	}
+	return null;
 }
 
 export function readClaudeTranscriptsSync(
@@ -258,7 +290,7 @@ export function readClaudeTranscriptsSync(
 	for (const filePath of allFiles) {
 		if (targetFiles && !targetFiles.has(filePath)) continue;
 		const sessionId = path.basename(filePath, ".jsonl");
-		const session = readClaudeSingleTranscriptSync(paths, sessionId);
+		const session = parseClaudeTranscriptFile(filePath, sessionId, warnings);
 		if (session) {
 			sessions.push(session);
 		}

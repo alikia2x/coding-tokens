@@ -1,14 +1,16 @@
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import {
-	expandHome,
-	homeDir,
-	normalizedCwd,
-	objectOrEmpty,
-	textOrNull,
-	timestampMs,
-	walkFiles,
-} from "../util";
+	defaultPlatformPathService,
+	type PlatformPathService,
+} from "../platform/paths";
+import { openSafeReadonlyDatabase, tablesIn } from "../platform/sqlite";
+import {
+	codexSessionFiles as codexDiscoverySessionFiles,
+	getCodexRolloutFiles,
+	getCodexRoots,
+} from "../providers/codex/discovery";
+import { normalizedCwd, objectOrEmpty, textOrNull, timestampMs } from "../util";
 import {
 	addItem,
 	categoryForTool,
@@ -16,35 +18,14 @@ import {
 	isInjectedUserMessage,
 	isReasoningType,
 	newSession,
-	openReadonlyDatabase,
 	readJsonlFile,
 	shaSegment,
 	type TranscriptItem,
 	type TranscriptReadResult,
 	type TranscriptRole,
 	type TranscriptSession,
-	tablesIn,
 	textFromContent,
 } from "./shared";
-
-function codexHomePath(): string {
-	return process.env.CODEX_HOME
-		? path.resolve(expandHome(process.env.CODEX_HOME))
-		: path.join(homeDir, ".codex");
-}
-
-function codexRolloutFiles(codexHome: string): string[] {
-	const isRollout = (_filePath: string, name: string) =>
-		name.startsWith("rollout-") && /\.jsonl(?:\.zst)?$/u.test(name);
-	return [
-		...walkFiles(path.join(codexHome, "sessions"), isRollout),
-		...walkFiles(path.join(codexHome, "archived_sessions"), isRollout),
-	].sort(
-		(left, right) =>
-			path.basename(left).localeCompare(path.basename(right)) ||
-			left.localeCompare(right),
-	);
-}
 
 /**
  * Codex splits a single conversation across several rollout files when it is
@@ -53,11 +34,11 @@ function codexRolloutFiles(codexHome: string): string[] {
  * `rollout_path` in Codex's database only points at the most recent segment, so
  * callers that need the whole conversation must read every matching file.
  */
-export function codexSessionFiles(sessionId: string): string[] {
-	const needle = sessionId.toLowerCase();
-	return codexRolloutFiles(codexHomePath()).filter((filePath) =>
-		path.basename(filePath).toLowerCase().includes(needle),
-	);
+export function codexSessionFiles(
+	sessionId: string,
+	paths: PlatformPathService = defaultPlatformPathService,
+): string[] {
+	return codexDiscoverySessionFiles(sessionId, paths);
 }
 
 function isCodexSubagentRollout(events: Record<string, unknown>[]): boolean {
@@ -78,10 +59,10 @@ function codexThreadTitles(codexHome: string): Map<string, string> {
 	}
 	for (const name of stateDatabases) {
 		try {
-			const db = openReadonlyDatabase(path.join(codexHome, name));
+			const handle = openSafeReadonlyDatabase(path.join(codexHome, name));
 			try {
-				if (!tablesIn(db).has("threads")) continue;
-				for (const row of db
+				if (!tablesIn(handle.db).has("threads")) continue;
+				for (const row of handle.db
 					.query<{ id: string; title: string | null }, []>(
 						"SELECT id, title FROM threads WHERE title IS NOT NULL",
 					)
@@ -89,7 +70,7 @@ function codexThreadTitles(codexHome: string): Map<string, string> {
 					if (row.title?.trim()) titles.set(row.id, row.title);
 				}
 			} finally {
-				db.close();
+				handle.close();
 			}
 		} catch {
 			// One unavailable state database should not hide titles in the others.
@@ -99,10 +80,10 @@ function codexThreadTitles(codexHome: string): Map<string, string> {
 	const databasePath = path.join(codexHome, "sqlite/codex-dev.db");
 	if (!existsSync(databasePath)) return titles;
 	try {
-		const db = openReadonlyDatabase(databasePath);
+		const handle = openSafeReadonlyDatabase(databasePath);
 		try {
-			if (!tablesIn(db).has("local_thread_catalog")) return titles;
-			for (const row of db
+			if (!tablesIn(handle.db).has("local_thread_catalog")) return titles;
+			for (const row of handle.db
 				.query<{ thread_id: string; display_title: string | null }, []>(
 					"SELECT thread_id, display_title FROM local_thread_catalog " +
 						"WHERE display_title IS NOT NULL",
@@ -113,7 +94,7 @@ function codexThreadTitles(codexHome: string): Map<string, string> {
 			}
 			return titles;
 		} finally {
-			db.close();
+			handle.close();
 		}
 	} catch {
 		return titles;
@@ -223,17 +204,16 @@ function mergeCodexSession(
 
 export function readCodexTranscripts(
 	targetFiles?: ReadonlySet<string>,
+	paths: PlatformPathService = defaultPlatformPathService,
 ): TranscriptReadResult {
-	const codexHome = codexHomePath();
-	const files = codexRolloutFiles(codexHome).filter(
+	const { codexHome, sessionsRoot, archivedRoot } = getCodexRoots(paths);
+	const files = getCodexRolloutFiles(paths).filter(
 		(filePath) => !targetFiles || targetFiles.has(filePath),
 	);
 	const titles = codexThreadTitles(codexHome);
 	const result: TranscriptReadResult = {
 		harness: "codex",
-		available:
-			existsSync(path.join(codexHome, "sessions")) ||
-			existsSync(path.join(codexHome, "archived_sessions")),
+		available: existsSync(sessionsRoot) || existsSync(archivedRoot),
 		sessions: [],
 		warnings: [],
 	};

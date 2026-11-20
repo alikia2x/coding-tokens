@@ -1,19 +1,35 @@
-import { type Dirent, readdirSync } from "node:fs";
+import { type Dirent, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { zstdDecompressSync } from "node:zlib";
 import type { HarnessName, SourceResult, UsageRecord } from "./types";
 
 export const homeDir = homedir();
 
 export function numberOrZero(value: unknown): number {
 	if (typeof value === "number" && Number.isFinite(value)) {
-		return value;
+		return Math.max(0, value);
 	}
 	if (typeof value === "string") {
-		const parsed = Number(value);
-		return Number.isFinite(parsed) ? parsed : 0;
+		const trimmed = value.trim();
+		if (!trimmed) return 0;
+		const parsed = Number(trimmed);
+		return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
 	}
 	return 0;
+}
+
+export function finiteCostOrNull(value: unknown): number | null {
+	if (typeof value === "number") {
+		return Number.isFinite(value) && value >= 0 ? value : null;
+	}
+	if (typeof value === "string") {
+		const trimmed = value.trim();
+		if (!trimmed) return null;
+		const parsed = Number(trimmed);
+		return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+	}
+	return null;
 }
 
 export function textOrNull(value: unknown): string | null {
@@ -39,6 +55,14 @@ export function parseJsonl(text: string): unknown[] {
 		}
 	}
 	return rows;
+}
+
+export function readJsonlFileSync(filePath: string): unknown[] {
+	const bytes = readFileSync(filePath);
+	const text = /\.zstd?$/u.test(filePath)
+		? zstdDecompressSync(bytes).toString("utf8")
+		: bytes.toString("utf8");
+	return parseJsonl(text);
 }
 
 export function blankSourceResult(
@@ -119,17 +143,16 @@ export function usageRecord(
 		cacheReadTokens: numberOrZero(usage.cacheRead),
 		cacheWriteTokens: numberOrZero(usage.cacheWrite),
 		reasoningTokens: numberOrZero(usage.reasoning),
-		costUsd:
-			usage.cost === undefined || usage.cost === null
-				? null
-				: numberOrZero(usage.cost),
+		costUsd: finiteCostOrNull(usage.cost),
 		costEstimated: false,
 	};
 }
 
-export function expandHome(value: string): string {
-	if (value === "~") return homeDir;
-	if (value.startsWith("~/")) return path.join(homeDir, value.slice(2));
+export function expandHome(value: string, home: string = homedir()): string {
+	if (value === "~") return home;
+	if (value.startsWith("~/") || value.startsWith("~\\")) {
+		return path.join(home, value.slice(2));
+	}
 	return value;
 }
 
@@ -184,9 +207,21 @@ export function localDate(timestamp: number | null): string {
 }
 
 export function timestampMs(value: unknown): number | null {
-	if (typeof value === "number" && Number.isFinite(value)) return value;
+	if (typeof value === "number" && Number.isFinite(value)) {
+		return value > 0 && value < 1e11 ? Math.round(value * 1000) : value;
+	}
 	if (typeof value === "string") {
-		const parsed = Date.parse(value);
+		const trimmed = value.trim();
+		if (!trimmed) return null;
+		if (/^\d{9,13}(?:\.\d+)?$/u.test(trimmed)) {
+			const numeric = Number(trimmed);
+			if (Number.isFinite(numeric)) {
+				return numeric > 0 && numeric < 1e11
+					? Math.round(numeric * 1000)
+					: numeric;
+			}
+		}
+		const parsed = Date.parse(trimmed);
 		return Number.isNaN(parsed) ? null : parsed;
 	}
 	return null;

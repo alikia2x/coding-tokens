@@ -103,17 +103,28 @@ export class DefaultTranscriptService implements TranscriptService {
 			try {
 				const session = await provider.readTranscript(this.paths, sessionId);
 				if (session) return session;
-			} catch {}
+			} catch (err) {
+				console.warn(
+					`TranscriptService: failed reading ${harnessId} transcript ${sessionId}: ${String(err)}`,
+				);
+			}
 		}
 
 		// Fallback to legacy reader
 		try {
-			const results = readTranscriptSources([harnessId as HarnessName]);
+			const results = readTranscriptSources(
+				[harnessId as HarnessName],
+				undefined,
+				this.paths,
+			);
 			const session = results[0]?.sessions.find(
 				(s) => s.sessionId === sessionId,
 			);
 			return session ?? null;
-		} catch {
+		} catch (err) {
+			console.warn(
+				`TranscriptService: legacy transcript fallback failed for ${harnessId}/${sessionId}: ${String(err)}`,
+			);
 			return null;
 		}
 	}

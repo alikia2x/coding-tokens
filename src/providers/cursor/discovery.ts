@@ -216,7 +216,7 @@ export async function discoverCursorSessions(
 				sessionId: composerId,
 				harness: "cursor",
 				filePath: existsSync(wsDbPath) ? wsDbPath : globalDbPath,
-				mtimeMs: stat ? stat.mtimeMs : Date.now(),
+				mtimeMs: stat ? stat.mtimeMs : 0,
 				sizeBytes: stat ? stat.size : 0,
 				cwd: info.cwd,
 			});

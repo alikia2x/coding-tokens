@@ -4,6 +4,7 @@ import type { PlatformPathService } from "../../platform/paths";
 import type { SourceResult, UsageRecord } from "../../types";
 import {
 	blankSourceResult,
+	finiteCostOrNull,
 	hasTokenUsage,
 	modelName,
 	normalizedCwd,
@@ -46,7 +47,7 @@ export function readAiderUsageSync(
 		const sessionUserCounts = new Map<string, number>();
 		const sessionCharCounts = new Map<
 			string,
-			{ inChars: number; outChars: number; timestamp: number }
+			{ inChars: number; outChars: number; timestamp: number | null }
 		>();
 
 		if (existsSync(loc.historyFile)) {
@@ -58,7 +59,8 @@ export function readAiderUsageSync(
 
 				const lines = historyContent.split(/\r?\n/u);
 				let currentSessionId = defaultSessId;
-				let currentTimestamp = sessionStarts[0]?.timestampMs ?? Date.now();
+				let currentTimestamp: number | null =
+					sessionStarts[0]?.timestampMs ?? null;
 
 				for (const line of lines) {
 					if (
@@ -73,7 +75,7 @@ export function readAiderUsageSync(
 						if (match?.[1]) {
 							currentSessionId = `aider-${match[1].replace(/[\s:]/gu, "-")}`;
 							const parsed = Date.parse(match[1].replace(" ", "T"));
-							currentTimestamp = Number.isNaN(parsed) ? Date.now() : parsed;
+							currentTimestamp = Number.isNaN(parsed) ? null : parsed;
 						}
 						continue;
 					}
@@ -132,7 +134,7 @@ export function readAiderUsageSync(
 					}
 
 					const model = modelName(row.main_model ?? row.model, "gpt-4o");
-					const timestamp = timestampMs(row.timestamp) ?? Date.now();
+					const timestamp = timestampMs(row.timestamp);
 					const inputTokens = numberOrZero(
 						row.tokens_in ?? row.input_tokens ?? row.tokensIn,
 					);
@@ -142,12 +144,9 @@ export function readAiderUsageSync(
 					const cacheRead = numberOrZero(
 						row.tokens_cached ?? row.cache_read ?? row.cacheRead,
 					);
-					const cost =
-						row.cost !== undefined
-							? numberOrZero(row.cost)
-							: row.total_cost !== undefined
-								? numberOrZero(row.total_cost)
-								: null;
+					const cost = finiteCostOrNull(
+						row.cost !== undefined ? row.cost : row.total_cost,
+					);
 
 					records.push(
 						usageRecord(
@@ -199,7 +198,6 @@ export function readAiderUsageSync(
 						cost: null,
 					},
 				);
-				rec.costEstimated = true;
 				records.push(rec);
 			}
 		}

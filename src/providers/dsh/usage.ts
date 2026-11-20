@@ -1,6 +1,4 @@
-import { readFileSync } from "node:fs";
 import path from "node:path";
-import { zstdDecompressSync } from "node:zlib";
 import type { PlatformPathService } from "../../platform/paths";
 import type { SourceResult, UsageRecord } from "../../types";
 import {
@@ -9,8 +7,9 @@ import {
 	hasTokenUsage,
 	modelName,
 	normalizedCwd,
+	numberOrZero,
 	objectOrEmpty,
-	parseJsonl,
+	readJsonlFileSync,
 	textOrNull,
 	timestampMs,
 	uniqueBy,
@@ -56,11 +55,7 @@ export function routeModel(event: Record<string, unknown>): string | null {
 }
 
 export function readLogSync(filePath: string): unknown[] {
-	const bytes = readFileSync(filePath);
-	const text = filePath.endsWith(".zstd")
-		? zstdDecompressSync(bytes).toString("utf8")
-		: bytes.toString("utf8");
-	return parseJsonl(text);
+	return readJsonlFileSync(filePath);
 }
 
 export function readDshUsageSync(
@@ -130,6 +125,11 @@ export function readDshUsageSync(
 				if (seenEvents.has(dedupKey)) continue;
 				seenEvents.add(dedupKey);
 
+				const rawOutput = numberOrZero(usage.outputTokens);
+				const reasoning = numberOrZero(usage.reasoningTokens);
+				const outputTokens =
+					rawOutput < reasoning ? rawOutput + reasoning : rawOutput;
+
 				records.push(
 					usageRecord(
 						{
@@ -146,10 +146,10 @@ export function readDshUsageSync(
 						},
 						{
 							input: usage.inputTokens,
-							output: usage.outputTokens,
+							output: outputTokens,
 							cacheRead: usage.cacheReadTokens,
 							cacheWrite: usage.cacheWriteTokens,
-							reasoning: usage.reasoningTokens,
+							reasoning,
 						},
 					),
 				);

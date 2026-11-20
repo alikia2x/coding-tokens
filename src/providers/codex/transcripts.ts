@@ -7,10 +7,10 @@ import { codexSessionFiles } from "./discovery";
 export { codexSessionFiles } from "./discovery";
 
 export function readCodexTranscriptsSync(
-	_paths: PlatformPathService = defaultPlatformPathService,
+	paths: PlatformPathService = defaultPlatformPathService,
 	targetFiles?: ReadonlySet<string>,
 ): TranscriptReadResult {
-	return readCodexTranscripts(targetFiles);
+	return readCodexTranscripts(targetFiles, paths);
 }
 
 export function readCodexSingleTranscriptSync(

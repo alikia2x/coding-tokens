@@ -39,6 +39,7 @@ export function buildContinueSessionTranscript(
 		completion?: string;
 		tools?: string[];
 	}>,
+	warnings?: string[],
 ): TranscriptSession | null {
 	let cwd = summaryData?.cwd ?? null;
 	let startedAt = summaryData?.startedAt ?? null;
@@ -48,8 +49,10 @@ export function buildContinueSessionTranscript(
 
 	if (sessionJsonPath && existsSync(sessionJsonPath)) {
 		try {
-			const parsed = JSON.parse(readFileSync(sessionJsonPath, "utf8"));
-			if (typeof parsed === "object" && parsed !== null) {
+			const parsed = objectOrEmpty(
+				JSON.parse(readFileSync(sessionJsonPath, "utf8")),
+			);
+			if (Object.keys(parsed).length > 0) {
 				cwd =
 					cwd ??
 					normalizedCwd(
@@ -61,8 +64,10 @@ export function buildContinueSessionTranscript(
 					history = parsed.history;
 				}
 			}
-		} catch {
-			// ignore
+		} catch (error) {
+			warnings?.push(
+				`Continue: failed to read session transcript ${sessionJsonPath} (${String(error)})`,
+			);
 		}
 	}
 
@@ -216,10 +221,13 @@ export function readContinueSingleTranscriptSync(
 
 	for (const catPath of sessionsFiles.catalogs) {
 		try {
-			const list = JSON.parse(readFileSync(catPath, "utf8"));
+			const list: unknown = JSON.parse(readFileSync(catPath, "utf8"));
 			if (Array.isArray(list)) {
-				const item = list.find((e) => e && e.sessionId === sessionId);
-				if (item) {
+				const found = list.find(
+					(e) => objectOrEmpty(e).sessionId === sessionId,
+				);
+				if (found) {
+					const item = objectOrEmpty(found);
 					summaryData = {
 						cwd: normalizedCwd(
 							decodeWorkspaceUri(textOrNull(item.workspaceDirectory)),
@@ -231,7 +239,7 @@ export function readContinueSingleTranscriptSync(
 				}
 			}
 		} catch {
-			// ignore
+			// skip unreadable catalog in single-session lookup
 		}
 	}
 
@@ -343,16 +351,18 @@ export function readContinueTranscriptsSync(
 			sf,
 			undefined,
 			chatBySession.get(sId),
+			result.warnings,
 		);
 		if (s) result.sessions.push(s);
 	}
 
 	for (const catPath of sessionsFiles.catalogs) {
 		try {
-			const list = JSON.parse(readFileSync(catPath, "utf8"));
+			const list: unknown = JSON.parse(readFileSync(catPath, "utf8"));
 			if (Array.isArray(list)) {
-				for (const item of list) {
-					const sId = textOrNull(item?.sessionId);
+				for (const rawItem of list) {
+					const item = objectOrEmpty(rawItem);
+					const sId = textOrNull(item.sessionId);
 					if (sId && !processedIds.has(sId)) {
 						if (targetFiles && !targetFiles.has(catPath)) continue;
 						processedIds.add(sId);
@@ -367,13 +377,16 @@ export function readContinueTranscriptsSync(
 								title: textOrNull(item.title) ?? undefined,
 							},
 							chatBySession.get(sId),
+							result.warnings,
 						);
 						if (s) result.sessions.push(s);
 					}
 				}
 			}
-		} catch {
-			// ignore
+		} catch (error) {
+			result.warnings.push(
+				`Continue: failed to read catalog ${catPath} (${String(error)})`,
+			);
 		}
 	}
 

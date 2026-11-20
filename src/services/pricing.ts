@@ -7,41 +7,30 @@ import {
 	writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { normalizeModelName } from "../../shared/models";
 import type { HarnessId, HarnessName, UsageRecord } from "../../shared/types";
 import {
 	defaultPlatformPathService,
 	type PlatformPathService,
 } from "../platform/paths";
-import { applyCatalog, readCatalog, resolveModel } from "../pricing/modelsdev";
+import {
+	applyCatalog,
+	type Catalog,
+	type CatalogCache,
+	type CatalogEntry,
+	calculateTokensCost,
+	estimateTokensCost,
+	hasPositiveRates,
+	lookupFallbackRates,
+	type Rates,
+	readCatalog,
+	resolveModel,
+	STATIC_FALLBACK_RATES,
+	STATIC_MODEL_RATES,
+} from "../pricing/modelsdev";
 
-export interface Rates {
-	input: number;
-	output: number;
-	reasoning: number | null;
-	cacheRead: number | null;
-	cacheWrite: number | null;
-}
-
-export interface CatalogEntry {
-	provider: string;
-	id: string;
-	canonicalId: string | null;
-	family: string | null;
-	name: string;
-	releaseDate: string;
-	rates: Rates | null;
-}
-
-export interface Catalog {
-	providers: Set<string>;
-	byProviderModel: Map<string, CatalogEntry>;
-	byModel: Map<string, CatalogEntry[]>;
-}
-
-export interface CatalogCache {
-	fetchedAt: number;
-	data: unknown;
-}
+export type { Catalog, CatalogCache, CatalogEntry, Rates };
+export { STATIC_FALLBACK_RATES, STATIC_MODEL_RATES };
 
 export interface PricingServiceOptions {
 	paths?: PlatformPathService;
@@ -69,88 +58,6 @@ export interface PricingService {
 	getWarnings(): string[];
 	getCatalog(): Catalog | null;
 }
-
-export const STATIC_FALLBACK_RATES: Record<string, Rates> = {
-	"claude-3-5-sonnet": {
-		input: 3.0,
-		output: 15.0,
-		reasoning: 15.0,
-		cacheRead: 0.3,
-		cacheWrite: 3.75,
-	},
-	"claude-3-7-sonnet": {
-		input: 3.0,
-		output: 15.0,
-		reasoning: 15.0,
-		cacheRead: 0.3,
-		cacheWrite: 3.75,
-	},
-	"gpt-4o": {
-		input: 2.5,
-		output: 10.0,
-		reasoning: 10.0,
-		cacheRead: 1.25,
-		cacheWrite: 2.5,
-	},
-	"gpt-4o-mini": {
-		input: 0.15,
-		output: 0.6,
-		reasoning: 0.6,
-		cacheRead: 0.075,
-		cacheWrite: 0.15,
-	},
-	"deepseek-chat": {
-		input: 0.14,
-		output: 0.28,
-		reasoning: 0.28,
-		cacheRead: 0.014,
-		cacheWrite: 0.14,
-	},
-	"deepseek-reasoner": {
-		input: 0.55,
-		output: 2.19,
-		reasoning: 2.19,
-		cacheRead: 0.14,
-		cacheWrite: 0.55,
-	},
-	"deepseek-v3": {
-		input: 0.14,
-		output: 0.28,
-		reasoning: 0.28,
-		cacheRead: 0.014,
-		cacheWrite: 0.14,
-	},
-	"deepseek-r1": {
-		input: 0.55,
-		output: 2.19,
-		reasoning: 2.19,
-		cacheRead: 0.14,
-		cacheWrite: 0.55,
-	},
-	"gemini-1.5-pro": {
-		input: 1.25,
-		output: 5.0,
-		reasoning: 5.0,
-		cacheRead: 0.3125,
-		cacheWrite: 1.25,
-	},
-	"gemini-1.5-flash": {
-		input: 0.075,
-		output: 0.3,
-		reasoning: 0.3,
-		cacheRead: 0.01875,
-		cacheWrite: 0.075,
-	},
-	"gemini-2.0-flash": {
-		input: 0.1,
-		output: 0.4,
-		reasoning: 0.4,
-		cacheRead: 0.025,
-		cacheWrite: 0.1,
-	},
-};
-
-export const STATIC_MODEL_RATES = STATIC_FALLBACK_RATES;
 
 export class DefaultPricingService implements PricingService {
 	private catalog: Catalog | null = null;
@@ -248,7 +155,11 @@ export class DefaultPricingService implements PricingService {
 			try {
 				this.catalog = readCatalog(cached.data);
 				return { success: true, warning: null };
-			} catch {}
+			} catch (err) {
+				this.warnings.push(
+					`models.dev cached catalog could not be parsed (${String(err)})`,
+				);
+			}
 		}
 
 		// Try network fetch
@@ -277,7 +188,11 @@ export class DefaultPricingService implements PricingService {
 				const warning = `models.dev pricing could not be refreshed; using cached prices from ${date}`;
 				this.warnings.push(warning);
 				return { success: true, warning };
-			} catch {}
+			} catch (err) {
+				this.warnings.push(
+					`models.dev stale cache could not be parsed (${String(err)})`,
+				);
+			}
 		}
 
 		const warning =
@@ -294,10 +209,16 @@ export class DefaultPricingService implements PricingService {
 
 		if (this.catalog) {
 			applyCatalog(records, this.catalog, null);
+			return records;
 		}
 
-		// Fallback to static rates for any record that remains un-estimated/unpriced
+		// No catalog loaded (offline with no cache): normalize model names and apply static fallback rates
 		for (const record of records) {
+			if (record.rawModel === undefined || record.rawModel === null) {
+				record.rawModel = record.pricingModel ?? record.model;
+			}
+			const rawModel = record.rawModel;
+			record.model = normalizeModelName(rawModel ?? record.model);
 			const needsEstimate =
 				record.costUsd === null ||
 				(record.costUsd === 0 &&
@@ -305,33 +226,23 @@ export class DefaultPricingService implements PricingService {
 					(record.inputTokens > 0 ||
 						record.outputTokens > 0 ||
 						(record.reasoningTokens ?? 0) > 0));
-			if (needsEstimate) {
-				if (
-					record.inputTokens === 0 &&
-					record.outputTokens === 0 &&
-					(record.reasoningTokens ?? 0) === 0
-				) {
-					record.costUsd = 0;
-					continue;
-				}
-				const rates = this.getModelRates(record.model, record.harness);
-				if (rates && (rates.input > 0 || rates.output > 0)) {
-					const netOutput = Math.max(
-						0,
-						record.outputTokens - (record.reasoningTokens ?? 0),
-					);
-					const reasoningRate = rates.reasoning ?? rates.output;
-					const readRate = rates.cacheRead ?? rates.input;
-					const writeRate = rates.cacheWrite ?? rates.input;
-					record.costUsd =
-						(record.inputTokens * rates.input +
-							netOutput * rates.output +
-							(record.reasoningTokens ?? 0) * reasoningRate +
-							(record.cacheReadTokens ?? 0) * readRate +
-							(record.cacheWriteTokens ?? 0) * writeRate) /
-						1_000_000;
-					record.costEstimated = true;
-				}
+			if (!needsEstimate) continue;
+
+			if (
+				record.inputTokens === 0 &&
+				record.outputTokens === 0 &&
+				(record.reasoningTokens ?? 0) === 0
+			) {
+				record.costUsd = 0;
+				continue;
+			}
+			const rates =
+				(record.pricingModel
+					? this.getModelRates(record.pricingModel, record.harness)
+					: null) ?? this.getModelRates(rawModel, record.harness);
+			if (rates && hasPositiveRates(rates)) {
+				record.costUsd = estimateTokensCost(record, rates);
+				record.costEstimated = true;
 			}
 		}
 
@@ -349,18 +260,16 @@ export class DefaultPricingService implements PricingService {
 		const rates = this.getModelRates(model);
 		if (!rates) return null;
 
-		const netOutput = Math.max(0, outputTokens - reasoningTokens);
-		const reasoningRate = rates.reasoning ?? rates.output;
-		const readRate = rates.cacheRead ?? rates.input;
-		const writeRate = rates.cacheWrite ?? rates.input;
-
-		const total =
-			(inputTokens * rates.input +
-				netOutput * rates.output +
-				reasoningTokens * reasoningRate +
-				cacheReadTokens * readRate +
-				cacheWriteTokens * writeRate) /
-			1_000_000;
+		const total = calculateTokensCost(
+			{
+				inputTokens,
+				outputTokens,
+				cacheReadTokens,
+				cacheWriteTokens,
+				reasoningTokens,
+			},
+			rates,
+		);
 
 		return Number(total.toFixed(8));
 	}
@@ -375,22 +284,7 @@ export class DefaultPricingService implements PricingService {
 			if (entry?.rates) return entry.rates;
 		}
 
-		const normalized = model
-			.toLowerCase()
-			.replace(/[\s_.]+/g, "-")
-			.trim();
-		if (!normalized) return null;
-		for (const [key, rates] of Object.entries(STATIC_FALLBACK_RATES)) {
-			if (
-				normalized === key ||
-				normalized.includes(key) ||
-				(normalized.length >= 3 && key.includes(normalized))
-			) {
-				return rates;
-			}
-		}
-
-		return null;
+		return lookupFallbackRates(model);
 	}
 
 	resolveModelName(model: string, harness?: HarnessId): string {
@@ -400,9 +294,9 @@ export class DefaultPricingService implements PricingService {
 				(harness ?? "codex") as HarnessName,
 				this.catalog,
 			);
-			if (entry?.name) return entry.name;
+			if (entry?.name) return normalizeModelName(entry.name);
 		}
-		return model;
+		return normalizeModelName(model);
 	}
 
 	getWarnings(): string[] {

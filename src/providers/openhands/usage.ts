@@ -4,6 +4,7 @@ import type { PlatformPathService } from "../../platform/paths";
 import type { SourceResult, UsageRecord } from "../../types";
 import {
 	blankSourceResult,
+	finiteCostOrNull,
 	hasTokenUsage,
 	modelName,
 	normalizedCwd,
@@ -39,7 +40,7 @@ export function readOpenHandsUsageSync(
 
 		try {
 			const baseStateRaw = readFileSync(conv.baseStatePath, "utf8");
-			const baseState = JSON.parse(baseStateRaw);
+			const baseState = objectOrEmpty(JSON.parse(baseStateRaw));
 			const sessionId =
 				textOrNull(baseState.conversation_id) ?? conv.conversationId;
 			const cwd = normalizedCwd(baseState.workspace_path ?? conv.cwd);
@@ -86,10 +87,7 @@ export function readOpenHandsUsageSync(
 							const outTokens = numberOrZero(
 								eventMetrics.completion_tokens ?? eventMetrics.tokens_out,
 							);
-							const cost =
-								eventMetrics.cost !== undefined
-									? numberOrZero(eventMetrics.cost)
-									: null;
+							const cost = finiteCostOrNull(eventMetrics.cost);
 
 							if (inTokens > 0 || outTokens > 0) {
 								const eventTime = timestampMs(event.timestamp) ?? sessionTime;
@@ -127,10 +125,7 @@ export function readOpenHandsUsageSync(
 				const baseMetrics = objectOrEmpty(baseState.metrics);
 				const inTokens = numberOrZero(baseMetrics.prompt_tokens);
 				const outTokens = numberOrZero(baseMetrics.completion_tokens);
-				const cost =
-					baseMetrics.accumulated_cost !== undefined
-						? numberOrZero(baseMetrics.accumulated_cost)
-						: null;
+				const cost = finiteCostOrNull(baseMetrics.accumulated_cost);
 
 				if (inTokens > 0 || outTokens > 0) {
 					records.push(

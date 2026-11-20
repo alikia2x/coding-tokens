@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { PlatformPathService } from "../../platform/paths";
-import { openSafeReadonlyDatabase } from "../../platform/sqlite";
+import { openSafeReadonlyDatabase, tablesIn } from "../../platform/sqlite";
 import type { SourceResult, UsageRecord } from "../../types";
 import {
 	blankSourceResult,
@@ -24,17 +24,6 @@ interface SqliteRow {
 	time_created: number;
 	directory?: string;
 	model?: string | null;
-}
-
-function tablesIn(db: Database): Set<string> {
-	return new Set(
-		db
-			.query<{ name: string }, []>(
-				"SELECT name FROM sqlite_master WHERE type = 'table'",
-			)
-			.all()
-			.map((row) => row.name),
-	);
 }
 
 function timestampFromData(
@@ -99,15 +88,16 @@ function addV2Rows(
 	messages: Map<string, number>,
 	targetSessionId?: string,
 ): void {
-	let query =
+	const baseQuery =
 		"SELECT sm.id, sm.data, sm.session_id, sm.time_created, s.directory, s.model " +
 		"FROM session_message AS sm " +
 		"JOIN session_v2 AS s ON s.id = sm.session_id " +
 		"WHERE sm.type = 'assistant'";
-	if (targetSessionId) {
-		query += ` AND sm.session_id = '${targetSessionId.replaceAll("'", "''")}'`;
-	}
-	const rows = db.query<SqliteRow, []>(query).all();
+	const rows = targetSessionId
+		? db
+				.query<SqliteRow, [string]>(`${baseQuery} AND sm.session_id = ?`)
+				.all(targetSessionId)
+		: db.query<SqliteRow, []>(baseQuery).all();
 	for (const row of rows) {
 		const data = objectOrEmpty(JSON.parse(row.data));
 		const tokens = objectOrEmpty(data.tokens);
@@ -137,17 +127,24 @@ function addV2Rows(
 		);
 	}
 
-	const userMsgQuery =
-		"SELECT sm.session_id, count(*) AS count " +
-		"FROM session_message AS sm " +
-		"WHERE sm.type = 'user' " +
-		(targetSessionId
-			? `AND sm.session_id = '${targetSessionId.replaceAll("'", "''")}' `
-			: "") +
-		"GROUP BY sm.session_id";
-	for (const row of db
-		.query<{ session_id: string; count: number }, []>(userMsgQuery)
-		.all()) {
+	const userRows = targetSessionId
+		? db
+				.query<{ session_id: string; count: number }, [string]>(
+					"SELECT sm.session_id, count(*) AS count " +
+						"FROM session_message AS sm " +
+						"WHERE sm.type = 'user' AND sm.session_id = ? " +
+						"GROUP BY sm.session_id",
+				)
+				.all(targetSessionId)
+		: db
+				.query<{ session_id: string; count: number }, []>(
+					"SELECT sm.session_id, count(*) AS count " +
+						"FROM session_message AS sm " +
+						"WHERE sm.type = 'user' " +
+						"GROUP BY sm.session_id",
+				)
+				.all();
+	for (const row of userRows) {
 		messages.set(row.session_id, row.count);
 	}
 }
@@ -159,14 +156,15 @@ function addLegacyRows(
 	messages: Map<string, number>,
 	targetSessionId?: string,
 ): void {
-	let query =
+	const baseQuery =
 		"SELECT m.id, m.data, m.session_id, m.time_created, s.directory " +
 		"FROM message AS m " +
 		"JOIN session AS s ON s.id = m.session_id";
-	if (targetSessionId) {
-		query += ` WHERE m.session_id = '${targetSessionId.replaceAll("'", "''")}'`;
-	}
-	const rows = db.query<SqliteRow, []>(query).all();
+	const rows = targetSessionId
+		? db
+				.query<SqliteRow, [string]>(`${baseQuery} WHERE m.session_id = ?`)
+				.all(targetSessionId)
+		: db.query<SqliteRow, []>(baseQuery).all();
 	for (const row of rows) {
 		if (sessionIds.has(row.session_id)) continue;
 		const data = objectOrEmpty(JSON.parse(row.data));

@@ -12,11 +12,34 @@ import {
 	defaultPlatformPathService,
 	type PlatformPathService,
 } from "../../platform/paths";
-import { walkFiles } from "../../util";
+import {
+	objectOrEmpty,
+	readJsonlFileSync,
+	textOrNull,
+	walkFiles,
+} from "../../util";
 import type { SessionDiscoveryItem } from "../types";
 
 export function isRollout(name: string): boolean {
 	return name.startsWith("rollout-") && /\.jsonl(?:\.zst)?$/u.test(name);
+}
+
+function codexFileMatchesSession(
+	filePath: string,
+	lowerNeedle: string,
+): boolean {
+	const stem = path
+		.basename(filePath)
+		.replace(/\.jsonl(?:\.zst)?$/iu, "")
+		.toLowerCase();
+	return (
+		stem === lowerNeedle ||
+		stem === `rollout-${lowerNeedle}` ||
+		stem.endsWith(`-${lowerNeedle}`) ||
+		stem.endsWith(`_${lowerNeedle}`) ||
+		stem.includes(`-${lowerNeedle}_`) ||
+		stem.startsWith(`rollout-${lowerNeedle}_`)
+	);
 }
 
 export function getCodexRoots(paths: PlatformPathService): {
@@ -52,8 +75,9 @@ export function codexSessionFiles(
 	paths: PlatformPathService = defaultPlatformPathService,
 ): string[] {
 	const needle = sessionId.toLowerCase();
+	if (!needle) return [];
 	return getCodexRolloutFiles(paths).filter((filePath) =>
-		path.basename(filePath).toLowerCase().includes(needle),
+		codexFileMatchesSession(filePath, needle),
 	);
 }
 
@@ -68,9 +92,8 @@ export function codexSessionFilesBatch(
 		if (id) needles.push({ id, lower: id.toLowerCase() });
 	}
 	for (const filePath of getCodexRolloutFiles(paths)) {
-		const lowerBase = path.basename(filePath).toLowerCase();
 		for (const needle of needles) {
-			if (!lowerBase.includes(needle.lower)) continue;
+			if (!codexFileMatchesSession(filePath, needle.lower)) continue;
 			const list = result.get(needle.id) ?? [];
 			list.push(filePath);
 			result.set(needle.id, list);
@@ -160,19 +183,14 @@ export async function discoverCodexSessions(
 				if (headerMeta.cwd) cwd = headerMeta.cwd;
 			} else {
 				try {
-					const { readRolloutSync } = await import("./usage");
-					const events = readRolloutSync(filePath);
-					const meta = events.find(
-						(e) =>
-							typeof e === "object" &&
-							e !== null &&
-							(e as Record<string, unknown>).type === "session_meta",
-					) as Record<string, unknown> | undefined;
+					const events = readJsonlFileSync(filePath);
+					const meta = events
+						.map(objectOrEmpty)
+						.find((e) => e.type === "session_meta");
 					if (meta) {
-						const payload = (meta.payload ?? {}) as Record<string, unknown>;
-						const metaId = (payload.id ?? payload.session_id) as
-							| string
-							| undefined;
+						const payload = objectOrEmpty(meta.payload);
+						const metaId =
+							textOrNull(payload.id) ?? textOrNull(payload.session_id);
 						if (metaId) sessionId = metaId;
 						if (typeof payload.cwd === "string") cwd = payload.cwd;
 					}

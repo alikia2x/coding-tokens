@@ -2,16 +2,16 @@ import type { Database } from "bun:sqlite";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { PlatformPathService } from "../../platform/paths";
-import { defaultPlatformPathService } from "../../platform/paths";
-import { openSafeReadonlyDatabase as openSafeReadonlyDatabaseHelper } from "../../platform/sqlite";
 import {
-	expandHome,
-	homeDir,
-	normalizedCwd,
-	textOrNull,
-	walkFiles,
-} from "../../util";
+	defaultPlatformPathService,
+	type PlatformPathService,
+	readPathEnv,
+} from "../../platform/paths";
+import {
+	openSafeReadonlyDatabase as openSafeReadonlyDatabaseHelper,
+	tablesIn,
+} from "../../platform/sqlite";
+import { normalizedCwd, textOrNull, walkFiles } from "../../util";
 import type { SessionDiscoveryItem } from "../types";
 import { decodeProto, protoSub, protoText } from "./proto";
 
@@ -34,11 +34,14 @@ function safeDirents(directory: string) {
 	}
 }
 
-export function t3UserDataDirs(): string[] {
-	if (process.env.T3_USER_DATA_DIR) {
-		return [path.resolve(expandHome(process.env.T3_USER_DATA_DIR))];
+export function t3UserDataDirs(
+	paths: PlatformPathService = defaultPlatformPathService,
+): string[] {
+	const envDir = readPathEnv(paths, "T3_USER_DATA_DIR");
+	if (envDir) {
+		return [paths.normalize(paths.expandPath(envDir))];
 	}
-	return [path.join(homeDir, ".t3/userdata")];
+	return [path.join(paths.getHomeDir(), ".t3/userdata")];
 }
 
 export function antigravityRoots(
@@ -207,26 +210,24 @@ export interface T3AntigravityMeta {
 	subagents: Set<string>;
 }
 
-export function loadT3AntigravityMeta(): T3AntigravityMeta {
+export function loadT3AntigravityMeta(
+	paths: PlatformPathService = defaultPlatformPathService,
+): T3AntigravityMeta {
 	const titles = new Map<string, string>();
 	const subagents = new Set<string>();
-	if (process.env.ANTIGRAVITY_HOME && !process.env.T3_USER_DATA_DIR) {
+	if (
+		readPathEnv(paths, "ANTIGRAVITY_HOME") &&
+		!readPathEnv(paths, "T3_USER_DATA_DIR")
+	) {
 		return { titles, subagents };
 	}
-	for (const userDataDir of t3UserDataDirs()) {
+	for (const userDataDir of t3UserDataDirs(paths)) {
 		const stateDbPath = path.join(userDataDir, "statev2.sqlite");
 		if (!existsSync(stateDbPath)) continue;
 		try {
 			const { db, cleanup } = openSafeReadonlyDatabase(stateDbPath);
 			try {
-				const tables = new Set(
-					db
-						.query<{ name: string }, []>(
-							"SELECT name FROM sqlite_master WHERE type = 'table'",
-						)
-						.all()
-						.map((row) => row.name),
-				);
+				const tables = tablesIn(db);
 				if (
 					tables.has("orchestration_v2_projection_provider_threads") &&
 					tables.has("orchestration_v2_projection_threads")

@@ -7,6 +7,7 @@ import {
 	hasTokenUsage,
 	modelName,
 	numberOrZero,
+	timestampMs,
 	usageRecord,
 } from "../../util";
 import type { SessionDiscoveryItem } from "../types";
@@ -16,6 +17,7 @@ import type { WindsurfChatState, WindsurfInteraction } from "./types";
 
 export function parseWindsurfPbFile(
 	filePath: string,
+	warnings?: string[],
 ): WindsurfChatState | null {
 	if (!existsSync(filePath)) return null;
 
@@ -39,8 +41,6 @@ export function parseWindsurfPbFile(
 			: null;
 
 		const interactions: WindsurfInteraction[] = [];
-
-		// All field 3 entries are interactions/turns
 		const turnFields = fields.filter((f) => f.field === 3 && f.wire === 2);
 
 		for (const turnField of turnFields) {
@@ -54,11 +54,10 @@ export function parseWindsurfPbFile(
 			const prompt = protoText(promptField) ?? undefined;
 			const completion = protoText(completionField) ?? undefined;
 
-			let timestamp: number | undefined;
-			if (tsField?.val !== undefined) {
-				const raw = tsField.val;
-				timestamp = raw < 1e11 ? raw * 1000 : raw;
-			}
+			const timestamp =
+				tsField?.val !== undefined
+					? (timestampMs(tsField.val) ?? undefined)
+					: undefined;
 
 			let inTokens = 0;
 			let outTokens = 0;
@@ -99,7 +98,8 @@ export function parseWindsurfPbFile(
 			mtimeMs: stat.mtimeMs,
 			interactions,
 		};
-	} catch {
+	} catch (error) {
+		warnings?.push(`Windsurf: failed to parse ${filePath} (${String(error)})`);
 		return null;
 	}
 }
@@ -117,7 +117,7 @@ export async function readWindsurfUsage(
 	}
 
 	for (const filePath of filesToRead) {
-		const state = parseWindsurfPbFile(filePath);
+		const state = parseWindsurfPbFile(filePath, result.warnings);
 		if (!state) continue;
 
 		const cwd = item?.cwd ?? state.cwd;
@@ -133,18 +133,20 @@ export async function readWindsurfUsage(
 			const cacheWrite = numberOrZero(turn.cacheWriteTokens);
 			const reasoning = numberOrZero(turn.reasoningTokens);
 
-			let isEstimated = false;
-
 			if (
 				inTokens === 0 &&
 				outTokens === 0 &&
+				cacheRead === 0 &&
+				cacheWrite === 0 &&
+				reasoning === 0 &&
 				(turn.prompt || turn.completion)
 			) {
 				const promptLen = turn.prompt?.length || 40;
 				const replyLen = turn.completion?.length || 40;
 				inTokens = Math.max(1, Math.ceil(promptLen / 4));
 				outTokens = Math.max(1, Math.ceil(replyLen / 4));
-				isEstimated = true;
+			} else if (outTokens < reasoning) {
+				outTokens += reasoning;
 			}
 
 			const usageFields = {
@@ -163,7 +165,8 @@ export async function readWindsurfUsage(
 						messageId: `windsurf-${state.conversationId}-turn-${i + 1}`,
 						cwd: cwd ?? null,
 						model: modelName(state.model),
-						timestamp: turn.timestamp ?? state.mtimeMs,
+						timestamp:
+							timestampMs(turn.timestamp) ?? timestampMs(state.mtimeMs),
 					},
 					{
 						input: inTokens,
@@ -173,7 +176,6 @@ export async function readWindsurfUsage(
 						reasoning,
 					},
 				);
-				rec.costEstimated = isEstimated;
 				result.records.push(rec);
 			}
 		}

@@ -1,16 +1,18 @@
 import path from "node:path";
 import {
-	decodeProto,
+	defaultPlatformPathService,
+	type PlatformPathService,
+} from "../platform/paths";
+import { openSafeReadonlyDatabase } from "../platform/sqlite";
+import {
 	existingAntigravityRoots,
 	loadSummaries,
 	loadT3AntigravityMeta,
-	openSafeReadonlyDatabase,
-	protoSub,
-	protoText,
 	readAntigravityBlobMeta,
 	readAntigravitySidecarCwd,
 	readAntigravityStepTimestamp,
-} from "../sources/antigravity";
+} from "../providers/antigravity/discovery";
+import { decodeProto, protoSub, protoText } from "../providers/shared/proto";
 import { walkFiles } from "../util";
 import {
 	addItem,
@@ -84,8 +86,9 @@ function stepHasAntigravityToolCall(
 
 export function readAntigravityTranscripts(
 	targetFiles?: ReadonlySet<string>,
+	paths: PlatformPathService = defaultPlatformPathService,
 ): TranscriptReadResult {
-	const existingRoots = existingAntigravityRoots();
+	const existingRoots = existingAntigravityRoots(paths);
 	const result: TranscriptReadResult = {
 		harness: "antigravity",
 		available: existingRoots.length > 0,
@@ -94,7 +97,7 @@ export function readAntigravityTranscripts(
 	};
 	if (!result.available) return result;
 
-	const t3Meta = loadT3AntigravityMeta();
+	const t3Meta = loadT3AntigravityMeta(paths);
 	const seen = new Set<string>();
 	for (const root of existingRoots) {
 		const summaries = loadSummaries(root);
@@ -109,7 +112,8 @@ export function readAntigravityTranscripts(
 			seen.add(sessionId);
 
 			try {
-				const { db, cleanup } = openSafeReadonlyDatabase(filePath);
+				const handle = openSafeReadonlyDatabase(filePath);
+				const db = handle.db;
 				try {
 					const blobMeta = readAntigravityBlobMeta(db, sessionId);
 					const isSubagent =
@@ -300,7 +304,7 @@ export function readAntigravityTranscripts(
 					inferFinalMessages(session);
 					result.sessions.push(session);
 				} finally {
-					cleanup();
+					handle.close();
 				}
 			} catch (error) {
 				result.warnings.push(

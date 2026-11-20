@@ -1,8 +1,8 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { readFileSync } from "node:fs";
 import { zstdDecompressSync } from "node:zlib";
+import { openSafeReadonlyDatabase, tablesIn } from "../platform/sqlite";
 import type { HarnessName, UsageRecord } from "../types";
 import { objectOrEmpty, parseJsonl, textOrNull } from "../util";
 
@@ -567,40 +567,11 @@ export function inferUnknownFinalMessages(sessions: TranscriptSession[]): void {
 	for (const session of sessions) inferFinalMessages(session);
 }
 
-function hasNonEmptySidecar(filePath: string): boolean {
-	try {
-		return statSync(filePath).size > 0;
-	} catch {
-		return false;
-	}
-}
-
 export function openReadonlyDatabase(dbPath: string): Database {
-	const hasPendingSidecar =
-		hasNonEmptySidecar(`${dbPath}-wal`) ||
-		hasNonEmptySidecar(`${dbPath}-journal`);
-	if (hasPendingSidecar)
-		return new Database(dbPath, { readonly: true, create: false });
-	try {
-		return new Database(`${pathToFileURL(dbPath).href}?immutable=1`, {
-			readonly: true,
-			create: false,
-		});
-	} catch {
-		return new Database(dbPath, { readonly: true, create: false });
-	}
+	return openSafeReadonlyDatabase(dbPath, { allowSnapshotCopy: false }).db;
 }
 
-export function tablesIn(db: Database): Set<string> {
-	return new Set(
-		db
-			.query<{ name: string }, []>(
-				"SELECT name FROM sqlite_master WHERE type = 'table'",
-			)
-			.all()
-			.map((row) => row.name),
-	);
-}
+export { tablesIn };
 
 export function shaSegment(value: string): string {
 	return createHash("sha256").update(value).digest("hex").slice(0, 10);

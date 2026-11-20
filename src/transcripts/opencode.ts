@@ -1,14 +1,11 @@
 import type { Database } from "bun:sqlite";
-import { existsSync, readdirSync } from "node:fs";
-import path from "node:path";
 import {
-	expandHome,
-	homeDir,
-	normalizedCwd,
-	objectOrEmpty,
-	textOrNull,
-	timestampMs,
-} from "../util";
+	defaultPlatformPathService,
+	type PlatformPathService,
+} from "../platform/paths";
+import { openSafeReadonlyDatabase, tablesIn } from "../platform/sqlite";
+import { getOpenCodeDbPaths } from "../providers/opencode/discovery";
+import { normalizedCwd, objectOrEmpty, textOrNull, timestampMs } from "../util";
 import {
 	addItem,
 	addToolCall,
@@ -18,12 +15,10 @@ import {
 	inferUnknownFinalMessages,
 	isReasoningType,
 	newSession,
-	openReadonlyDatabase,
 	type TranscriptItem,
 	type TranscriptReadResult,
 	type TranscriptRole,
 	type TranscriptSession,
-	tablesIn,
 	textFromContent,
 	typeOf,
 } from "./shared";
@@ -455,26 +450,11 @@ function readOpenCodeLegacy(
 
 export function readOpenCodeTranscripts(
 	targetFiles?: ReadonlySet<string>,
+	paths: PlatformPathService = defaultPlatformPathService,
 ): TranscriptReadResult {
-	const explicitDb = process.env.OPENCODE_DB
-		? path.resolve(expandHome(process.env.OPENCODE_DB))
-		: null;
-	const dataDir = process.env.OPENCODE_DATA_DIR
-		? path.resolve(expandHome(process.env.OPENCODE_DATA_DIR))
-		: path.join(homeDir, ".local/share/opencode");
-	let dbPaths = explicitDb ? [explicitDb] : [];
-	if (!explicitDb) {
-		try {
-			dbPaths = readdirSync(dataDir)
-				.filter((name) => /^opencode(?:-[^/]*)?\.db$/u.test(name))
-				.map((name) => path.join(dataDir, name));
-		} catch {
-			// OpenCode may not be installed.
-		}
-	}
-	dbPaths = dbPaths
-		.filter(existsSync)
-		.filter((dbPath) => !targetFiles || targetFiles.has(dbPath));
+	const dbPaths = getOpenCodeDbPaths(paths).filter(
+		(dbPath) => !targetFiles || targetFiles.has(dbPath),
+	);
 	const result: TranscriptReadResult = {
 		harness: "opencode",
 		available: dbPaths.length > 0,
@@ -484,21 +464,26 @@ export function readOpenCodeTranscripts(
 	const seen = new Set<string>();
 	for (const dbPath of dbPaths) {
 		try {
-			const db = openReadonlyDatabase(dbPath);
+			const handle = openSafeReadonlyDatabase(dbPath);
 			try {
-				const tables = tablesIn(db);
+				const tables = tablesIn(handle.db);
 				let known = new Set<string>();
 				if (tables.has("session_v2") && tables.has("session_message"))
 					known = readOpenCodeV2(
-						db,
+						handle.db,
 						result.sessions,
 						tables.has("part"),
 						tables.has("session_part"),
 					);
 				if (tables.has("session") && tables.has("message"))
-					readOpenCodeLegacy(db, result.sessions, known, tables.has("part"));
+					readOpenCodeLegacy(
+						handle.db,
+						result.sessions,
+						known,
+						tables.has("part"),
+					);
 			} finally {
-				db.close();
+				handle.close();
 			}
 		} catch (error) {
 			result.warnings.push(

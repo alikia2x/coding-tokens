@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { PlatformPathService } from "../../platform/paths";
-import { openReadonlyDatabase, tablesIn } from "../../transcripts/shared";
+import { openSafeReadonlyDatabase, tablesIn } from "../../platform/sqlite";
 import type { SourceResult, UsageRecord } from "../../types";
 import {
 	blankSourceResult,
@@ -54,20 +54,20 @@ export function readGooseUsageSync(
 		if (item && item.filePath !== dbPath) continue;
 
 		try {
-			const db = openReadonlyDatabase(dbPath);
+			const handle = openSafeReadonlyDatabase(dbPath);
 			try {
-				const tables = tablesIn(db);
+				const tables = tablesIn(handle.db);
 				if (!tables.has("sessions") || !tables.has("messages")) continue;
 
 				let sessions: GooseSessionRow[] = [];
 				if (item) {
-					sessions = db
+					sessions = handle.db
 						.query<GooseSessionRow, [string]>(
 							"SELECT id, description, working_dir, created_at FROM sessions WHERE id = ?",
 						)
 						.all(item.sessionId);
 				} else {
-					sessions = db
+					sessions = handle.db
 						.query<GooseSessionRow, []>(
 							"SELECT id, description, working_dir, created_at FROM sessions",
 						)
@@ -78,7 +78,7 @@ export function readGooseUsageSync(
 					if (!sess.id) continue;
 					processedSessionIds.add(sess.id);
 
-					const msgRows = db
+					const msgRows = handle.db
 						.query<GooseMessageRow, [string]>(
 							"SELECT id, session_id, role, content, accumulated_input_tokens, accumulated_output_tokens, model_config_json, created_at FROM messages WHERE session_id = ? ORDER BY id ASC",
 						)
@@ -124,15 +124,17 @@ export function readGooseUsageSync(
 
 							if (msg.model_config_json) {
 								try {
-									const conf = JSON.parse(msg.model_config_json);
-									model = conf.model ?? model;
-									provider = conf.provider ?? undefined;
-								} catch {
-									// ignore JSON parse error
+									const conf = objectOrEmpty(JSON.parse(msg.model_config_json));
+									model = textOrNull(conf.model) ?? model;
+									provider = textOrNull(conf.provider) ?? undefined;
+								} catch (err) {
+									result.warnings.push(
+										`Goose: invalid model_config_json in ${dbPath} (${String(err)})`,
+									);
 								}
 							}
 
-							const timestamp = msg.created_at ?? sess.created_at ?? Date.now();
+							const timestamp = timestampMs(msg.created_at ?? sess.created_at);
 
 							records.push(
 								usageRecord(
@@ -156,7 +158,7 @@ export function readGooseUsageSync(
 					}
 				}
 			} finally {
-				db.close();
+				handle.close();
 			}
 		} catch (err) {
 			result.warnings.push(`Goose: failed to read ${dbPath} (${String(err)})`);
@@ -206,8 +208,7 @@ export function readGooseUsageSync(
 								messageId: `goose-legacy-${sessionId}-${i}`,
 								cwd: normalizedCwd(row.working_dir ?? row.cwd),
 								model: modelName(row.model ?? "claude-3-5-sonnet"),
-								timestamp:
-									timestampMs(row.created_at ?? row.timestamp) ?? Date.now(),
+								timestamp: timestampMs(row.created_at ?? row.timestamp),
 							},
 							{
 								input: inputTokens,

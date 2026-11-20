@@ -7,6 +7,9 @@ import {
 	hasTokenUsage,
 	modelName,
 	numberOrZero,
+	objectOrEmpty,
+	textOrNull,
+	timestampMs,
 	usageRecord,
 } from "../../util";
 import type { SessionDiscoveryItem } from "../types";
@@ -17,6 +20,10 @@ import {
 	getCursorRoots,
 } from "./discovery";
 import type { CursorBubble, CursorComposerData } from "./types";
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 function extractBubbles(
 	data: CursorComposerData,
@@ -67,25 +74,31 @@ export async function readCursorUsage(
 	// If a specific non-db chat session file was targeted
 	if (item?.filePath.endsWith(".json")) {
 		try {
-			const content = JSON.parse(readFileSync(item.filePath, "utf-8"));
+			const content = objectOrEmpty(
+				JSON.parse(readFileSync(item.filePath, "utf-8")),
+			);
 			result.available = true;
 			const requests = Array.isArray(content.requests) ? content.requests : [];
 			let msgCount = 0;
+			const fallbackCreationTs =
+				timestampMs(content.creationDate) ?? timestampMs(item.mtimeMs);
 
-			for (const [i, req] of requests.entries()) {
-				if (!req) continue;
+			for (const [i, rawReq] of requests.entries()) {
+				const req = objectOrEmpty(rawReq);
+				if (Object.keys(req).length === 0) continue;
+				const msgObj = objectOrEmpty(req.message);
 				const userText =
 					typeof req.message === "string"
 						? req.message
-						: (req.message?.text ?? "");
+						: (textOrNull(msgObj.text) ?? "");
 				const aiText =
 					typeof req.response === "string"
 						? req.response
 						: Array.isArray(req.response)
 							? req.response
-									.map((r: { value?: string } | undefined) => r?.value ?? "")
+									.map((r) => textOrNull(objectOrEmpty(r).value) ?? "")
 									.join("\n")
-							: (req.response?.value ?? "");
+							: (textOrNull(objectOrEmpty(req.response).value) ?? "");
 
 				if (userText) msgCount++;
 
@@ -99,7 +112,7 @@ export async function readCursorUsage(
 						messageId: `cursor-chat-${item.sessionId}-${i}`,
 						cwd: item.cwd ?? null,
 						model: modelName(req.modelId ?? content.model ?? "cursor-chat"),
-						timestamp: req.timestamp ?? item.mtimeMs,
+						timestamp: timestampMs(req.timestamp) ?? fallbackCreationTs,
 					},
 					{
 						input: inTokens,
@@ -109,7 +122,6 @@ export async function readCursorUsage(
 						reasoning: 0,
 					},
 				);
-				rec.costEstimated = true;
 				result.records.push(rec);
 			}
 			result.messages.set(item.sessionId, msgCount);
@@ -131,6 +143,7 @@ export async function readCursorUsage(
 				if (sess.filePath.endsWith(".json")) {
 					const subResult = await readCursorUsage(paths, sess);
 					result.records.push(...subResult.records);
+					result.warnings.push(...subResult.warnings);
 					for (const [sId, count] of subResult.messages.entries()) {
 						result.messages.set(sId, count);
 					}
@@ -147,7 +160,6 @@ export async function readCursorUsage(
 		try {
 			const targetComposerId = item?.sessionId;
 
-			// Fetch composers
 			const query = targetComposerId
 				? handle.db
 						.query<{ key: string; value: string }, [string]>(
@@ -160,40 +172,54 @@ export async function readCursorUsage(
 						)
 						.all();
 
-			// Also fetch separate bubble rows if any
 			let allBubbleRows: Array<{ key: string; value: string }> = [];
 			try {
-				allBubbleRows = handle.db
-					.query<{ key: string; value: string }, []>(
-						"SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%'",
-					)
-					.all();
-			} catch {}
+				allBubbleRows = targetComposerId
+					? handle.db
+							.query<{ key: string; value: string }, [string]>(
+								"SELECT key, value FROM cursorDiskKV WHERE key LIKE ?",
+							)
+							.all(`bubbleId:${targetComposerId}:%`)
+					: handle.db
+							.query<{ key: string; value: string }, []>(
+								"SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%'",
+							)
+							.all();
+			} catch {
+				// Older Cursor databases may store bubbles inline without bubbleId rows.
+			}
 
 			const bubbleMapByComposer = new Map<string, CursorBubble[]>();
 			for (const bRow of allBubbleRows) {
-				// key format: bubbleId:<composerId>:<bubbleId>
 				const parts = bRow.key.split(":");
 				const cId = parts[1];
-				if (cId) {
-					try {
-						const bData = JSON.parse(bRow.value) as CursorBubble;
-						const list = bubbleMapByComposer.get(cId) ?? [];
-						list.push(bData);
-						bubbleMapByComposer.set(cId, list);
-					} catch {}
+				if (!cId) continue;
+				try {
+					const parsed: unknown = JSON.parse(bRow.value);
+					if (!isPlainRecord(parsed)) continue;
+					const list = bubbleMapByComposer.get(cId) ?? [];
+					list.push(parsed as CursorBubble);
+					bubbleMapByComposer.set(cId, list);
+				} catch {
+					// Skip malformed individual bubble row.
 				}
 			}
 
 			for (const row of query) {
 				let composerData: CursorComposerData;
 				try {
-					composerData = JSON.parse(row.value) as CursorComposerData;
+					const parsed: unknown = JSON.parse(row.value);
+					if (!isPlainRecord(parsed)) continue;
+					composerData = parsed as unknown as CursorComposerData;
 				} catch {
 					continue;
 				}
 
-				const composerId = composerData.composerId;
+				const composerId =
+					textOrNull(composerData.composerId) ??
+					row.key.replace(/^composerData:/, "");
+				if (!composerId) continue;
+
 				const cwd = wsMap.get(composerId)?.cwd ?? null;
 				const unifiedMode = composerData.unifiedMode ?? "agent";
 				const rawModel =
@@ -201,6 +227,7 @@ export async function readCursorUsage(
 					composerData.model ??
 					"claude-3-5-sonnet";
 				const resolvedModel = modelName(rawModel);
+				const composerCreatedAt = timestampMs(composerData.createdAt);
 
 				const extraBubbles = bubbleMapByComposer.get(composerId) ?? [];
 				const bubbles = extractBubbles(composerData, extraBubbles);
@@ -242,15 +269,19 @@ export async function readCursorUsage(
 						);
 						const reasoning = numberOrZero(bubbleUsage?.reasoningTokens);
 
-						let isEstimated = false;
-
-						// If no explicit tokens were recorded, estimate from content
-						if (inTokens === 0 && outTokens === 0) {
+						if (
+							inTokens === 0 &&
+							outTokens === 0 &&
+							cacheRead === 0 &&
+							cacheWrite === 0 &&
+							reasoning === 0
+						) {
 							const promptLen = lastUserText.length || 40;
 							const replyLen = bubble.text?.length || 40;
 							inTokens = Math.max(1, Math.ceil(promptLen / 4));
 							outTokens = Math.max(1, Math.ceil(replyLen / 4));
-							isEstimated = true;
+						} else if (outTokens < reasoning) {
+							outTokens += reasoning;
 						}
 
 						const usageFields = {
@@ -273,10 +304,9 @@ export async function readCursorUsage(
 										bubble.modelName ?? bubble.model ?? resolvedModel,
 									),
 									timestamp:
-										bubble.timestamp ??
-										bubble.createdAt ??
-										composerData.createdAt ??
-										Date.now(),
+										timestampMs(bubble.timestamp) ??
+										timestampMs(bubble.createdAt) ??
+										composerCreatedAt,
 									isSubagent: bubble.isSubagent ?? false,
 								},
 								{
@@ -287,7 +317,6 @@ export async function readCursorUsage(
 									reasoning,
 								},
 							);
-							rec.costEstimated = isEstimated;
 							result.records.push(rec);
 						}
 					}
@@ -296,22 +325,40 @@ export async function readCursorUsage(
 				// If no AI bubbles had usage, but composer has text or usageData
 				if (turnIndex === 0 && (composerData.text || composerData.usageData)) {
 					const compUsage = composerData.usageData;
-					let inTokens = numberOrZero(compUsage?.inputTokens);
-					let outTokens = numberOrZero(compUsage?.outputTokens);
-					let isEstimated = false;
+					let inTokens = numberOrZero(
+						compUsage?.inputTokens ?? compUsage?.input,
+					);
+					let outTokens = numberOrZero(
+						compUsage?.outputTokens ?? compUsage?.output,
+					);
+					const cacheRead = numberOrZero(
+						compUsage?.cacheReadTokens ?? compUsage?.cacheRead,
+					);
+					const cacheWrite = numberOrZero(
+						compUsage?.cacheWriteTokens ?? compUsage?.cacheWrite,
+					);
+					const reasoning = numberOrZero(compUsage?.reasoningTokens);
 
-					if (inTokens === 0 && outTokens === 0 && composerData.text) {
+					if (
+						inTokens === 0 &&
+						outTokens === 0 &&
+						cacheRead === 0 &&
+						cacheWrite === 0 &&
+						reasoning === 0 &&
+						composerData.text
+					) {
 						inTokens = Math.max(1, Math.ceil(composerData.text.length / 4));
 						outTokens = Math.max(1, Math.ceil(40 / 4));
-						isEstimated = true;
+					} else if (outTokens < reasoning) {
+						outTokens += reasoning;
 					}
 
 					const usageFields = {
 						inputTokens: inTokens,
 						outputTokens: outTokens,
-						cacheReadTokens: 0,
-						cacheWriteTokens: 0,
-						reasoningTokens: 0,
+						cacheReadTokens: cacheRead,
+						cacheWriteTokens: cacheWrite,
+						reasoningTokens: reasoning,
 					};
 
 					if (hasTokenUsage(usageFields)) {
@@ -322,22 +369,22 @@ export async function readCursorUsage(
 								messageId: `cursor-${composerId}-turn-1`,
 								cwd,
 								model: resolvedModel,
-								timestamp: composerData.createdAt ?? Date.now(),
+								timestamp: composerCreatedAt,
 								isSubagent: unifiedMode === "agent",
 							},
 							{
 								input: inTokens,
 								output: outTokens,
-								cacheRead: 0,
-								cacheWrite: 0,
-								reasoning: 0,
+								cacheRead,
+								cacheWrite,
+								reasoning,
 							},
 						);
-						rec.costEstimated = isEstimated;
 						result.records.push(rec);
 					}
-					if (composerData.text)
+					if (composerData.text) {
 						userMessagesCount = Math.max(1, userMessagesCount);
+					}
 				}
 
 				result.messages.set(composerId, userMessagesCount);
