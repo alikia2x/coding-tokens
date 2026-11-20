@@ -118,7 +118,9 @@ const { QueryClient, QueryClientProvider } = await import(
 const { SessionsSidebar } = await import(
 	"~/components/sessions/sessions-sidebar"
 );
-const { ExplorePage } = await import("~/pages/explore");
+const { ExplorePage, ExploreTooltip, exploreSeriesColor } = await import(
+	"~/pages/explore"
+);
 const { ModelsPage } = await import("~/pages/models");
 const { OverviewPage } = await import("~/pages/overview");
 const { ProjectsPage } = await import("~/pages/projects");
@@ -1513,5 +1515,85 @@ describe("Dynamic Harness Filter UI Regression Suite", () => {
 			"input[data-search-input]",
 		) as HTMLInputElement | null;
 		expect(restoredProjectInput?.value).toBe("beta");
+	});
+
+	test("ExploreTooltip renders color swatches, excludes zero rows, includes __other in top-to-bottom stack order, and exploreSeriesColor uses distinct categorical hues", async () => {
+		expect(exploreSeriesColor("model-a", 0, "model")).toBe("var(--chart-1)");
+		expect(exploreSeriesColor("model-b", 1, "model")).toBe("var(--chart-2)");
+		expect(exploreSeriesColor("__other", 7, "model")).toBe(
+			"var(--chart-other)",
+		);
+
+		const colorByKey = new Map([
+			["model-a", "var(--chart-1)"],
+			["model-b", "var(--chart-2)"],
+			["model-zero", "var(--chart-3)"],
+			["__other", "var(--chart-other)"],
+		]);
+		const seriesOrder = new Map([
+			["model-a", 0],
+			["model-b", 1],
+			["model-zero", 2],
+			["__other", 3],
+		]);
+
+		root.render(
+			React.createElement(ExploreTooltip, {
+				active: true,
+				label: "Sep 7-13",
+				metric: "cost",
+				colorByKey,
+				seriesOrder,
+				totalLabel: "Total",
+				stacked: true,
+				payload: [
+					{
+						dataKey: "model-a",
+						name: "Model A",
+						value: 10.5,
+						color: "none",
+						payload: { tooltipLabel: "Sep 7-13" },
+					},
+					{
+						dataKey: "model-b",
+						name: "Model B",
+						value: 5.25,
+						color: "url(#explore-area-1)",
+						payload: { tooltipLabel: "Sep 7-13" },
+					},
+					{
+						dataKey: "model-zero",
+						name: "Model Zero",
+						value: 0,
+						color: "none",
+						payload: { tooltipLabel: "Sep 7-13" },
+					},
+					{
+						dataKey: "__other",
+						name: "Other",
+						value: 2.0,
+						color: "none",
+						payload: { tooltipLabel: "Sep 7-13" },
+					},
+				],
+			}),
+		);
+
+		await sleep(20);
+
+		expect(container.textContent).not.toContain("Model Zero");
+		expect(container.textContent).toContain("Other");
+		expect(container.textContent).toContain("Total");
+		expect(container.textContent).toContain("$17.75");
+
+		const swatches = Array.from(
+			container.querySelectorAll("[data-tooltip-swatch]"),
+		) as HTMLElement[];
+		expect(
+			swatches.map((el) => el.getAttribute("data-tooltip-swatch")),
+		).toEqual(["__other", "model-b", "model-a"]);
+		expect(swatches[0]?.style.background).toBe("var(--chart-other)");
+		expect(swatches[1]?.style.background).toBe("var(--chart-2)");
+		expect(swatches[2]?.style.background).toBe("var(--chart-1)");
 	});
 });

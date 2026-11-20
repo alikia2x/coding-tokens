@@ -1,7 +1,9 @@
 import { getHarnessLabel, HARNESS_NAMES } from "@shared/types";
 import {
+	type ReactElement,
 	type ReactNode,
 	useCallback,
+	useId,
 	useLayoutEffect,
 	useMemo,
 	useRef,
@@ -10,9 +12,11 @@ import { Link, useNavigationType, useSearchParams } from "react-router";
 import {
 	Area,
 	AreaChart,
+	type AreaRevealShapeProps,
 	Bar,
 	BarChart,
 	CartesianGrid,
+	Curve,
 	Line,
 	LineChart,
 	ResponsiveContainer,
@@ -43,7 +47,11 @@ import {
 	TableHeader,
 	TableRow,
 } from "~/components/ui/table";
-import { categoricalColors, colorForSeries } from "~/lib/chart-colors";
+import {
+	categoricalColors,
+	colorForSeries,
+	otherColor,
+} from "~/lib/chart-colors";
 import {
 	formatBucketLabelFor,
 	formatBucketTooltipLabelFor,
@@ -112,10 +120,29 @@ function formatMetric(value: number, metric: Metric): string {
 	return formatNumber(value);
 }
 
+export function exploreSeriesColor(
+	key: string,
+	index: number,
+	dimension: Dimension | null,
+): string {
+	if (key === "__other") return otherColor;
+	if (!key || key === "all" || key === "value") {
+		return categoricalColors[0] ?? "var(--chart-1)";
+	}
+	if (dimension === "harness") {
+		return colorForSeries(key, index, "harness");
+	}
+	if (index < categoricalColors.length) {
+		return categoricalColors[index] ?? colorForSeries(key, index, dimension);
+	}
+	return colorForSeries(key, index, dimension);
+}
+
 export function ExplorePage() {
 	const range = useResolvedRange();
 	const [searchParams, setSearchParams] = useSearchParams();
 	const navigationType = useNavigationType();
+	const areaClipPrefix = useId().replace(/:/g, "");
 	const status = useStatus();
 	const projects = useProjects(range);
 	const models = useModels(range);
@@ -385,73 +412,37 @@ export function ExplorePage() {
 		[data],
 	);
 
-	const series =
-		mode === "dimension"
-			? [
-					{
-						key: "value",
-						label: t(metricLabel(activeMetric)),
-						color: categoricalColors[0],
-					},
-				]
-			: (explore.data?.series ?? []).map((item, index) => ({
-					key: item.key,
-					label: localizeLabel(t, item.label),
-					color: colorForSeries(
-						item.key,
-						index,
-						breakdown === "none" ? null : breakdown,
-					),
-				}));
+	const series = useMemo(
+		() =>
+			mode === "dimension"
+				? [
+						{
+							key: "value",
+							label: t(metricLabel(activeMetric)),
+							color: categoricalColors[0] ?? "var(--chart-1)",
+						},
+					]
+				: (explore.data?.series ?? []).map((item, index) => ({
+						key: item.key,
+						label: localizeLabel(t, item.label),
+						color: exploreSeriesColor(
+							item.key,
+							index,
+							breakdown === "none" ? null : breakdown,
+						),
+					})),
+		[mode, activeMetric, explore.data?.series, breakdown, t],
+	);
 
-	const areaOverlay = useMemo(() => {
-		if (chart !== "area" || series.length === 0 || !data.length) {
-			return {
-				chartData: data,
-				strokeLines: [] as Array<{ dataKey: string; color: string }>,
-			};
-		}
-		const strokeLines: Array<{ dataKey: string; color: string }> = [];
-		const chartData: Array<Record<string, string | number | null>> = data.map(
-			(row) => ({ ...row }),
-		);
-		const cumulativeByIndex = chartData.map(() => 0);
+	const colorByKey = useMemo(
+		() => new Map(series.map((item) => [item.key, item.color])),
+		[series],
+	);
 
-		for (let sIdx = 0; sIdx < series.length; sIdx += 1) {
-			const item = series[sIdx];
-			if (!item) continue;
-			const color = item.color ?? categoricalColors[0] ?? "var(--chart-1)";
-			const values = chartData.map((row) => Number(row[item.key] ?? 0));
-			for (let i = 0; i < chartData.length; i += 1) {
-				cumulativeByIndex[i] = (cumulativeByIndex[i] ?? 0) + (values[i] ?? 0);
-			}
-
-			let i = 0;
-			let island = 0;
-			while (i < values.length) {
-				if ((values[i] ?? 0) <= 0) {
-					i += 1;
-					continue;
-				}
-				const start = Math.max(0, i - 1);
-				let end = i;
-				while (end + 1 < values.length && (values[end + 1] ?? 0) > 0) {
-					end += 1;
-				}
-				const paddedEnd = Math.min(values.length - 1, end + 1);
-				const dataKey = `__area_stroke_${sIdx}_${island}`;
-				strokeLines.push({ dataKey, color });
-				for (let p = start; p <= paddedEnd; p += 1) {
-					const target = chartData[p];
-					if (target) target[dataKey] = cumulativeByIndex[p] ?? 0;
-				}
-				island += 1;
-				i = end + 1;
-			}
-		}
-
-		return { chartData, strokeLines };
-	}, [chart, data, series]);
+	const seriesOrder = useMemo(
+		() => new Map(series.map((item, index) => [item.key, index])),
+		[series],
+	);
 
 	const tableRows =
 		mode === "dimension"
@@ -461,14 +452,14 @@ export function ExplorePage() {
 					totals: row.totals,
 					color:
 						dimension === "harness"
-							? colorForSeries(row.key, index, "harness")
+							? exploreSeriesColor(row.key, index, "harness")
 							: undefined,
 				}))
 			: (explore.data?.series ?? []).map((item, index) => ({
 					key: item.key,
 					label: localizeLabel(t, item.label),
 					totals: item.totals,
-					color: colorForSeries(
+					color: exploreSeriesColor(
 						item.key,
 						index,
 						breakdown === "none" ? null : breakdown,
@@ -686,9 +677,13 @@ export function ExplorePage() {
 							{chart === "line" ? (
 								<LineChart
 									data={data}
-									margin={{ top: 8, right: 24, left: 0, bottom: 0 }}
+									margin={{ top: 12, right: 24, left: 0, bottom: 0 }}
 								>
-									<CartesianGrid vertical={false} stroke="var(--chart-grid)" />
+									<CartesianGrid
+										vertical={false}
+										stroke="var(--chart-grid)"
+										strokeDasharray="3 3"
+									/>
 									<XAxis
 										dataKey="key"
 										tickFormatter={(key: string) => labelByKey.get(key) ?? key}
@@ -707,7 +702,15 @@ export function ExplorePage() {
 										}
 									/>
 									<Tooltip
-										content={<ExploreTooltip metric={activeMetric} />}
+										content={
+											<ExploreTooltip
+												metric={activeMetric}
+												colorByKey={colorByKey}
+												seriesOrder={seriesOrder}
+												totalLabel={t("common.total")}
+												stacked={false}
+											/>
+										}
 										isAnimationActive={false}
 										cursor={{
 											stroke: "var(--muted-foreground)",
@@ -718,51 +721,82 @@ export function ExplorePage() {
 									{series.map((item) => (
 										<Line
 											key={item.key}
-											type="linear"
+											type="monotone"
 											dataKey={item.key}
 											name={item.label}
 											stroke={item.color ?? categoricalColors[0]}
-											strokeWidth={1.6}
+											strokeWidth={1.75}
 											dot={false}
-											activeDot={{ r: 3 }}
+											activeDot={{
+												r: 3.5,
+												stroke: "var(--card)",
+												strokeWidth: 1.5,
+											}}
 											isAnimationActive={false}
 										/>
 									))}
 								</LineChart>
 							) : chart === "area" ? (
 								<AreaChart
-									data={areaOverlay.chartData}
-									margin={{ top: 8, right: 24, left: 0, bottom: 0 }}
+									data={data}
+									margin={{ top: 12, right: 24, left: 0, bottom: 0 }}
 								>
 									<defs>
 										{series.map((item, index) => {
 											const color =
 												item.color ?? categoricalColors[0] ?? "var(--chart-1)";
 											const stacked = series.length > 1;
+											const isOther = item.key === "__other";
 											return (
 												<linearGradient
 													key={item.key}
-													id={`explore-area-${index}`}
+													id={`explore-area-${areaClipPrefix}-${index}`}
 													x1="0"
 													y1="0"
 													x2="0"
 													y2="1"
 												>
-													<stop
-														offset="0%"
-														stopColor={color}
-														stopOpacity={stacked ? 0.8 : 0.48}
-													/>
-													<stop
-														offset="100%"
-														stopColor={color}
-														stopOpacity={stacked ? 0.52 : 0.08}
-													/>
+													{stacked ? (
+														<>
+															<stop
+																offset="0%"
+																stopColor={color}
+																stopOpacity={isOther ? 0.28 : 0.68}
+															/>
+															<stop
+																offset="100%"
+																stopColor={color}
+																stopOpacity={isOther ? 0.14 : 0.44}
+															/>
+														</>
+													) : (
+														<>
+															<stop
+																offset="0%"
+																stopColor={color}
+																stopOpacity={0.38}
+															/>
+															<stop
+																offset="60%"
+																stopColor={color}
+																stopOpacity={0.14}
+															/>
+															<stop
+																offset="100%"
+																stopColor={color}
+																stopOpacity={0.02}
+															/>
+														</>
+													)}
 												</linearGradient>
 											);
 										})}
 									</defs>
-									<CartesianGrid vertical={false} stroke="var(--chart-grid)" />
+									<CartesianGrid
+										vertical={false}
+										stroke="var(--chart-grid)"
+										strokeDasharray="3 3"
+									/>
 									<XAxis
 										dataKey="key"
 										tickFormatter={(key: string) => labelByKey.get(key) ?? key}
@@ -781,7 +815,15 @@ export function ExplorePage() {
 										}
 									/>
 									<Tooltip
-										content={<ExploreTooltip metric={activeMetric} />}
+										content={
+											<ExploreTooltip
+												metric={activeMetric}
+												colorByKey={colorByKey}
+												seriesOrder={seriesOrder}
+												totalLabel={t("common.total")}
+												stacked={series.length > 1}
+											/>
+										}
 										isAnimationActive={false}
 										cursor={{
 											stroke: "var(--muted-foreground)",
@@ -789,37 +831,35 @@ export function ExplorePage() {
 											strokeDasharray: "3 3",
 										}}
 									/>
-									{series.map((item, index) => (
-										<Area
-											key={item.key}
-											type="linear"
-											stackId="explore"
-											dataKey={item.key}
-											name={item.label}
-											stroke="none"
-											fill={`url(#explore-area-${index})`}
-											fillOpacity={1}
-											strokeWidth={0}
-											dot={false}
-											activeDot={{ r: 3 }}
-											isAnimationActive={false}
-										/>
-									))}
-									{areaOverlay.strokeLines.map((line) => (
-										<Line
-											key={line.dataKey}
-											type="linear"
-											dataKey={line.dataKey}
-											stroke={line.color}
-											strokeWidth={1.5}
-											dot={false}
-											activeDot={false}
-											legendType="none"
-											tooltipType="none"
-											connectNulls={false}
-											isAnimationActive={false}
-										/>
-									))}
+									{series.map((item, index) => {
+										const color =
+											item.color ?? categoricalColors[0] ?? "var(--chart-1)";
+										const stacked = series.length > 1;
+										const isOther = item.key === "__other";
+										return (
+											<Area
+												key={item.key}
+												type="monotone"
+												stackId="explore"
+												dataKey={item.key}
+												name={item.label}
+												stroke={color}
+												fill={`url(#explore-area-${areaClipPrefix}-${index})`}
+												fillOpacity={1}
+												strokeWidth={isOther ? 1.25 : stacked ? 1.6 : 1.8}
+												dot={false}
+												activeDot={renderActiveAreaDot(item.key, color)}
+												shape={(shapeProps) => (
+													<StackedAreaShape
+														{...shapeProps}
+														seriesKey={item.key}
+														clipId={`explore-stroke-${areaClipPrefix}-${index}`}
+													/>
+												)}
+												isAnimationActive={false}
+											/>
+										);
+									})}
 								</AreaChart>
 							) : mode === "dimension" ? (
 								<BarChart
@@ -830,6 +870,7 @@ export function ExplorePage() {
 									<CartesianGrid
 										horizontal={false}
 										stroke="var(--chart-grid)"
+										strokeDasharray="3 3"
 									/>
 									<XAxis
 										type="number"
@@ -855,7 +896,15 @@ export function ExplorePage() {
 										}}
 									/>
 									<Tooltip
-										content={<ExploreTooltip metric={activeMetric} />}
+										content={
+											<ExploreTooltip
+												metric={activeMetric}
+												colorByKey={colorByKey}
+												seriesOrder={seriesOrder}
+												totalLabel={t("common.total")}
+												stacked={false}
+											/>
+										}
 										isAnimationActive={false}
 										cursor={{ fill: "var(--hover)", fillOpacity: 0.7 }}
 									/>
@@ -873,7 +922,11 @@ export function ExplorePage() {
 									data={data}
 									margin={{ top: 8, right: 24, left: 0, bottom: 0 }}
 								>
-									<CartesianGrid vertical={false} stroke="var(--chart-grid)" />
+									<CartesianGrid
+										vertical={false}
+										stroke="var(--chart-grid)"
+										strokeDasharray="3 3"
+									/>
 									<XAxis
 										dataKey="key"
 										tickFormatter={(key: string) => labelByKey.get(key) ?? key}
@@ -892,7 +945,15 @@ export function ExplorePage() {
 										}
 									/>
 									<Tooltip
-										content={<ExploreTooltip metric={activeMetric} />}
+										content={
+											<ExploreTooltip
+												metric={activeMetric}
+												colorByKey={colorByKey}
+												seriesOrder={seriesOrder}
+												totalLabel={t("common.total")}
+												stacked={series.length > 1}
+											/>
+										}
 										isAnimationActive={false}
 										cursor={{ fill: "var(--hover)", fillOpacity: 0.7 }}
 									/>
@@ -1045,11 +1106,145 @@ function dimensionLabel(dimension: Dimension): TranslationKey {
 	return "common.model";
 }
 
-function ExploreTooltip({
+function renderActiveAreaDot(seriesKey: string, color: string) {
+	return (dotProps: {
+		cx?: number;
+		cy?: number;
+		index?: number;
+		payload?: Record<string, unknown>;
+	}): ReactElement => {
+		const value = Number(dotProps.payload?.[seriesKey] ?? 0);
+		if (
+			dotProps.cx == null ||
+			dotProps.cy == null ||
+			!Number.isFinite(dotProps.cx) ||
+			!Number.isFinite(dotProps.cy) ||
+			value <= 0
+		) {
+			return <g key={`dot-empty-${seriesKey}-${dotProps.index ?? 0}`} />;
+		}
+		return (
+			<circle
+				key={`dot-${seriesKey}-${dotProps.index ?? 0}`}
+				cx={dotProps.cx}
+				cy={dotProps.cy}
+				r={3.5}
+				fill={color}
+				stroke="var(--card)"
+				strokeWidth={1.5}
+			/>
+		);
+	};
+}
+
+function StackedAreaShape({
+	seriesKey,
+	clipId,
+	...curveProps
+}: AreaRevealShapeProps & {
+	seriesKey: string;
+	clipId: string;
+}): ReactElement | null {
+	const points = curveProps.points;
+	if (!points || points.length === 0) return null;
+
+	const clipRects: Array<{ x: number; width: number }> = [];
+	let i = 0;
+	while (i < points.length) {
+		const point = points[i] as {
+			x?: number | null;
+			y?: number | null;
+			payload?: Record<string, unknown>;
+		};
+		const value = Number(point?.payload?.[seriesKey] ?? 0);
+		if (value <= 0 || point?.x == null || point?.y == null) {
+			i += 1;
+			continue;
+		}
+		let end = i;
+		while (end + 1 < points.length) {
+			const nextPoint = points[end + 1] as {
+				x?: number | null;
+				y?: number | null;
+				payload?: Record<string, unknown>;
+			};
+			if (
+				Number(nextPoint?.payload?.[seriesKey] ?? 0) <= 0 ||
+				nextPoint?.x == null ||
+				nextPoint?.y == null
+			) {
+				break;
+			}
+			end += 1;
+		}
+		const leftIdx = Math.max(0, i - 1);
+		const rightIdx = Math.min(points.length - 1, end + 1);
+		const rawLeft = Number(points[leftIdx]?.x);
+		const rawRight = Number(points[rightIdx]?.x);
+		if (Number.isFinite(rawLeft) && Number.isFinite(rawRight)) {
+			const padLeft = i === 0 ? 4 : 0;
+			const padRight = end === points.length - 1 ? 4 : 0;
+			const x = rawLeft - padLeft;
+			const width = Math.max(2, rawRight + padRight - x);
+			clipRects.push({ x, width });
+		}
+		i = end + 1;
+	}
+
+	const {
+		animationElapsedTime: _animationElapsedTime,
+		isAnimating: _isAnimating,
+		isEntrance: _isEntrance,
+		isRange: _isRange,
+		...svgCurveProps
+	} = curveProps;
+
+	return (
+		<g>
+			<Curve {...svgCurveProps} stroke="none" />
+			{clipRects.length > 0 &&
+			curveProps.stroke &&
+			curveProps.stroke !== "none" ? (
+				<>
+					<defs>
+						<clipPath id={clipId}>
+							{clipRects.map((rect) => (
+								<rect
+									key={`${clipId}-${rect.x}-${rect.width}`}
+									x={rect.x}
+									y={-500}
+									width={rect.width}
+									height={2000}
+								/>
+							))}
+						</clipPath>
+					</defs>
+					<g clipPath={`url(#${clipId})`}>
+						<Curve
+							type={svgCurveProps.type}
+							layout={svgCurveProps.layout}
+							points={svgCurveProps.points}
+							connectNulls={svgCurveProps.connectNulls}
+							stroke={svgCurveProps.stroke}
+							strokeWidth={svgCurveProps.strokeWidth}
+							fill="none"
+						/>
+					</g>
+				</>
+			) : null}
+		</g>
+	);
+}
+
+export function ExploreTooltip({
 	active,
 	payload,
 	label,
 	metric,
+	colorByKey,
+	seriesOrder,
+	totalLabel,
+	stacked,
 }: {
 	active?: boolean;
 	payload?: Array<{
@@ -1061,34 +1256,68 @@ function ExploreTooltip({
 	}>;
 	label?: string;
 	metric: Metric;
+	colorByKey: Map<string, string>;
+	seriesOrder: Map<string, number>;
+	totalLabel: string;
+	stacked: boolean;
 }) {
 	if (!active || !payload?.length) return null;
-	const visiblePayload = payload.filter(
-		(item) => !String(item.dataKey ?? item.name ?? "").startsWith("__"),
+	const nonZero = payload.filter((item) => Number(item.value ?? 0) > 0);
+	const visible = nonZero.length > 0 ? nonZero : payload;
+	const ordered = stacked
+		? [...visible].sort(
+				(left, right) =>
+					(seriesOrder.get(String(right.dataKey ?? "")) ?? -1) -
+					(seriesOrder.get(String(left.dataKey ?? "")) ?? -1),
+			)
+		: [...visible].sort(
+				(left, right) => Number(right.value ?? 0) - Number(left.value ?? 0),
+			);
+	const heading = ordered[0]?.payload?.tooltipLabel ?? label;
+	const bucketTotal = visible.reduce(
+		(sum, item) => sum + Number(item.value ?? 0),
+		0,
 	);
-	if (!visiblePayload.length) return null;
-	const heading = visiblePayload[0]?.payload?.tooltipLabel ?? label;
 	return (
-		<div className="min-w-40 rounded-md border bg-popover px-3 py-2 text-popover-foreground shadow-md">
+		<div className="min-w-44 rounded-md border bg-popover/95 px-3 py-2 text-popover-foreground shadow-md backdrop-blur-sm">
 			<div className="text-[11px] font-medium">{heading}</div>
 			<div className="mt-1.5 space-y-1">
-				{visiblePayload.map((item) => (
-					<div
-						key={String(item.dataKey ?? item.name)}
-						className="flex items-center justify-between gap-4 text-[11px]"
-					>
-						<span className="flex items-center gap-1.5 text-muted-foreground">
-							<span
-								className="size-1.5 rounded-[1px]"
-								style={{ background: item.color }}
-							/>
-							{item.name}
-						</span>
-						<span className="tabular">
-							{formatMetric(item.value ?? 0, metric)}
+				{ordered.map((item) => {
+					const key = String(item.dataKey ?? item.name ?? "");
+					const swatch =
+						colorByKey.get(key) ??
+						(item.color &&
+						item.color !== "none" &&
+						!item.color.startsWith("url(")
+							? item.color
+							: (categoricalColors[0] ?? "var(--chart-1)"));
+					return (
+						<div
+							key={key}
+							className="flex items-center justify-between gap-4 text-[11px]"
+						>
+							<span className="flex items-center gap-1.5 text-muted-foreground">
+								<span
+									data-tooltip-swatch={key}
+									className="size-2 shrink-0 rounded-[2px]"
+									style={{ background: swatch }}
+								/>
+								{item.name}
+							</span>
+							<span className="font-medium text-foreground tabular">
+								{formatMetric(item.value ?? 0, metric)}
+							</span>
+						</div>
+					);
+				})}
+				{stacked && ordered.length > 1 ? (
+					<div className="mt-1 flex items-center justify-between gap-4 border-t pt-1.5 text-[11px]">
+						<span className="text-muted-foreground">{totalLabel}</span>
+						<span className="font-semibold text-foreground tabular">
+							{formatMetric(bucketTotal, metric)}
 						</span>
 					</div>
-				))}
+				) : null}
 			</div>
 		</div>
 	);
