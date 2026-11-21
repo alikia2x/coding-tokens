@@ -519,7 +519,12 @@ describe("Server REST API Integration Suite", () => {
 
 		test("DataStore recovers unchanged harnesses missing from partial session_catalog", async () => {
 			const partialDbPath = path.join(suiteTmp, "partial-catalog.db");
-			copyFileSync(dbPath, partialDbPath);
+			const sourceDb = new Database(dbPath, { readonly: true });
+			try {
+				sourceDb.exec(`VACUUM INTO '${partialDbPath.replace(/'/g, "''")}'`);
+			} finally {
+				sourceDb.close();
+			}
 			const rawDb = new Database(partialDbPath);
 			try {
 				rawDb.exec("DELETE FROM session_catalog WHERE harness = 'codex'");
