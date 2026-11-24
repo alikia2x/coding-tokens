@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-24
+
+### Added
+
+- Google-style boolean query support across all search inputs, including explicit and implicit `AND`, uppercase `OR` or `|`, prefix `-` or `NOT` exclusion, and parentheses `()` for expression grouping.
+- Lenient query parsing that gracefully tolerates incomplete syntax such as unclosed parentheses, trailing boolean operators, and stray punctuation without interrupting search results.
+- Comprehensive search ranking model that scores sessions by hierarchical field specificity (exact ID and title matches over partial or body matches), multi-term coverage bonuses for `OR` queries, and recency boosts for recent sessions.
+- Relevance-first ranking in the command palette search for projects, models, and harnesses before sorting by usage cost.
+
 ## [0.4.1] - 2026-11-20
 
 ### Added
