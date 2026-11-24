@@ -249,6 +249,165 @@ describe("session query & snippet extraction", () => {
 	});
 });
 
+describe("Google-style boolean search syntax & fault tolerance", () => {
+	test("supports OR expressions and pipe operator", () => {
+		expect(
+			matchesSessionQuery(
+				sampleSession,
+				parseSearchQuery("dashboard OR nonexisting"),
+			),
+		).toBe(true);
+		expect(
+			matchesSessionQuery(
+				sampleSession,
+				parseSearchQuery("nonexisting1 OR nonexisting2"),
+			),
+		).toBe(false);
+		expect(
+			matchesSessionQuery(
+				sampleSession,
+				parseSearchQuery("nonexisting | filtering"),
+			),
+		).toBe(true);
+	});
+
+	test("evaluates operator precedence where OR binds tighter than AND", () => {
+		// "dashboard sidebar OR nonexisting" -> dashboard AND (sidebar OR nonexisting)
+		expect(
+			matchesSessionQuery(
+				sampleSession,
+				parseSearchQuery("dashboard sidebar OR nonexisting"),
+			),
+		).toBe(true);
+		// "nonexisting sidebar OR nonexisting2" -> nonexisting AND (sidebar OR nonexisting2)
+		expect(
+			matchesSessionQuery(
+				sampleSession,
+				parseSearchQuery("nonexisting sidebar OR nonexisting2"),
+			),
+		).toBe(false);
+	});
+
+	test("supports parentheses for grouping", () => {
+		expect(
+			matchesSessionQuery(
+				sampleSession,
+				parseSearchQuery("(nonexisting OR dashboard) AND (sidebar OR other)"),
+			),
+		).toBe(true);
+		expect(
+			matchesSessionQuery(
+				sampleSession,
+				parseSearchQuery("(nonexisting1 OR nonexisting2) AND dashboard"),
+			),
+		).toBe(false);
+	});
+
+	test("supports qualifier OR expressions", () => {
+		expect(
+			matchesSessionQuery(
+				sampleSession,
+				parseSearchQuery("model:gpt OR model:claude"),
+			),
+		).toBe(true);
+		expect(
+			matchesSessionQuery(
+				sampleSession,
+				parseSearchQuery("model:claude OR model:deepseek"),
+			),
+		).toBe(false);
+		expect(
+			matchesSessionQuery(
+				sampleSession,
+				parseSearchQuery("project:dashboard (model:gpt OR model:claude)"),
+			),
+		).toBe(true);
+	});
+
+	test("distinguishes uppercase boolean operators from lowercase words", () => {
+		// Lowercase "or" is treated as an ordinary term, not an OR operator
+		const queryWithLowercaseOr = parseSearchQuery("invalidation or sidebar");
+		expect(queryWithLowercaseOr.terms).toContain("or");
+		// Lowercase "and" is treated as an ordinary term
+		const queryWithLowercaseAnd = parseSearchQuery("sidebar and filter");
+		expect(queryWithLowercaseAnd.terms).toContain("and");
+	});
+
+	test("gracefully handles incomplete or malformed boolean input during typing", () => {
+		// Trailing OR
+		expect(() => parseSearchQuery("dashboard OR ")).not.toThrow();
+		expect(
+			matchesSessionQuery(sampleSession, parseSearchQuery("dashboard OR ")),
+		).toBe(true);
+
+		// Unclosed parenthesis
+		expect(() => parseSearchQuery("(dashboard OR sidebar")).not.toThrow();
+		expect(
+			matchesSessionQuery(
+				sampleSession,
+				parseSearchQuery("(dashboard OR sidebar"),
+			),
+		).toBe(true);
+
+		// Stray parentheses and empty input
+		expect(() => parseSearchQuery("())")).not.toThrow();
+		expect(matchesSessionQuery(sampleSession, parseSearchQuery("()"))).toBe(
+			true,
+		);
+	});
+});
+
+describe("search ranking design", () => {
+	test("gives coverage bonus to sessions matching multiple terms vs single term in OR query", () => {
+		const sessionBoth = {
+			...sampleSession,
+			title: "dashboard filtering and caching",
+		};
+		const sessionOne = {
+			...sampleSession,
+			title: "dashboard only",
+			body: "no other matching words",
+		};
+
+		const query = parseSearchQuery("filtering OR caching");
+		const scoreBoth = scoreSessionQuery(sessionBoth, query);
+		const scoreOne = scoreSessionQuery(sessionOne, query);
+
+		expect(scoreBoth).toBeGreaterThan(scoreOne);
+	});
+
+	test("gives recency boost to newer sessions when text relevance is identical", () => {
+		const now = Date.now();
+		const recentSession = {
+			...sampleSession,
+			lastActivityAt: now - 1000 * 60 * 60 * 2, // 2 hours ago
+		};
+		const oldSession = {
+			...sampleSession,
+			lastActivityAt: now - 1000 * 60 * 60 * 24 * 60, // 60 days ago
+		};
+
+		const query = parseSearchQuery("filtering");
+		const scoreRecent = scoreSessionQuery(recentSession, query);
+		const scoreOld = scoreSessionQuery(oldSession, query);
+
+		expect(scoreRecent).toBeGreaterThan(scoreOld);
+	});
+
+	test("awards highest priority to exact session ID matches", () => {
+		const query = parseSearchQuery(sampleSession.sessionId);
+		const idScore = scoreSessionQuery(sampleSession, query);
+		const otherSession = {
+			...sampleSession,
+			sessionId: "99999999-9999-9999-9999-999999999999",
+		};
+		const otherScore = scoreSessionQuery(otherSession, query);
+
+		expect(idScore).toBeGreaterThan(otherScore);
+		expect(idScore).toBeGreaterThan(150);
+	});
+});
+
 describe("indexed full-text & entity search integration", () => {
 	test("searches models, harnesses, projects, and transcript bodies end-to-end", async () => {
 		await withIsolatedStore(

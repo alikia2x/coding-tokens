@@ -3,8 +3,10 @@ import {
 	isEmptySearch,
 	matchesSessionQuery,
 	matchesTextQuery,
+	normalizeSearchText,
 	type ParsedSearch,
 	parseSearchQuery,
+	type SearchAstNode,
 	type SearchableSession,
 	scoreSessionQuery,
 } from "@shared/search";
@@ -49,6 +51,33 @@ function buildFtsTermClause(term: string): string | null {
 	return tokens.map((token) => `"${token.replaceAll(/"/gu, '""')}"*`).join(" ");
 }
 
+function buildFtsFromAst(node: SearchAstNode): string | null {
+	switch (node.type) {
+		case "term":
+			return buildFtsTermClause(node.value);
+		case "filter":
+			return null;
+		case "not":
+			return null;
+		case "and": {
+			const clauses = node.children
+				.map(buildFtsFromAst)
+				.filter((c): c is string => c !== null);
+			if (clauses.length === 0) return null;
+			if (clauses.length === 1) return clauses[0] ?? null;
+			return `(${clauses.join(" ")})`;
+		}
+		case "or": {
+			const clauses = node.children
+				.map(buildFtsFromAst)
+				.filter((c): c is string => c !== null);
+			if (clauses.length === 0) return null;
+			if (clauses.length === 1) return clauses[0] ?? null;
+			return `(${clauses.join(" OR ")})`;
+		}
+	}
+}
+
 function buildFtsOrQuery(terms: readonly string[]): {
 	ftsQuery: string;
 	fallbackTerms: string[];
@@ -81,7 +110,46 @@ function loadCandidateBodies(
 
 	const keysToFetch = new Set<string>();
 
-	if (query.terms.length > 0) {
+	if (query.ast) {
+		const ftsQuery = buildFtsFromAst(query.ast);
+		let ftsFailed = false;
+		if (ftsQuery) {
+			const ftsHits = source.searchTextKeysFts(ftsQuery);
+			if (ftsHits === null) {
+				ftsFailed = true;
+			} else {
+				for (const key of ftsHits) keysToFetch.add(key);
+			}
+		} else {
+			ftsFailed = true;
+		}
+
+		if (ftsFailed && query.terms.length > 0) {
+			const { ftsQuery: fallbackFts, fallbackTerms } = buildFtsOrQuery(
+				query.terms,
+			);
+			let orFtsFailed = false;
+			if (fallbackFts) {
+				const ftsHits = source.searchTextKeysFts(fallbackFts);
+				if (ftsHits === null) {
+					orFtsFailed = true;
+				} else {
+					for (const key of ftsHits) keysToFetch.add(key);
+				}
+			}
+			if (orFtsFailed) {
+				for (const [key, body] of source.searchTextsBySubstring(query.terms)) {
+					bodies.set(key, body);
+				}
+			} else if (fallbackTerms.length > 0) {
+				for (const [key, body] of source.searchTextsBySubstring(
+					fallbackTerms,
+				)) {
+					bodies.set(key, body);
+				}
+			}
+		}
+	} else if (query.terms.length > 0) {
 		const { ftsQuery, fallbackTerms } = buildFtsOrQuery(query.terms);
 		let ftsFailed = false;
 		if (ftsQuery) {
@@ -159,6 +227,7 @@ function sessionSearchable(
 		hasTranscript: session.hasTranscript,
 		costUsd: session.totals.costUsd,
 		body,
+		lastActivityAt: session.lastActivityAt,
 	};
 }
 
@@ -241,6 +310,30 @@ export function sessionSearchMatches(
 	return { query: raw, keys, snippets };
 }
 
+function scoreEntityRelevance(
+	query: ParsedSearch,
+	primary: string,
+	secondary?: string,
+): number {
+	const p = normalizeSearchText(primary);
+	const s = secondary ? normalizeSearchText(secondary) : "";
+	const raw = normalizeSearchText(query.raw);
+	let score = 0;
+	if (raw) {
+		if (p === raw) score += 100;
+		else if (p.startsWith(raw)) score += 50;
+		else if (p.includes(raw)) score += 25;
+		else if (s?.includes(raw)) score += 10;
+	}
+	for (const term of query.terms) {
+		if (p === term) score += 40;
+		else if (p.startsWith(term)) score += 20;
+		else if (p.includes(term)) score += 10;
+		else if (s?.includes(term)) score += 5;
+	}
+	return score;
+}
+
 export function searchPayload(
 	raw: string,
 	limit = 8,
@@ -291,12 +384,14 @@ export function searchPayload(
 		.map(([cwd, groupRecords]) => {
 			const name = projectName(cwd || null);
 			const totals = summarizeRecords(groupRecords);
+			const score = scoreEntityRelevance(query, name, cwd || "");
 			return {
 				cwd: cwd || null,
 				name,
 				sessions: totals.sessions,
 				costUsd: totals.costUsd,
 				tokens: totalTokens(totals),
+				score,
 			};
 		})
 		.filter((project) =>
@@ -304,18 +399,23 @@ export function searchPayload(
 				project: [project.name, project.cwd ?? ""],
 			}),
 		)
-		.sort((left, right) => right.costUsd - left.costUsd)
+		.sort(
+			(left, right) => right.score - left.score || right.costUsd - left.costUsd,
+		)
 		.slice(0, limit / 2);
 
 	const models = [...modelGroups.entries()]
 		.map(([model, groupRecords]) => {
 			const totals = summarizeRecords(groupRecords);
+			const provider = modelProvider(model) ?? "";
+			const score = scoreEntityRelevance(query, model, provider);
 			return {
 				model,
-				provider: modelProvider(model) ?? "",
+				provider,
 				costUsd: totals.costUsd,
 				requests: groupRecords.length,
 				tokens: totalTokens(totals),
+				score,
 			};
 		})
 		.filter((model) =>
@@ -323,7 +423,9 @@ export function searchPayload(
 				model: [model.model],
 			}),
 		)
-		.sort((left, right) => right.costUsd - left.costUsd)
+		.sort(
+			(left, right) => right.score - left.score || right.costUsd - left.costUsd,
+		)
 		.slice(0, limit / 2);
 
 	const allHarnesses =
@@ -339,11 +441,13 @@ export function searchPayload(
 				HARNESS_LABELS[harness] ??
 				provider?.metadata.displayName ??
 				harness;
+			const score = scoreEntityRelevance(query, label, harness);
 			return {
 				harness,
 				label,
 				sessions: totals.sessions,
 				costUsd: totals.costUsd,
+				score,
 			};
 		})
 		.filter(
@@ -353,7 +457,10 @@ export function searchPayload(
 					harness: [row.label, row.harness],
 				}),
 		)
-		.map(({ label: _label, ...row }) => row);
+		.sort(
+			(left, right) => right.score - left.score || right.costUsd - left.costUsd,
+		)
+		.map(({ label: _label, score: _score, ...row }) => row);
 
 	return {
 		query: raw,
