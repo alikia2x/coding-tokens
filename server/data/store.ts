@@ -119,6 +119,7 @@ export class DataStore {
 	private dbPath: string = resolveDatabasePath({});
 	private desktopPlatform?: string;
 	private useIndexWorker = false;
+	private skipAutoPricingRefresh = false;
 	private pickDirectory?: () => Promise<string | null>;
 	private revealPath?: (targetPath: string) => void | Promise<void>;
 	private pricingManager = new PricingCatalogManager();
@@ -166,6 +167,7 @@ export class DataStore {
 			dbPath?: string;
 			desktopPlatform?: string;
 			useIndexWorker?: boolean;
+			skipAutoPricingRefresh?: boolean;
 			pickDirectory?: () => Promise<string | null>;
 			revealPath?: (targetPath: string) => void | Promise<void>;
 		} = {},
@@ -204,6 +206,9 @@ export class DataStore {
 		}
 		if (options.useIndexWorker !== undefined) {
 			this.useIndexWorker = options.useIndexWorker;
+		}
+		if (options.skipAutoPricingRefresh !== undefined) {
+			this.skipAutoPricingRefresh = options.skipAutoPricingRefresh;
 		}
 		if (options.pickDirectory !== undefined) {
 			this.pickDirectory = options.pickDirectory;
@@ -757,7 +762,11 @@ export class DataStore {
 		if (this.generation !== myGen) return;
 
 		// Phase 3: Non-blocking background models.dev refresh if cache is missing/stale.
-		if (!this.error && this.pricingManager.needsAutoRefresh()) {
+		if (
+			!this.error &&
+			!this.skipAutoPricingRefresh &&
+			this.pricingManager.needsAutoRefresh()
+		) {
 			void this.refreshPricingCatalog("auto");
 		}
 	}

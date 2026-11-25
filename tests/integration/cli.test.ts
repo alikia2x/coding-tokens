@@ -152,17 +152,32 @@ describe("CLI Integration Suite (Feature 1)", () => {
 	// Tier 1: Happy-Path Operations (10 tests)
 	// =========================================================================
 	describe("Tier 1: Happy Path", () => {
-		test("CLI-T1-01: --help and -h flags display usage and exit 0", async () => {
+		test("CLI-T1-01: --help and -h flags display progressive-disclosure usage and exit 0", async () => {
 			const resLong = await execCli(["--help"]);
 			expect(resLong.exitCode).toBe(0);
-			expect(resLong.stdout).toContain("Usage: bun run src/cli.ts [options]");
-			expect(resLong.stdout).toContain("--by <fields>");
-			expect(resLong.stdout).toContain("--harness <names>");
-			expect(resLong.stdout).toContain("--export-dir <path>");
+			expect(resLong.stdout).toContain(
+				"Usage: coding-tokens [command] [options]",
+			);
+			expect(resLong.stdout).toContain("report");
+			expect(resLong.stdout).toContain("sessions");
+			expect(resLong.stdout).toContain("export");
+			expect(resLong.stdout).toContain("doctor");
 
 			const resShort = await execCli(["-h"]);
 			expect(resShort.exitCode).toBe(0);
-			expect(resShort.stdout).toContain("Usage: bun run src/cli.ts [options]");
+			expect(resShort.stdout).toContain(
+				"Usage: coding-tokens [command] [options]",
+			);
+
+			const reportHelp = await execCli(["report", "--help"]);
+			expect(reportHelp.exitCode).toBe(0);
+			expect(reportHelp.stdout).toContain("--by <fields>");
+			expect(reportHelp.stdout).toContain("--harness <names>");
+
+			const exportHelp = await execCli(["export", "--help"]);
+			expect(exportHelp.exitCode).toBe(0);
+			expect(exportHelp.stdout).toContain("--out <path>");
+			expect(exportHelp.stdout).toContain("--zip");
 		});
 
 		test("CLI-T1-02: --format json returns valid JSON report schema", async () => {
@@ -364,6 +379,183 @@ describe("CLI Integration Suite (Feature 1)", () => {
 			expect(res.stderr).toContain(
 				"--harness accepts: codex, dsh, opencode, commandcode, antigravity",
 			);
+		});
+	});
+
+	// =========================================================================
+	// Tier 3: Subcommands, UX Guidance, Search, Pricing & Doctor
+	// =========================================================================
+	describe("Tier 3: Modern CLI Subcommands & UX", () => {
+		test("CLI-T3-01: --version and -v print version and exit 0", async () => {
+			const res = await execCli(["--version"]);
+			expect(res.exitCode).toBe(0);
+			expect(res.stdout).toContain("coding-tokens");
+
+			const resShort = await execCli(["-v"]);
+			expect(resShort.exitCode).toBe(0);
+			expect(resShort.stdout.trim()).toBe(res.stdout.trim());
+		});
+
+		test("CLI-T3-02: Unknown subcommand suggests closest match and exits 2", async () => {
+			const res = await execCli(["sessons"]);
+			expect(res.exitCode).toBe(2);
+			expect(res.stderr).toContain("Unknown command: sessons");
+			expect(res.stderr).toContain('Did you mean "sessions"?');
+		});
+
+		test("CLI-T3-03: Typo in --harness suggests closest harness", async () => {
+			const res = await execCli(["--harness", "codx"]);
+			expect(res.exitCode).toBe(2);
+			expect(res.stderr).toContain('Did you mean "codex"?');
+		});
+
+		test("CLI-T3-04: Empty report result prints guidance without an empty Total table", async () => {
+			const res = await execCli(["--date", "2020-01-01"]);
+			expect(res.exitCode).toBe(0);
+			expect(res.stdout).toContain("No usage records found.");
+			expect(res.stdout).not.toContain("Total");
+		});
+
+		test("CLI-T3-05: sessions list, FTS5 search, and show work end-to-end", async () => {
+			const listRes = await execCli(["sessions", "--format", "json"]);
+			expect(listRes.exitCode).toBe(0);
+			const listData = JSON.parse(listRes.stdout) as {
+				sessions: Array<{ key: string; sessionId: string }>;
+			};
+			expect(listData.sessions.length).toBeGreaterThan(0);
+
+			const searchRes = await execCli([
+				"search",
+				"binary search",
+				"--format",
+				"json",
+			]);
+			expect(searchRes.exitCode).toBe(0);
+			const searchData = JSON.parse(searchRes.stdout) as {
+				sessions: Array<{ key: string; snippet?: string }>;
+			};
+			expect(searchData.sessions.length).toBeGreaterThan(0);
+
+			const showRes = await execCli([
+				"show",
+				"codex-sess-1",
+				"--stats",
+				"--format",
+				"json",
+			]);
+			expect(showRes.exitCode).toBe(0);
+			const detail = JSON.parse(showRes.stdout) as {
+				summary: { sessionId: string };
+				items: unknown[];
+			};
+			expect(detail.summary.sessionId).toBe("codex-sess-1");
+			expect(detail.items.length).toBeGreaterThan(0);
+		});
+
+		test("CLI-T3-06: models, projects, harnesses --all, and doctor JSON output", async () => {
+			const modelsRes = await execCli(["models", "--format", "json"]);
+			expect(modelsRes.exitCode).toBe(0);
+			expect(Array.isArray(JSON.parse(modelsRes.stdout).rows)).toBe(true);
+
+			const projectsRes = await execCli(["projects", "--format", "json"]);
+			expect(projectsRes.exitCode).toBe(0);
+			expect(Array.isArray(JSON.parse(projectsRes.stdout).rows)).toBe(true);
+
+			const harnessesRes = await execCli([
+				"harnesses",
+				"--all",
+				"--format",
+				"json",
+			]);
+			expect(harnessesRes.exitCode).toBe(0);
+			const harnessesData = JSON.parse(harnessesRes.stdout) as {
+				rows: unknown[];
+			};
+			expect(harnessesData.rows.length).toBe(15);
+
+			const doctorRes = await execCli(["doctor", "--format", "json"]);
+			expect(doctorRes.exitCode).toBe(0);
+			const doctorData = JSON.parse(doctorRes.stdout) as {
+				harnesses: unknown[];
+				database: { path: string };
+			};
+			expect(doctorData.harnesses.length).toBe(15);
+			expect(typeof doctorData.database.path).toBe("string");
+		});
+
+		test("CLI-T3-07: export subcommand creates ZIP archive with --zip and --org", async () => {
+			const outDir = path.join(suiteTmp, "exports-zip-t3-07");
+			mkdirSync(outDir, { recursive: true });
+			const res = await execCli([
+				"export",
+				"--out",
+				outDir,
+				"--org",
+				"harness",
+				"--zip",
+				"--format",
+				"json",
+			]);
+			expect(res.exitCode).toBe(0);
+			const payload = JSON.parse(res.stdout) as {
+				zip: boolean;
+				filesWritten: number;
+				outputPath: string;
+			};
+			expect(payload.zip).toBe(true);
+			expect(payload.filesWritten).toBeGreaterThan(0);
+			expect(payload.outputPath.endsWith(".zip")).toBe(true);
+		});
+
+		test("CLI-T3-08: pricing set, rules, status, and remove persist in SQLite", async () => {
+			const setRes = await execCli([
+				"pricing",
+				"set",
+				"cli-test-model",
+				"--input",
+				"2.5",
+				"--output",
+				"10",
+				"--note",
+				"CLI test rule",
+				"--format",
+				"json",
+			]);
+			expect(setRes.exitCode).toBe(0);
+
+			const rulesRes = await execCli(["pricing", "rules", "--format", "json"]);
+			expect(rulesRes.exitCode).toBe(0);
+			const rulesData = JSON.parse(rulesRes.stdout) as {
+				rules: Array<{ model: string }>;
+			};
+			expect(rulesData.rules.some((r) => r.model === "cli-test-model")).toBe(
+				true,
+			);
+
+			const statusRes = await execCli([
+				"pricing",
+				"status",
+				"--format",
+				"json",
+			]);
+			expect(statusRes.exitCode).toBe(0);
+			expect(JSON.parse(statusRes.stdout)).toHaveProperty("status");
+
+			const rmRes = await execCli([
+				"pricing",
+				"remove",
+				"cli-test-model",
+				"--format",
+				"json",
+			]);
+			expect(rmRes.exitCode).toBe(0);
+		});
+
+		test("CLI-T3-09: completion zsh outputs valid completion script", async () => {
+			const res = await execCli(["completion", "zsh"]);
+			expect(res.exitCode).toBe(0);
+			expect(res.stdout).toContain("#compdef coding-tokens");
+			expect(res.stdout).toContain("compdef _coding-tokens coding-tokens");
 		});
 	});
 });

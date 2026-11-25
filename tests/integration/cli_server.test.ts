@@ -164,12 +164,13 @@ describe("Milestone 4: CLI and Server Full Integration", () => {
 			const proc = Bun.spawn(["bun", "src/cli.ts", "--help"], {
 				stdout: "pipe",
 				stderr: "pipe",
+				env: process.env,
 			});
 			const exitCode = await proc.exited;
 			const stdout = await new Response(proc.stdout).text();
 			expect(exitCode).toBe(0);
 			expect(stdout).toContain("--harness");
-			expect(stdout).toContain("--export-dir");
+			expect(stdout).toContain("export");
 		});
 
 		test("CLI rejects invalid harness name with helpful error", async () => {
@@ -178,6 +179,7 @@ describe("Milestone 4: CLI and Server Full Integration", () => {
 				{
 					stdout: "pipe",
 					stderr: "pipe",
+					env: process.env,
 				},
 			);
 			const exitCode = await proc.exited;
@@ -192,6 +194,7 @@ describe("Milestone 4: CLI and Server Full Integration", () => {
 				{
 					stdout: "pipe",
 					stderr: "pipe",
+					env: process.env,
 				},
 			);
 			const exitCode = await proc.exited;

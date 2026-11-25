@@ -47,6 +47,11 @@ Run the CLI directly from source:
 
 ```bash
 bun run start -- --help
+bun run start -- --range 7d --by model
+bun run start -- sessions "authentication OR oauth"
+bun run start -- export --harness claude --org project --zip
+bun run start -- pricing status
+bun run start -- doctor
 ```
 
 Run checks and tests:
