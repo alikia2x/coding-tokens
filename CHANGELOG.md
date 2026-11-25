@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-25
+
+### Added
+
+- Subcommand-based CLI architecture with progressive-disclosure help, version flag (`--version` / `-v`), fuzzy typo suggestions, and shell completions (`completion zsh|bash|fish`).
+- Unified CLI data layer backed by the local SQLite incremental index and custom pricing engine, with `--no-index` fallback for direct raw log scans.
+- New CLI commands for full-text boolean session search and transcript inspection (`sessions`, `search`, `show --stats`), model and project breakdowns (`models`, `projects`), flexible Markdown and ZIP batch export (`export --zip --org --template --session --query`), pricing catalog and custom rule management (`pricing status|search|refresh|rules|set|remove`), and environment diagnostics (`harnesses`, `doctor`).
+- Adaptive wide-character terminal tables, TTY-aware spinners and semantic coloring, time range presets (`--range`), model filtering, sorting, and row limits.
+
+### Changed
+
+- Empty report queries now show actionable guidance instead of rendering an all-zero Total table, while keeping full backward compatibility for existing top-level report and `--export-dir` flags.
+
 ## [0.5.0] - 2026-11-24
 
 ### Added
